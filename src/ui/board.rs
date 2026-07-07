@@ -26,6 +26,7 @@ pub(crate) fn draw_board(f: &mut Frame, app: &App, area: Rect) {
     let block = card(&title, ACCENT);
     let inner = block.inner(area);
     f.render_widget(block, area);
+    app.board_area.set(inner);
 
     if app.issues.is_empty() {
         f.render_widget(
