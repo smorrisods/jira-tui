@@ -33,6 +33,17 @@ impl Priority {
             Priority::Lowest => "Lowest",
         }
     }
+
+    /// Sort rank, highest priority first.
+    pub fn rank(&self) -> u8 {
+        match self {
+            Priority::Highest => 0,
+            Priority::High => 1,
+            Priority::Medium => 2,
+            Priority::Low => 3,
+            Priority::Lowest => 4,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

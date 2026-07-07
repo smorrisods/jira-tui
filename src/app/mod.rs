@@ -1,6 +1,7 @@
 //! Application state, event handling, and the data-loading glue.
 
 use std::cell::Cell;
+use std::collections::HashMap;
 
 use ratatui::layout::Rect;
 
@@ -15,10 +16,40 @@ pub enum Screen {
     List,
     Detail,
     Preview,
+    Edit,
     About,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SortKey {
+    Updated,
+    Priority,
+    Status,
+    Key,
+}
+
+impl SortKey {
+    pub fn label(&self) -> &'static str {
+        match self {
+            SortKey::Updated => "updated",
+            SortKey::Priority => "priority",
+            SortKey::Status => "status",
+            SortKey::Key => "key",
+        }
+    }
+    fn next(&self) -> SortKey {
+        match self {
+            SortKey::Updated => SortKey::Priority,
+            SortKey::Priority => SortKey::Status,
+            SortKey::Status => SortKey::Key,
+            SortKey::Key => SortKey::Updated,
+        }
+    }
+}
+
 pub struct App {
+    /// Full server-side list; `issues` is the filtered + sorted view of this.
+    pub all_issues: Vec<IssueSummary>,
     pub issues: Vec<IssueSummary>,
     pub selected: usize,
     pub screen: Screen,
@@ -30,6 +61,21 @@ pub struct App {
     pub status: String,
     pub show_help: bool,
     pub should_quit: bool,
+
+    // Sort + filter.
+    pub sort_key: SortKey,
+    pub sort_asc: bool,
+    pub filter_status: Option<String>,
+
+    // Quick-view panel + a cache of opened issue details.
+    pub quick_view: bool,
+    pub detail_cache: HashMap<String, IssueDetail>,
+
+    /// Ambient Jax companion (pure entertainment 🦦).
+    pub show_jax: bool,
+
+    // In-TUI editor.
+    pub editor: EditorState,
 
     /// Transient toast message; shown while `tick < flash_until`.
     pub flash_msg: String,
@@ -77,23 +123,123 @@ pub enum Field {
     Token,
 }
 
+/// A minimal multi-line text editor for in-TUI description editing.
+#[derive(Clone, Debug, Default)]
+pub struct EditorState {
+    pub lines: Vec<String>,
+    pub cx: usize,
+    pub cy: usize,
+    pub scroll: u16,
+}
+
+impl EditorState {
+    pub fn from_text(text: &str) -> Self {
+        let mut lines: Vec<String> = text.split('\n').map(|s| s.to_string()).collect();
+        if lines.is_empty() {
+            lines.push(String::new());
+        }
+        EditorState {
+            lines,
+            cx: 0,
+            cy: 0,
+            scroll: 0,
+        }
+    }
+
+    pub fn to_text(&self) -> String {
+        self.lines.join("\n")
+    }
+
+    fn line_len(&self, y: usize) -> usize {
+        self.lines.get(y).map(|l| l.chars().count()).unwrap_or(0)
+    }
+
+    pub fn insert_char(&mut self, c: char) {
+        let line = &mut self.lines[self.cy];
+        let byte = line
+            .char_indices()
+            .nth(self.cx)
+            .map(|(i, _)| i)
+            .unwrap_or(line.len());
+        line.insert(byte, c);
+        self.cx += 1;
+    }
+
+    pub fn newline(&mut self) {
+        let line = self.lines[self.cy].clone();
+        let byte = line
+            .char_indices()
+            .nth(self.cx)
+            .map(|(i, _)| i)
+            .unwrap_or(line.len());
+        let (left, right) = line.split_at(byte);
+        self.lines[self.cy] = left.to_string();
+        self.lines.insert(self.cy + 1, right.to_string());
+        self.cy += 1;
+        self.cx = 0;
+    }
+
+    pub fn backspace(&mut self) {
+        if self.cx > 0 {
+            let line = &mut self.lines[self.cy];
+            let byte = line
+                .char_indices()
+                .nth(self.cx - 1)
+                .map(|(i, _)| i)
+                .unwrap();
+            line.remove(byte);
+            self.cx -= 1;
+        } else if self.cy > 0 {
+            let removed = self.lines.remove(self.cy);
+            self.cy -= 1;
+            self.cx = self.line_len(self.cy);
+            self.lines[self.cy].push_str(&removed);
+        }
+    }
+
+    pub fn left(&mut self) {
+        if self.cx > 0 {
+            self.cx -= 1;
+        } else if self.cy > 0 {
+            self.cy -= 1;
+            self.cx = self.line_len(self.cy);
+        }
+    }
+
+    pub fn right(&mut self) {
+        if self.cx < self.line_len(self.cy) {
+            self.cx += 1;
+        } else if self.cy + 1 < self.lines.len() {
+            self.cy += 1;
+            self.cx = 0;
+        }
+    }
+
+    pub fn up(&mut self) {
+        if self.cy > 0 {
+            self.cy -= 1;
+            self.cx = self.cx.min(self.line_len(self.cy));
+        }
+    }
+
+    pub fn down(&mut self) {
+        if self.cy + 1 < self.lines.len() {
+            self.cy += 1;
+            self.cx = self.cx.min(self.line_len(self.cy));
+        }
+    }
+}
+
 impl App {
     pub fn new(force_demo: bool) -> Self {
         let git = GitContext::detect();
         let (issues, source, status) = load_issues(force_demo);
         let settings = Settings::load();
 
-        // If the current branch maps to a known issue, pre-select it.
-        let mut selected = 0;
-        if let Some(key) = git.issue_key.as_ref() {
-            if let Some(idx) = issues.iter().position(|i| &i.key == key) {
-                selected = idx;
-            }
-        }
-
-        App {
+        let mut app = App {
+            all_issues: issues.clone(),
             issues,
-            selected,
+            selected: 0,
             screen: if config::is_onboarded() {
                 Screen::Home
             } else {
@@ -107,6 +253,13 @@ impl App {
             status,
             show_help: false,
             should_quit: false,
+            sort_key: SortKey::Updated,
+            sort_asc: false,
+            filter_status: None,
+            quick_view: false,
+            detail_cache: HashMap::new(),
+            show_jax: false,
+            editor: EditorState::default(),
             flash_msg: String::new(),
             flash_until: 0,
             mouse_enabled: settings.mouse,
@@ -127,7 +280,120 @@ impl App {
             picker_index: 0,
             pending_edit: None,
             request_edit: false,
+        };
+        app.recompute_view();
+
+        // If the current branch maps to a known issue, pre-select it.
+        if let Some(key) = app.git.issue_key.clone() {
+            if let Some(idx) = app.issues.iter().position(|i| i.key == key) {
+                app.selected = idx;
+            }
         }
+        app
+    }
+
+    // ── Sort + filter ────────────────────────────────────────────────────────
+
+    /// Rebuild `issues` from `all_issues` applying the current filter and sort,
+    /// preserving the selected issue by key where possible.
+    pub fn recompute_view(&mut self) {
+        let cur_key = self.selected_issue().map(|i| i.key.clone());
+
+        let mut view: Vec<IssueSummary> = self
+            .all_issues
+            .iter()
+            .filter(|i| {
+                self.filter_status
+                    .as_ref()
+                    .map(|s| &i.status == s)
+                    .unwrap_or(true)
+            })
+            .cloned()
+            .collect();
+
+        let key_num = |k: &str| -> u64 {
+            k.rsplit('-')
+                .next()
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(0)
+        };
+        view.sort_by(|a, b| {
+            let ord = match self.sort_key {
+                SortKey::Updated => a.updated.cmp(&b.updated),
+                SortKey::Priority => a.priority.rank().cmp(&b.priority.rank()),
+                SortKey::Status => a.status.cmp(&b.status),
+                SortKey::Key => key_num(&a.key).cmp(&key_num(&b.key)),
+            };
+            if self.sort_asc {
+                ord
+            } else {
+                ord.reverse()
+            }
+        });
+
+        self.issues = view;
+        self.selected = cur_key
+            .and_then(|k| self.issues.iter().position(|i| i.key == k))
+            .unwrap_or(0)
+            .min(self.issues.len().saturating_sub(1));
+    }
+
+    pub fn cycle_sort(&mut self) {
+        self.sort_key = self.sort_key.next();
+        self.recompute_view();
+        self.status = format!(
+            "sort: {} {}",
+            self.sort_key.label(),
+            if self.sort_asc { "↑" } else { "↓" }
+        );
+    }
+
+    pub fn toggle_sort_dir(&mut self) {
+        self.sort_asc = !self.sort_asc;
+        self.recompute_view();
+        self.status = format!(
+            "sort: {} {}",
+            self.sort_key.label(),
+            if self.sort_asc { "↑" } else { "↓" }
+        );
+    }
+
+    /// Cycle the status filter through: all → each distinct status → all.
+    pub fn cycle_filter(&mut self) {
+        let mut statuses: Vec<String> = Vec::new();
+        for i in &self.all_issues {
+            if !statuses.contains(&i.status) {
+                statuses.push(i.status.clone());
+            }
+        }
+        statuses.sort();
+        self.filter_status = match &self.filter_status {
+            None => statuses.first().cloned(),
+            Some(cur) => {
+                let idx = statuses.iter().position(|s| s == cur);
+                match idx {
+                    Some(i) if i + 1 < statuses.len() => Some(statuses[i + 1].clone()),
+                    _ => None,
+                }
+            }
+        };
+        self.recompute_view();
+        self.status = match &self.filter_status {
+            Some(s) => format!("filter: {s}"),
+            None => "filter: all".into(),
+        };
+    }
+
+    pub fn sort_label(&self) -> String {
+        format!(
+            "sort {} {}",
+            self.sort_key.label(),
+            if self.sort_asc { "↑" } else { "↓" }
+        )
+    }
+
+    pub fn filter_label(&self) -> Option<String> {
+        self.filter_status.as_ref().map(|s| format!("filter {s}"))
     }
 
     pub fn selected_issue(&self) -> Option<&IssueSummary> {
@@ -175,14 +441,14 @@ impl App {
     }
 
     pub fn assigned_to_me(&self) -> Vec<&IssueSummary> {
-        self.issues
+        self.all_issues
             .iter()
             .filter(|i| i.assignee.is_some() && i.status != "Done")
             .collect()
     }
 
     pub fn blocked(&self) -> Vec<&IssueSummary> {
-        self.issues.iter().filter(|i| i.blocked).collect()
+        self.all_issues.iter().filter(|i| i.blocked).collect()
     }
 
     pub fn open_detail(&mut self) {
@@ -190,11 +456,33 @@ impl App {
             return;
         };
         self.detail_scroll = 0;
-        self.detail = Some(self.load_detail(&issue.key));
+        let detail = self.load_detail(&issue.key);
+        self.detail_cache.insert(issue.key.clone(), detail.clone());
+        self.detail = Some(detail);
         self.screen = Screen::Detail;
     }
 
-    // ── Transitions ──────────────────────────────────────────────────────────
+    /// The cached detail for the currently selected issue, if any (quick view).
+    pub fn quick_view_detail(&self) -> Option<&IssueDetail> {
+        let key = &self.selected_issue()?.key;
+        self.detail_cache.get(key)
+    }
+
+    // ── In-TUI editor ────────────────────────────────────────────────────────
+
+    /// Open the built-in editor preloaded with the description Markdown.
+    pub fn begin_tui_edit(&mut self) {
+        if let Some(md) = self.description_markdown() {
+            self.editor = EditorState::from_text(&md);
+            self.screen = Screen::Edit;
+        }
+    }
+
+    /// Compile the editor buffer and move to the confirmation preview.
+    pub fn commit_tui_edit(&mut self) {
+        let text = self.editor.to_text();
+        self.finish_edit(&text);
+    }
 
     pub fn open_transitions(&mut self) {
         if let Some(detail) = self.detail.as_ref() {
@@ -411,9 +699,10 @@ impl App {
             let (issues, source, status) = load_issues(false);
             match source {
                 Source::Live { .. } => {
-                    self.issues = issues;
+                    self.all_issues = issues;
                     self.source = source;
                     self.status = status;
+                    self.recompute_view();
                     config::mark_onboarded();
                     self.screen = Screen::Home;
                 }
@@ -512,12 +801,10 @@ impl App {
     pub fn refresh(&mut self) {
         let force_demo = matches!(self.source, Source::Demo);
         let (issues, source, status) = load_issues(force_demo);
-        self.issues = issues;
+        self.all_issues = issues;
         self.source = source;
         self.status = format!("↻ {status}");
-        if self.selected >= self.issues.len() {
-            self.selected = self.issues.len().saturating_sub(1);
-        }
+        self.recompute_view();
     }
 }
 
@@ -714,5 +1001,86 @@ mod tests {
         app.cancel_edit();
         assert_eq!(app.screen, Screen::Detail);
         assert!(app.pending_edit.is_none());
+    }
+
+    #[test]
+    fn filter_narrows_and_clears() {
+        let mut app = demo_app();
+        let total = app.all_issues.len();
+        // Cycle to the first status filter.
+        app.cycle_filter();
+        assert!(app.filter_status.is_some());
+        let filtered = app.filter_status.clone().unwrap();
+        assert!(app.issues.iter().all(|i| i.status == filtered));
+        assert!(app.issues.len() <= total);
+        // Cycle all the way back to "all".
+        for _ in 0..20 {
+            if app.filter_status.is_none() {
+                break;
+            }
+            app.cycle_filter();
+        }
+        assert!(app.filter_status.is_none());
+        assert_eq!(app.issues.len(), total);
+    }
+
+    #[test]
+    fn sort_reorders_and_preserves_selection() {
+        let mut app = demo_app();
+        // Select a known issue, then re-sort; selection should follow the key.
+        let key = app.issues[2].key.clone();
+        app.selected = 2;
+        app.sort_key = SortKey::Key;
+        app.sort_asc = true;
+        app.recompute_view();
+        assert_eq!(app.selected_issue().unwrap().key, key);
+        // Ascending by key: keys are non-decreasing.
+        let nums: Vec<u64> = app
+            .issues
+            .iter()
+            .map(|i| i.key.rsplit('-').next().unwrap().parse().unwrap())
+            .collect();
+        assert!(nums.windows(2).all(|w| w[0] <= w[1]));
+    }
+
+    #[test]
+    fn quick_view_uses_cached_detail_after_open() {
+        let mut app = demo_app();
+        app.selected = 0;
+        assert!(app.quick_view_detail().is_none());
+        app.open_detail();
+        // Returning to the list, the opened issue is cached for quick view.
+        assert!(app.detail_cache.contains_key(&app.issues[0].key));
+    }
+
+    #[test]
+    fn in_tui_editor_edits_then_commits_to_preview() {
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        app.begin_tui_edit();
+        assert_eq!(app.screen, Screen::Edit);
+        assert!(!app.editor.lines.is_empty());
+        // Type a heading on a fresh first line.
+        app.editor.cx = 0;
+        app.editor.cy = 0;
+        for c in "X ".chars() {
+            app.editor.insert_char(c);
+        }
+        app.commit_tui_edit();
+        assert_eq!(app.screen, Screen::Preview);
+        assert!(app.pending_edit.is_some());
+    }
+
+    #[test]
+    fn editor_newline_and_backspace_merge_lines() {
+        let mut ed = EditorState::from_text("ab");
+        ed.cx = 1;
+        ed.newline();
+        assert_eq!(ed.lines, vec!["a".to_string(), "b".to_string()]);
+        assert_eq!((ed.cy, ed.cx), (1, 0));
+        ed.backspace();
+        assert_eq!(ed.lines, vec!["ab".to_string()]);
+        assert_eq!((ed.cy, ed.cx), (0, 1));
     }
 }

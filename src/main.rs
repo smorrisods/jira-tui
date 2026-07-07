@@ -226,21 +226,67 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // The in-TUI Markdown editor captures typing.
+    if app.screen == Screen::Edit {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Esc => app.cancel_edit(),
+            KeyCode::Char('s') if ctrl => app.commit_tui_edit(),
+            KeyCode::Enter => app.editor.newline(),
+            KeyCode::Backspace => app.editor.backspace(),
+            KeyCode::Left => app.editor.left(),
+            KeyCode::Right => app.editor.right(),
+            KeyCode::Up => app.editor.up(),
+            KeyCode::Down => app.editor.down(),
+            KeyCode::Tab => {
+                app.editor.insert_char(' ');
+                app.editor.insert_char(' ');
+            }
+            KeyCode::Char(c) if !ctrl => app.editor.insert_char(c),
+            _ => {}
+        }
+        return;
+    }
+
     match key.code {
         KeyCode::Char('?') => app.show_help = true,
         KeyCode::Char('a') => app.screen = Screen::About,
         KeyCode::Char('g') => app.screen = Screen::Home,
         KeyCode::Char('r') => app.refresh(),
         KeyCode::Char('m') => toggle_mouse(app),
+        KeyCode::Char('J') => {
+            app.show_jax = !app.show_jax;
+            app.status = if app.show_jax {
+                "Jax is here to keep you company 🦦".into()
+            } else {
+                "Jax went for a nap 😴".into()
+            };
+        }
         KeyCode::Char('y') => yank_key(app),
         KeyCode::Char('Y') => yank_url(app),
         KeyCode::Char('q') => back_or_quit(app),
         KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => back_or_quit(app),
 
+        // Sort + filter on the work list.
+        KeyCode::Char('s') if matches!(app.screen, Screen::Home | Screen::List) => app.cycle_sort(),
+        KeyCode::Char('S') if matches!(app.screen, Screen::Home | Screen::List) => {
+            app.toggle_sort_dir()
+        }
+        KeyCode::Char('f') if matches!(app.screen, Screen::Home | Screen::List) => {
+            app.cycle_filter()
+        }
+        KeyCode::Char('v') if matches!(app.screen, Screen::Home | Screen::List) => {
+            app.quick_view = !app.quick_view;
+        }
+
         KeyCode::Char('l') if app.screen != Screen::Detail => app.screen = Screen::List,
 
         KeyCode::Char('t') if app.screen == Screen::Detail => app.open_transitions(),
+        // In-TUI editor (default) and external $EDITOR (E).
         KeyCode::Char('e') if app.screen == Screen::Detail && app.detail.is_some() => {
+            app.begin_tui_edit();
+        }
+        KeyCode::Char('E') if app.screen == Screen::Detail && app.detail.is_some() => {
             app.request_edit = true;
         }
 
@@ -249,16 +295,9 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::PageUp => nav(app, -8),
         KeyCode::PageDown => nav(app, 8),
 
-        KeyCode::Enter => {
-            if app.screen == Screen::Home || app.screen == Screen::List {
-                app.open_detail();
-            }
-        }
-
-        KeyCode::Char('o') => {
-            if let Some(issue) = app.selected_issue() {
-                app.status = format!("{} · key ready to paste", issue.key);
-            }
+        // Right or Enter opens the selected issue.
+        KeyCode::Enter | KeyCode::Right if matches!(app.screen, Screen::Home | Screen::List) => {
+            app.open_detail()
         }
         _ => {}
     }
@@ -344,14 +383,14 @@ fn nav(app: &mut App, delta: isize) {
             app.detail_scroll = new.max(0) as u16;
         }
         Screen::Home | Screen::List => app.move_selection(delta),
-        Screen::About | Screen::Welcome => {}
+        Screen::About | Screen::Welcome | Screen::Edit => {}
     }
 }
 
 fn back_or_quit(app: &mut App) {
     match app.screen {
         Screen::Home | Screen::Welcome => app.should_quit = true,
-        Screen::Preview => app.cancel_edit(),
+        Screen::Preview | Screen::Edit => app.cancel_edit(),
         Screen::List | Screen::Detail | Screen::About => app.screen = Screen::Home,
     }
 }
