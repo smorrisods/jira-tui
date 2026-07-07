@@ -43,6 +43,7 @@ fn main() -> Result<()> {
     }
 
     let mut terminal = setup_terminal()?;
+    install_panic_hook();
     let result = run(&mut terminal, &mut app);
     restore_terminal(&mut terminal)?;
     result
@@ -144,6 +145,17 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
     Ok(())
+}
+
+/// Ensure the terminal is restored even if a panic unwinds out of the draw loop,
+/// so a crash never leaves the user in a corrupted (raw, alt-screen) shell.
+fn install_panic_hook() {
+    let original = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        original(info);
+    }));
 }
 
 fn print_help() {

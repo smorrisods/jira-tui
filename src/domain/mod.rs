@@ -2,6 +2,8 @@
 
 use serde_json::{json, Value};
 
+/// Jira priority. Some variants are only constructed in live mode.
+#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Priority {
     Highest,
@@ -72,6 +74,8 @@ pub struct IssueLink {
 }
 
 /// Where the data on screen came from, shown in the footer.
+/// `Live` is only constructed when the `live` feature is enabled.
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub enum Source {
     Demo,
