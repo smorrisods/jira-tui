@@ -80,6 +80,15 @@ fn run(terminal: &mut Term, app: &mut App) -> Result<()> {
             let n = text.lines().filter(|l| !l.trim().is_empty()).count();
             let _ = infra::osc52_copy(&text);
             app.status = format!("copied {n} line(s) to clipboard");
+            app.flash(format!("✓ copied {n} line(s)"));
+        }
+
+        // Launch $EDITOR for a round-trip description edit.
+        if app.request_edit {
+            app.request_edit = false;
+            if let Err(e) = edit_in_editor(terminal, app) {
+                app.status = format!("edit failed: {e}");
+            }
         }
 
         app.tick = app.tick.wrapping_add(1);
@@ -110,6 +119,62 @@ fn read_rows(terminal: &mut Term, y0: u16, y1: u16) -> String {
     out
 }
 
+/// Suspend the TUI, open the issue description in `$EDITOR`, then resume and
+/// hand the edited Markdown to the app for compilation + preview.
+fn edit_in_editor(terminal: &mut Term, app: &mut App) -> Result<()> {
+    let Some(markdown) = app.description_markdown() else {
+        return Ok(());
+    };
+    let key = app
+        .detail
+        .as_ref()
+        .map(|d| d.key.clone())
+        .unwrap_or_else(|| "issue".into());
+    let path = std::env::temp_dir().join(format!("jira-tui-{key}.md"));
+    std::fs::write(&path, &markdown)?;
+
+    // Leave the alternate screen and hand the terminal to the editor.
+    if app.mouse_enabled {
+        let _ = execute!(io::stdout(), DisableMouseCapture);
+    }
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+
+    let editor = std::env::var("VISUAL")
+        .or_else(|_| std::env::var("EDITOR"))
+        .unwrap_or_else(|_| "vi".to_string());
+    // Support editors invoked with arguments, e.g. `code --wait`.
+    let mut parts = editor.split_whitespace();
+    let program = parts.next().unwrap_or("vi");
+    let status = std::process::Command::new(program)
+        .args(parts)
+        .arg(&path)
+        .status();
+
+    // Resume the TUI.
+    enable_raw_mode()?;
+    execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+    if app.mouse_enabled {
+        let _ = execute!(io::stdout(), EnableMouseCapture);
+    }
+    terminal.clear()?;
+
+    match status {
+        Ok(s) if s.success() => {
+            let edited = std::fs::read_to_string(&path)?;
+            let _ = std::fs::remove_file(&path);
+            if edited.trim() == markdown.trim() {
+                app.status = "no changes".into();
+            } else {
+                app.finish_edit(&edited);
+            }
+        }
+        Ok(_) => app.status = "editor exited with an error".into(),
+        Err(e) => app.status = format!("could not launch editor '{editor}': {e}"),
+    }
+    Ok(())
+}
+
 fn handle_key(app: &mut App, key: KeyEvent) {
     // Global: Ctrl-C always quits.
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
@@ -129,6 +194,38 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Modal: the transition picker captures navigation while open.
+    if app.picker_open {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => app.picker_move(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.picker_move(1),
+            KeyCode::Enter => app.confirm_transition(),
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left | KeyCode::Backspace => {
+                app.close_picker()
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // The edit preview is a confirm screen.
+    if app.screen == Screen::Preview {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Enter => app.apply_edit(),
+            KeyCode::Esc
+            | KeyCode::Char('q')
+            | KeyCode::Char('h')
+            | KeyCode::Left
+            | KeyCode::Backspace => app.cancel_edit(),
+            KeyCode::Up | KeyCode::Char('k') => nav(app, -1),
+            KeyCode::Down | KeyCode::Char('j') => nav(app, 1),
+            KeyCode::PageUp => nav(app, -8),
+            KeyCode::PageDown => nav(app, 8),
+            _ => {}
+        }
+        return;
+    }
+
     match key.code {
         KeyCode::Char('?') => app.show_help = true,
         KeyCode::Char('a') => app.screen = Screen::About,
@@ -138,9 +235,14 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('y') => yank_key(app),
         KeyCode::Char('Y') => yank_url(app),
         KeyCode::Char('q') => back_or_quit(app),
-        KeyCode::Esc | KeyCode::Char('h') => back_or_quit(app),
+        KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => back_or_quit(app),
 
         KeyCode::Char('l') if app.screen != Screen::Detail => app.screen = Screen::List,
+
+        KeyCode::Char('t') if app.screen == Screen::Detail => app.open_transitions(),
+        KeyCode::Char('e') if app.screen == Screen::Detail && app.detail.is_some() => {
+            app.request_edit = true;
+        }
 
         KeyCode::Up | KeyCode::Char('k') => nav(app, -1),
         KeyCode::Down | KeyCode::Char('j') => nav(app, 1),
@@ -223,6 +325,7 @@ fn yank_key(app: &mut App) {
         let key = issue.key.clone();
         let _ = infra::osc52_copy(&key);
         app.status = format!("copied {key} to clipboard");
+        app.flash(format!("✓ copied {key}"));
     }
 }
 
@@ -230,12 +333,13 @@ fn yank_url(app: &mut App) {
     if let Some(url) = app.selected_issue_url() {
         let _ = infra::osc52_copy(&url);
         app.status = format!("copied {url} to clipboard");
+        app.flash("✓ copied issue URL");
     }
 }
 
 fn nav(app: &mut App, delta: isize) {
     match app.screen {
-        Screen::Detail => {
+        Screen::Detail | Screen::Preview => {
             let new = app.detail_scroll as isize + delta.signum() * delta.abs().max(1);
             app.detail_scroll = new.max(0) as u16;
         }
@@ -247,6 +351,7 @@ fn nav(app: &mut App, delta: isize) {
 fn back_or_quit(app: &mut App) {
     match app.screen {
         Screen::Home | Screen::Welcome => app.should_quit = true,
+        Screen::Preview => app.cancel_edit(),
         Screen::List | Screen::Detail | Screen::About => app.screen = Screen::Home,
     }
 }
@@ -317,6 +422,11 @@ MOUSE:\n\
     Press 'm' to toggle mouse mode (click to open, wheel to scroll, drag to\n\
     copy via OSC 52). Hold Shift while dragging to use your terminal's native\n\
     selection instead.\n\
+\n\
+EDITING:\n\
+    In an issue, press 't' to change status and 'e' to edit the description in\n\
+    $EDITOR (VISUAL/EDITOR, falling back to vi). Edits are recompiled to ADF and\n\
+    previewed before anything is sent to Jira.\n\
 \n\
 LIVE MODE:\n\
     Set JIRA_EMAIL and JIRA_API_TOKEN (or a token.txt file), and optionally\n\

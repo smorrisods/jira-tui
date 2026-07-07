@@ -64,7 +64,16 @@ pub struct IssueDetail {
     pub description: Value,
     /// Raw ADF acceptance criteria (customfield_XXXXX).
     pub acceptance_criteria: Option<Value>,
-    pub transitions: Vec<String>,
+    pub transitions: Vec<Transition>,
+}
+
+/// A workflow transition available from the current status.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Transition {
+    pub id: String,
+    pub name: String,
+    /// The status this transition leads to (falls back to `name`).
+    pub to: String,
 }
 
 #[derive(Clone, Debug)]
@@ -265,12 +274,15 @@ pub fn demo_detail(key: &str) -> IssueDetail {
         }],
         description,
         acceptance_criteria: Some(acceptance),
-        transitions: vec![
-            "To Do".into(),
-            "In Progress".into(),
-            "In Review".into(),
-            "Done".into(),
-        ],
+        transitions: ["To Do", "In Progress", "In Review", "Done"]
+            .iter()
+            .enumerate()
+            .map(|(i, name)| Transition {
+                id: (i + 1).to_string(),
+                name: name.to_string(),
+                to: name.to_string(),
+            })
+            .collect(),
     }
 }
 
