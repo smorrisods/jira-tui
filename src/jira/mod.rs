@@ -78,7 +78,9 @@ fn read_token_file() -> Option<String> {
 }
 
 #[cfg(feature = "live")]
-pub use live::{fetch_detail, fetch_my_work, whoami};
+pub use live::{
+    apply_transition, fetch_detail, fetch_my_work, fetch_transitions, update_description, whoami,
+};
 
 #[cfg(feature = "live")]
 mod live {
@@ -102,6 +104,76 @@ mod live {
             .map_err(|e| anyhow!("Jira request failed: {e}"))?;
         let value: Value = resp.into_json().context("decoding Jira JSON")?;
         Ok(value)
+    }
+
+    fn send(cfg: &Config, method: &str, path: &str, body: Value) -> Result<()> {
+        let url = format!("{}{}", cfg.base_url, path);
+        let req = match method {
+            "POST" => ureq::post(&url),
+            "PUT" => ureq::put(&url),
+            other => return Err(anyhow!("unsupported method {other}")),
+        };
+        req.set("Authorization", &auth_header(cfg))
+            .set("Accept", "application/json")
+            .set("Content-Type", "application/json")
+            .send_json(body)
+            .map_err(|e| anyhow!("Jira write failed: {e}"))?;
+        Ok(())
+    }
+
+    /// Fetch the workflow transitions available from the current status.
+    pub fn fetch_transitions(cfg: &Config, key: &str) -> Result<Vec<crate::domain::Transition>> {
+        let data = get(cfg, &format!("/rest/api/3/issue/{key}/transitions"))?;
+        let arr = data
+            .get("transitions")
+            .and_then(|t| t.as_array())
+            .cloned()
+            .unwrap_or_default();
+        Ok(arr
+            .iter()
+            .map(|t| {
+                let name = t
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let to = t
+                    .get("to")
+                    .and_then(|to| to.get("name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&name)
+                    .to_string();
+                crate::domain::Transition {
+                    id: t
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    name,
+                    to,
+                }
+            })
+            .collect())
+    }
+
+    /// Apply a transition by id.
+    pub fn apply_transition(cfg: &Config, key: &str, transition_id: &str) -> Result<()> {
+        send(
+            cfg,
+            "POST",
+            &format!("/rest/api/3/issue/{key}/transitions"),
+            serde_json::json!({ "transition": { "id": transition_id } }),
+        )
+    }
+
+    /// Replace an issue's ADF description.
+    pub fn update_description(cfg: &Config, key: &str, description: &Value) -> Result<()> {
+        send(
+            cfg,
+            "PUT",
+            &format!("/rest/api/3/issue/{key}"),
+            serde_json::json!({ "fields": { "description": description } }),
+        )
     }
 
     pub fn whoami(cfg: &Config) -> Result<String> {
@@ -232,7 +304,7 @@ mod live {
             links,
             description: f.get("description").cloned().unwrap_or(Value::Null),
             acceptance_criteria: f.get("customfield_10309").cloned(),
-            transitions: Vec::new(),
+            transitions: fetch_transitions(cfg, key).unwrap_or_default(),
         })
     }
 

@@ -35,10 +35,15 @@ pub fn draw(f: &mut Frame, app: &App) {
         Screen::Home => draw_home(f, app, root[1]),
         Screen::List => draw_list(f, app, root[1], true),
         Screen::Detail => draw_detail(f, app, root[1]),
+        Screen::Preview => draw_preview(f, app, root[1]),
         Screen::About => draw_about(f, app, root[1]),
     }
 
     draw_footer(f, app, root[2]);
+
+    if app.picker_open {
+        draw_transition_picker(f, app, f.area());
+    }
 
     // Highlight the active drag selection by inverting the covered rows.
     if let Some((y0, y1)) = app.selection_range() {
@@ -56,6 +61,34 @@ pub fn draw(f: &mut Frame, app: &App) {
     if app.show_help {
         draw_help_overlay(f, f.area());
     }
+
+    // A transient toast (e.g. clipboard confirmations) floats above everything.
+    if let Some(msg) = app.active_flash() {
+        draw_toast(f, msg, f.area());
+    }
+}
+
+/// A small centred confirmation banner near the top of the screen.
+fn draw_toast(f: &mut Frame, msg: &str, area: Rect) {
+    let width = (msg.chars().count() as u16 + 4).min(area.width);
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + 4;
+    let rect = Rect::new(x, y, width, 3);
+    f.render_widget(Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(OK))
+        .style(Style::default().bg(Color::Rgb(20, 40, 20)));
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            msg.to_string(),
+            Style::default().fg(OK).add_modifier(Modifier::BOLD),
+        )))
+        .alignment(Alignment::Center)
+        .block(block),
+        rect,
+    );
 }
 
 // ── Header ───────────────────────────────────────────────────────────────────
@@ -127,8 +160,11 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
                 "type to edit · tab next · ⏎ verify & save · esc back"
             }
         },
-        Screen::Detail => "↑/↓ scroll · esc back · a about · ? help · q quit",
-        Screen::About => "esc back · ? help · q quit",
+        Screen::Detail => {
+            "↑/↓ scroll · t transition · e edit · esc/← back · a about · ? help · q quit"
+        }
+        Screen::Preview => "y apply to Jira · esc/← cancel · ↑/↓ scroll",
+        Screen::About => "esc/← back · ? help · q quit",
         _ => "↑/↓ move · ⏎ open · l list · r refresh · a about · ? help · q quit",
     };
     let block = Block::default()
@@ -610,7 +646,7 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
         lines.push(divider());
         let mut strip = vec![Span::styled("transitions  ", Style::default().fg(MUTED))];
         for (i, t) in detail.transitions.iter().enumerate() {
-            let current = t == &detail.status;
+            let current = t.to == detail.status || t.name == detail.status;
             let colour = if current { ACCENT } else { Color::White };
             let modifier = if current {
                 Modifier::BOLD | Modifier::UNDERLINED
@@ -618,13 +654,17 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
                 Modifier::empty()
             };
             strip.push(Span::styled(
-                t.clone(),
+                t.name.clone(),
                 Style::default().fg(colour).add_modifier(modifier),
             ));
             if i + 1 < detail.transitions.len() {
                 strip.push(Span::styled(" → ", Style::default().fg(MUTED)));
             }
         }
+        strip.push(Span::styled(
+            "   (t to change)",
+            Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
+        ));
         lines.push(Line::from(strip));
     }
 
@@ -632,6 +672,100 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
         .wrap(Wrap { trim: false })
         .scroll((app.detail_scroll, 0));
     f.render_widget(para, inner);
+}
+
+// ── Edit preview ─────────────────────────────────────────────────────────────
+fn draw_preview(f: &mut Frame, app: &App, area: Rect) {
+    let key = app.detail.as_ref().map(|d| d.key.as_str()).unwrap_or("");
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(Style::default().fg(OK))
+        .title(Span::styled(
+            format!("  preview · {key}  "),
+            Style::default().fg(OK).add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let mut lines: Vec<Line> = vec![
+        Line::from(Span::styled(
+            "This is how your edited description will look in Jira (rendered from ADF).",
+            Style::default().fg(MUTED),
+        )),
+        Line::from(Span::styled(
+            "Press y to apply, or esc to cancel.",
+            Style::default().fg(WARN).add_modifier(Modifier::BOLD),
+        )),
+        divider(),
+    ];
+    if let Some(adf) = app.pending_edit.as_ref() {
+        lines.extend(adf::render(adf).lines);
+    }
+    let para = Paragraph::new(Text::from(lines))
+        .wrap(Wrap { trim: false })
+        .scroll((app.detail_scroll, 0));
+    f.render_widget(para, inner);
+}
+
+// ── Transition picker ────────────────────────────────────────────────────────
+fn draw_transition_picker(f: &mut Frame, app: &App, area: Rect) {
+    let transitions = match app.detail.as_ref() {
+        Some(d) => &d.transitions,
+        None => return,
+    };
+    let current = app.detail.as_ref().map(|d| d.status.as_str()).unwrap_or("");
+    let height = (transitions.len() as u16)
+        .saturating_add(4)
+        .min(area.height);
+    let popup = centered_rect_h(46, height, area);
+    f.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(Style::default().fg(ACCENT))
+        .title(Span::styled(
+            "  move to…  ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, t) in transitions.iter().enumerate() {
+        let selected = i == app.picker_index;
+        let is_current = t.to == current;
+        let cursor = if selected { "▌ " } else { "  " };
+        let mut style = if selected {
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        if is_current {
+            style = style.fg(ACCENT);
+        }
+        let suffix = if is_current { "  (current)" } else { "" };
+        lines.push(Line::from(vec![
+            Span::styled(cursor.to_string(), Style::default().fg(ACCENT2)),
+            Span::styled(t.name.clone(), style),
+            Span::styled(suffix.to_string(), Style::default().fg(MUTED)),
+        ]));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "⏎ apply · esc/← cancel",
+        Style::default().fg(MUTED),
+    )));
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+fn centered_rect_h(width_pct: u16, height: u16, area: Rect) -> Rect {
+    let y = area.y + area.height.saturating_sub(height) / 2;
+    let w = area.width * width_pct / 100;
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    Rect::new(x, y, w, height.min(area.height))
 }
 
 // ── About (animated) ─────────────────────────────────────────────────────────
@@ -778,12 +912,15 @@ fn draw_help_overlay(f: &mut Frame, area: Rect) {
         ("↑ / k", "move up"),
         ("↓ / j", "move down"),
         ("⏎ / l", "open selected issue"),
-        ("esc / h", "back"),
+        ("esc/←/⌫", "back"),
+        ("t", "change status (in an issue)"),
+        ("e", "edit description in $EDITOR"),
         ("g", "go home"),
         ("l", "full list"),
         ("a", "about panel"),
+        ("m", "toggle mouse mode"),
+        ("y / Y", "copy issue key / URL"),
         ("r", "refresh from source"),
-        ("o", "copy issue key to status"),
         ("?", "toggle this help"),
         ("q", "quit"),
     ];

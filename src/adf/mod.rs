@@ -9,6 +9,12 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use serde_json::Value;
 
+mod compile;
+mod markdown;
+
+pub use compile::compile;
+pub use markdown::to_markdown;
+
 const HEADING: Color = Color::Cyan;
 const CODE_FG: Color = Color::LightGreen;
 const MUTED: Color = Color::DarkGray;

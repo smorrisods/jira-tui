@@ -14,6 +14,7 @@ pub enum Screen {
     Home,
     List,
     Detail,
+    Preview,
     About,
 }
 
@@ -29,6 +30,10 @@ pub struct App {
     pub status: String,
     pub show_help: bool,
     pub should_quit: bool,
+
+    /// Transient toast message; shown while `tick < flash_until`.
+    pub flash_msg: String,
+    pub flash_until: u64,
 
     // Mouse mode + drag selection.
     pub mouse_enabled: bool,
@@ -50,6 +55,13 @@ pub struct App {
     pub field_token: String,
     pub focus: Field,
     pub setup_msg: String,
+
+    // Transition picker + round-trip edit.
+    pub picker_open: bool,
+    pub picker_index: usize,
+    pub pending_edit: Option<serde_json::Value>,
+    /// Set by a key handler to ask the run loop to launch `$EDITOR`.
+    pub request_edit: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -95,6 +107,8 @@ impl App {
             status,
             show_help: false,
             should_quit: false,
+            flash_msg: String::new(),
+            flash_until: 0,
             mouse_enabled: settings.mouse,
             selecting: false,
             sel_start_y: 0,
@@ -109,11 +123,30 @@ impl App {
             field_token: String::new(),
             focus: Field::Site,
             setup_msg: String::new(),
+            picker_open: false,
+            picker_index: 0,
+            pending_edit: None,
+            request_edit: false,
         }
     }
 
     pub fn selected_issue(&self) -> Option<&IssueSummary> {
         self.issues.get(self.selected)
+    }
+
+    /// Show a transient toast for roughly 1.5s (tied to the animation tick).
+    pub fn flash(&mut self, msg: impl Into<String>) {
+        self.flash_msg = msg.into();
+        self.flash_until = self.tick + 18;
+    }
+
+    /// The active toast message, if one is currently showing.
+    pub fn active_flash(&self) -> Option<&str> {
+        if self.tick < self.flash_until && !self.flash_msg.is_empty() {
+            Some(&self.flash_msg)
+        } else {
+            None
+        }
     }
 
     /// The Jira URL for the selected issue, when we know the site.
@@ -158,6 +191,136 @@ impl App {
         };
         self.detail_scroll = 0;
         self.detail = Some(self.load_detail(&issue.key));
+        self.screen = Screen::Detail;
+    }
+
+    // ── Transitions ──────────────────────────────────────────────────────────
+
+    pub fn open_transitions(&mut self) {
+        if let Some(detail) = self.detail.as_ref() {
+            if detail.transitions.is_empty() {
+                self.status = "no transitions available".into();
+                return;
+            }
+            // Pre-select the current status if present.
+            self.picker_index = detail
+                .transitions
+                .iter()
+                .position(|t| t.to == detail.status)
+                .unwrap_or(0);
+            self.picker_open = true;
+        }
+    }
+
+    pub fn close_picker(&mut self) {
+        self.picker_open = false;
+    }
+
+    pub fn picker_move(&mut self, delta: isize) {
+        let len = self
+            .detail
+            .as_ref()
+            .map(|d| d.transitions.len())
+            .unwrap_or(0);
+        if len == 0 {
+            return;
+        }
+        let mut idx = self.picker_index as isize + delta;
+        if idx < 0 {
+            idx = 0;
+        }
+        if idx >= len as isize {
+            idx = len as isize - 1;
+        }
+        self.picker_index = idx as usize;
+    }
+
+    /// Apply the highlighted transition (live if possible, always locally).
+    pub fn confirm_transition(&mut self) {
+        let Some(detail) = self.detail.as_ref() else {
+            self.picker_open = false;
+            return;
+        };
+        let Some(t) = detail.transitions.get(self.picker_index).cloned() else {
+            self.picker_open = false;
+            return;
+        };
+        let key = detail.key.clone();
+        self.picker_open = false;
+
+        #[cfg(feature = "live")]
+        {
+            if let Source::Live { .. } = self.source {
+                if let Some(cfg) = crate::jira::Config::load() {
+                    if let Err(e) = crate::jira::apply_transition(&cfg, &key, &t.id) {
+                        self.status = format!("transition failed: {e}");
+                        return;
+                    }
+                }
+            }
+        }
+
+        if let Some(d) = self.detail.as_mut() {
+            d.status = t.to.clone();
+        }
+        if let Some(sum) = self.issues.iter_mut().find(|i| i.key == key) {
+            sum.status = t.to.clone();
+        }
+        self.status = format!("moved {key} → {}", t.to);
+        self.flash(format!("✓ moved to {}", t.to));
+    }
+
+    // ── Round-trip edit ──────────────────────────────────────────────────────
+
+    /// Markdown for the current issue description, to seed an editor session.
+    pub fn description_markdown(&self) -> Option<String> {
+        self.detail
+            .as_ref()
+            .map(|d| crate::adf::to_markdown(&d.description))
+    }
+
+    /// Compile edited Markdown to ADF and show it for confirmation.
+    pub fn finish_edit(&mut self, markdown: &str) {
+        let adf = crate::adf::compile(markdown);
+        self.pending_edit = Some(adf);
+        self.detail_scroll = 0;
+        self.screen = Screen::Preview;
+    }
+
+    pub fn cancel_edit(&mut self) {
+        self.pending_edit = None;
+        self.screen = Screen::Detail;
+    }
+
+    /// Apply the previewed description (live if possible, always locally).
+    pub fn apply_edit(&mut self) {
+        let Some(adf) = self.pending_edit.take() else {
+            self.screen = Screen::Detail;
+            return;
+        };
+        let Some(key) = self.detail.as_ref().map(|d| d.key.clone()) else {
+            self.screen = Screen::Detail;
+            return;
+        };
+
+        #[cfg(feature = "live")]
+        {
+            if let Source::Live { .. } = self.source {
+                if let Some(cfg) = crate::jira::Config::load() {
+                    if let Err(e) = crate::jira::update_description(&cfg, &key, &adf) {
+                        self.status = format!("update failed: {e}");
+                        self.screen = Screen::Detail;
+                        return;
+                    }
+                }
+            }
+        }
+
+        if let Some(d) = self.detail.as_mut() {
+            d.description = adf;
+        }
+        self.status = format!("updated {key} description");
+        self.flash("✓ description updated");
         self.screen = Screen::Detail;
     }
 
@@ -499,5 +662,57 @@ mod tests {
         let app = demo_app();
         let url = app.selected_issue_url().unwrap();
         assert!(url.contains("/browse/DS-"));
+    }
+
+    #[test]
+    fn confirm_transition_updates_status_locally() {
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        // Pick the "Done" transition (index 3 in the demo model).
+        app.open_transitions();
+        app.picker_index = 3;
+        app.confirm_transition();
+        assert!(!app.picker_open);
+        assert_eq!(app.detail.as_ref().unwrap().status, "Done");
+        // The summary list reflects it too.
+        let key = &app.detail.as_ref().unwrap().key;
+        assert_eq!(
+            app.issues.iter().find(|i| &i.key == key).unwrap().status,
+            "Done"
+        );
+    }
+
+    #[test]
+    fn edit_flow_previews_then_applies() {
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        let md = app.description_markdown().unwrap();
+        assert!(md.contains("Problem"));
+
+        app.finish_edit("## Edited\n\nBrand new body.");
+        assert_eq!(app.screen, Screen::Preview);
+        assert!(app.pending_edit.is_some());
+
+        app.apply_edit();
+        assert_eq!(app.screen, Screen::Detail);
+        assert!(app.pending_edit.is_none());
+        // The new ADF is now the description.
+        let desc = &app.detail.as_ref().unwrap().description;
+        let text = crate::adf::to_markdown(desc);
+        assert!(text.contains("Edited"));
+        assert!(text.contains("Brand new body"));
+    }
+
+    #[test]
+    fn cancel_edit_discards_pending() {
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        app.finish_edit("## Nope");
+        app.cancel_edit();
+        assert_eq!(app.screen, Screen::Detail);
+        assert!(app.pending_edit.is_none());
     }
 }
