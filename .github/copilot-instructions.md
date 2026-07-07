@@ -15,13 +15,20 @@ with an optional live REST client and an always-available offline demo mode.
 - `src/config` — XDG config/cache paths, settings, secure token file, onboarding
   marker, and the issue cache.
 - `src/infra` — clipboard support via OSC 52.
-- `src/app` — application state, data loading, onboarding, transitions,
-  round-trip edit, sort/filter, quick-view + list focus, search/go-to-issue,
-  and the swimlane board (grouped by epic).
-- `src/ui` — `ratatui` screens, theme, the welcome screen (Jax), the animated
-  About panel, and the ambient Jax companion.
+- `src/app` — application state, split by concern into submodules
+  (`sort_filter`, `quick_view`, `search`, `board`, `transitions`, `edit`,
+  `onboarding`, `mouse`, `detail`), with shared struct/constructor/tests
+  (`tests.rs`) in `mod.rs`. Owns data loading, onboarding, round-trip edit,
+  sort/filter, quick-view + list focus, search/go-to-issue, and the swimlane
+  board (grouped by epic).
+- `src/ui` — `ratatui` rendering, split by screen into submodules (`welcome`,
+  `home`, `list`, `detail`, `search`, `board`, `preview`, `transition_picker`,
+  `editor`, `jax_companion`, `about`, `help`), with the `draw()` dispatcher,
+  theme, and shared chrome/helpers in `mod.rs`.
 - `src/lib.rs` — library surface so integration tests can drive the real code;
-  `src/main.rs` is a thin binary (terminal lifecycle + event loop).
+  `src/main.rs` is a thin binary (CLI args, terminal lifecycle, run loop),
+  with event handling in `src/keys.rs` and `$EDITOR` suspend/resume in
+  `src/editor_launch.rs` (both binary-only modules).
 
 ## What to keep true
 
