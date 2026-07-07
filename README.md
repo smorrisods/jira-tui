@@ -219,16 +219,42 @@ copies its browse URL.
 
 ```
 src/
-  domain/   stable models + demo data
-  adf/      ADF <-> styled text and ADF <-> Markdown (render, to_markdown, compile)
-  jira/     live REST client: read + transitions + description writes (feature: live)
-  git/      repo/branch detection + key parsing
-  config/   XDG config, settings, token, and issue cache
-  infra/    clipboard (OSC 52)
-  app/      state, data loading, onboarding, transitions, round-trip edit
-  ui/       ratatui screens, theme, welcome (Jax), animated about, toasts
-  lib.rs    library surface (so tests can drive the real code)
-  main.rs   thin binary: terminal lifecycle, event loop, $EDITOR launch
+  domain/          stable models + demo data
+  adf/             ADF <-> styled text and ADF <-> Markdown (render, to_markdown, compile)
+  jira/            live REST client: read + transitions + description writes (feature: live)
+  git/             repo/branch detection + key parsing
+  config/          XDG config, settings, token, and issue cache
+  infra/           clipboard (OSC 52)
+  app/             App state, split by concern:
+    mod.rs           core struct, constructor, selection/flash helpers, load_issues
+    sort_filter.rs   sort + filter cycling for the work list
+    quick_view.rs    quick-view panel loading and scroll
+    search.rs        search screen state + query matching
+    board.rs         swimlane board selection + navigation
+    transitions.rs   status transition picker
+    edit.rs          round-trip Markdown edit (begin/commit/apply)
+    onboarding.rs    welcome flow + credential form
+    mouse.rs         list focus + click/drag selection
+    detail.rs        issue detail loading
+    tests.rs         App unit tests
+  ui/              ratatui rendering, split by screen:
+    mod.rs           draw() dispatcher, theme, header/footer/toast chrome, shared helpers
+    welcome.rs       welcome + credential form screen
+    home.rs          home/context screen
+    list.rs          work list screen
+    detail.rs        issue detail screen + quick-view panel
+    search.rs        search + goto screen
+    board.rs         swimlane board screen
+    preview.rs       pending-edit preview screen
+    transition_picker.rs  status transition picker overlay
+    editor.rs        in-TUI Markdown editor
+    jax_companion.rs Jax mascot overlay
+    about.rs         animated about screen
+    help.rs          help overlay
+  lib.rs           library surface (so tests can drive the real code)
+  main.rs          thin binary: CLI args, terminal lifecycle, run loop
+  keys.rs          keyboard + mouse event handling (binary-only module)
+  editor_launch.rs external $EDITOR suspend/resume (binary-only module)
 tests/      cli.rs (process) + render.rs (headless TestBackend)
 docs/       product + technical design specs (SPEC, IMPLEMENTATION, …)
 ```
