@@ -108,6 +108,10 @@ pub struct App {
     pub list_start: Cell<usize>,
     pub detail_area: Cell<Rect>,
     pub quick_view_area: Cell<Rect>,
+    /// The board's inner rendering area, recorded during render so keyboard
+    /// navigation (which has no access to layout at input time) can compute
+    /// how many rows are visible and auto-scroll the selection into view.
+    pub board_area: Cell<Rect>,
 
     // Onboarding welcome + credential setup.
     pub welcome_phase: WelcomePhase,
@@ -174,6 +178,7 @@ impl App {
             list_start: Cell::new(0),
             detail_area: Cell::new(Rect::default()),
             quick_view_area: Cell::new(Rect::default()),
+            board_area: Cell::new(Rect::default()),
             welcome_phase: WelcomePhase::Intro,
             field_site: "https://your-org.atlassian.net".to_string(),
             field_email: String::new(),

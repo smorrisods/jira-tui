@@ -399,6 +399,53 @@ fn board_navigation_moves_within_bounds() {
 }
 
 #[test]
+fn board_navigation_scrolls_the_selection_into_view() {
+    // Regression test: moving the card/lane selection with the keyboard
+    // must scroll the board viewport to follow it — previously only the
+    // mouse wheel (`board_scroll_by`) touched `board_scroll`, so moving
+    // down with the keyboard past the visible window left the highlighted
+    // card scrolled off-screen with no way to see (or keep navigating to)
+    // it.
+    let mut app = demo_app();
+    app.open_board();
+    // Simulate a short viewport — a handful of rows, definitely shorter
+    // than the demo data's full lane list.
+    app.board_area.set(Rect::new(0, 0, 80, 6));
+    assert_eq!(app.board_scroll, 0);
+
+    let lanes_len = app.board_lanes().len();
+    assert!(
+        lanes_len > 1,
+        "test needs more than one lane to be meaningful"
+    );
+
+    // Step through every lane; the scroll offset must grow to keep the
+    // selected lane's row within the 6-row window, and must never leave
+    // the selection above the top of the window either.
+    for _ in 0..lanes_len - 1 {
+        app.board_move_lane(1);
+        let selected_line = app.board_selected_line();
+        let scroll = app.board_scroll as usize;
+        let height = app.board_area.get().height as usize;
+        assert!(
+            selected_line >= scroll && selected_line < scroll + height,
+            "selected line {selected_line} not within visible window [{scroll}, {})",
+            scroll + height
+        );
+    }
+
+    // And scrolling back up to the first lane must bring the offset back
+    // down so the selection is visible again (not stuck scrolled down).
+    for _ in 0..lanes_len - 1 {
+        app.board_move_lane(-1);
+    }
+    assert_eq!(app.board_sel.lane, 0);
+    let selected_line = app.board_selected_line();
+    let scroll = app.board_scroll as usize;
+    assert!(selected_line >= scroll, "scrolled past the first lane");
+}
+
+#[test]
 fn board_open_loads_the_selected_card() {
     let mut app = demo_app();
     app.open_board();

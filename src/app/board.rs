@@ -126,6 +126,7 @@ impl App {
         }
         let idx = (self.board_sel.card as isize + delta).clamp(0, len as isize - 1);
         self.board_sel.card = idx as usize;
+        self.board_ensure_visible();
     }
 
     pub fn board_move_col(&mut self, delta: isize) {
@@ -136,6 +137,7 @@ impl App {
         let idx = (self.board_sel.col as isize + delta).clamp(0, cols.len() as isize - 1);
         self.board_sel.col = idx as usize;
         self.board_sel.card = 0;
+        self.board_ensure_visible();
     }
 
     pub fn board_move_lane(&mut self, delta: isize) {
@@ -146,11 +148,55 @@ impl App {
         let idx = (self.board_sel.lane as isize + delta).clamp(0, lanes.len() as isize - 1);
         self.board_sel.lane = idx as usize;
         self.board_sel.card = 0;
+        self.board_ensure_visible();
     }
 
     pub fn board_scroll_by(&mut self, delta: isize) {
         let new = self.board_scroll as isize + delta;
         self.board_scroll = new.max(0) as u16;
+    }
+
+    /// The row index (within the board's rendered text, matching
+    /// `ui::board::draw_board`'s layout exactly: 2 header lines, then per
+    /// lane a label line + one row per card slot + a trailing blank line) of
+    /// the currently selected card. Used to scroll the selection into view.
+    pub(crate) fn board_selected_line(&self) -> usize {
+        let cols = self.board_columns();
+        let lanes = self.board_lanes();
+        let mut line = 2; // column header + separator rows drawn by the UI
+        for (li, lane) in lanes.iter().enumerate() {
+            if li == self.board_sel.lane {
+                return line + 1 + self.board_sel.card;
+            }
+            let max_rows = cols
+                .iter()
+                .map(|status| self.board_cell(lane, status).len())
+                .max()
+                .unwrap_or(0)
+                .max(1);
+            line += 1 + max_rows + 1; // label + card rows + trailing blank
+        }
+        line
+    }
+
+    /// Scroll the board so the current selection is visible, mirroring the
+    /// centred-window approach used by the work list. Keyboard navigation
+    /// (`board_move_card`/`_col`/`_lane`) has no access to the render-time
+    /// viewport height, so this reads back the area recorded during the
+    /// last `draw_board` call.
+    fn board_ensure_visible(&mut self) {
+        let area = self.board_area.get();
+        if area.height == 0 {
+            return;
+        }
+        let height = area.height as usize;
+        let selected = self.board_selected_line();
+        let scroll = self.board_scroll as usize;
+        if selected < scroll {
+            self.board_scroll = selected as u16;
+        } else if selected >= scroll + height {
+            self.board_scroll = (selected + 1 - height) as u16;
+        }
     }
 
     /// Open the currently selected card's issue.
