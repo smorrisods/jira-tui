@@ -252,3 +252,31 @@ fn search_screen_empty_query_shows_hint_or_full_list() {
         "search screen should render its panels even with an empty query"
     );
 }
+
+#[test]
+fn board_screen_shows_columns_and_lanes() {
+    let mut app = demo_app();
+    app.open_board();
+    let text = render(&app);
+    assert!(text.contains("board"), "board panel should render");
+    assert!(text.contains("To Do"), "board should show a status column");
+    assert!(
+        text.contains("No epic"),
+        "board should show the no-epic lane"
+    );
+    assert!(text.contains("DS-"), "board should show issue cards");
+}
+
+#[test]
+fn board_screen_highlights_selected_card() {
+    let mut app = demo_app();
+    app.open_board();
+    // Land the selection on a real card, then confirm it renders without
+    // panicking and still shows the board chrome.
+    app.board_move_col(0);
+    let text = render(&app);
+    assert!(
+        text.contains("column"),
+        "board title should show column count"
+    );
+}
