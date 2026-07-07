@@ -146,10 +146,36 @@ fn quick_view_panel_shows_selected_issue() {
     app.screen = Screen::Home;
     app.quick_view = true;
     app.selected = 0;
+    // Simulate the run loop's lazy-load call.
+    app.ensure_quick_view_loaded();
     let text = render(&app);
     assert!(
         text.contains("quick view"),
         "quick view panel should render"
+    );
+    // Once loaded, the full fields and ADF body should be visible, not just
+    // the one-line summary.
+    assert!(text.contains("assignee:"), "quick view should show fields");
+    assert!(
+        text.contains("Problem") || text.contains("Proposed"),
+        "quick view should render the full ADF body"
+    );
+}
+
+#[test]
+fn quick_view_panel_spans_full_width() {
+    let mut app = demo_app();
+    app.screen = Screen::List;
+    app.quick_view = true;
+    app.selected = 0;
+    let text = render(&app);
+    // Rendered as one string per row by our TestBackend dump helper: the
+    // "quick view" title should appear near the left edge of a wide frame,
+    // confirming the panel isn't squeezed into a narrow column.
+    let line = text.lines().find(|l| l.contains("quick view")).unwrap();
+    assert!(
+        line.trim_start().starts_with('│') || line.trim_start().starts_with('╭'),
+        "quick view panel should start at the frame's left edge (full width), got: {line:?}"
     );
 }
 
