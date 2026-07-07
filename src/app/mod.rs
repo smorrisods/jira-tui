@@ -18,6 +18,7 @@ pub enum Screen {
     Preview,
     Edit,
     Search,
+    Board,
     About,
 }
 
@@ -65,6 +66,15 @@ pub enum SearchRow {
     Match(usize),
 }
 
+/// Cursor position within the board: which swimlane, status column, and card
+/// (top-to-bottom) within that lane/column cell.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct BoardSelection {
+    pub lane: usize,
+    pub col: usize,
+    pub card: usize,
+}
+
 pub struct App {
     /// Full server-side list; `issues` is the filtered + sorted view of this.
     pub all_issues: Vec<IssueSummary>,
@@ -97,6 +107,10 @@ pub struct App {
     pub search_selected: usize,
     /// Screen to return to when Search is cancelled.
     pub search_return_to: Screen,
+
+    // Swimlane board.
+    pub board_sel: BoardSelection,
+    pub board_scroll: u16,
 
     /// Ambient Jax companion (pure entertainment 🦦).
     pub show_jax: bool,
@@ -292,6 +306,8 @@ impl App {
             search_rows: Vec::new(),
             search_selected: 0,
             search_return_to: Screen::Home,
+            board_sel: BoardSelection::default(),
+            board_scroll: 0,
             show_jax: false,
             editor: EditorState::default(),
             flash_msg: String::new(),
@@ -622,6 +638,166 @@ impl App {
                     self.open_by_key(&key);
                 }
             }
+        }
+    }
+
+    // ── Swimlane board ───────────────────────────────────────────────────────
+
+    /// Preferred left-to-right column order; anything else present is
+    /// appended afterwards in alphabetical order.
+    const BOARD_PREFERRED_COLUMNS: [&'static str; 5] =
+        ["Backlog", "To Do", "In Progress", "In Review", "Done"];
+
+    pub fn open_board(&mut self) {
+        self.screen = Screen::Board;
+        self.board_scroll = 0;
+        self.board_clamp();
+    }
+
+    /// Status columns present in the current (filtered/sorted) view, in
+    /// workflow order.
+    pub fn board_columns(&self) -> Vec<String> {
+        let mut cols: Vec<String> = Vec::new();
+        for p in Self::BOARD_PREFERRED_COLUMNS {
+            if self.issues.iter().any(|i| i.status == p) {
+                cols.push(p.to_string());
+            }
+        }
+        let mut others: Vec<String> = Vec::new();
+        for i in &self.issues {
+            if !Self::BOARD_PREFERRED_COLUMNS.contains(&i.status.as_str())
+                && !others.contains(&i.status)
+            {
+                others.push(i.status.clone());
+            }
+        }
+        others.sort();
+        cols.extend(others);
+        if cols.is_empty() {
+            cols.push("No status".to_string());
+        }
+        cols
+    }
+
+    /// Swimlanes (grouped by parent/Epic key), in first-seen order, with a
+    /// trailing "no epic" lane (`None`) when any issue lacks one.
+    pub fn board_lanes(&self) -> Vec<Option<String>> {
+        let mut lanes: Vec<Option<String>> = Vec::new();
+        let mut has_none = false;
+        for i in &self.issues {
+            match &i.epic {
+                Some(e) => {
+                    if !lanes.iter().any(|l| l.as_deref() == Some(e.as_str())) {
+                        lanes.push(Some(e.clone()));
+                    }
+                }
+                None => has_none = true,
+            }
+        }
+        if has_none || lanes.is_empty() {
+            lanes.push(None);
+        }
+        lanes
+    }
+
+    /// The issues in a given lane/column cell, in current sort order.
+    pub fn board_cell(&self, lane: &Option<String>, status: &str) -> Vec<&IssueSummary> {
+        self.issues
+            .iter()
+            .filter(|i| &i.epic == lane && i.status == status)
+            .collect()
+    }
+
+    /// A human label for a swimlane header, using a cached Epic summary when
+    /// we've already loaded it.
+    pub fn board_lane_label(&self, lane: &Option<String>) -> String {
+        match lane {
+            None => "No epic".to_string(),
+            Some(key) => match self.detail_cache.get(key) {
+                Some(detail) => format!("{key} · {}", detail.summary),
+                None => key.clone(),
+            },
+        }
+    }
+
+    fn board_clamp(&mut self) {
+        let lanes = self.board_lanes();
+        if self.board_sel.lane >= lanes.len() {
+            self.board_sel.lane = 0;
+        }
+        let cols = self.board_columns();
+        if self.board_sel.col >= cols.len() {
+            self.board_sel.col = 0;
+        }
+        let len = lanes
+            .get(self.board_sel.lane)
+            .zip(cols.get(self.board_sel.col))
+            .map(|(lane, status)| self.board_cell(lane, status).len())
+            .unwrap_or(0);
+        if self.board_sel.card >= len {
+            self.board_sel.card = len.saturating_sub(1);
+        }
+    }
+
+    pub fn board_move_card(&mut self, delta: isize) {
+        let lanes = self.board_lanes();
+        let cols = self.board_columns();
+        let Some(lane) = lanes.get(self.board_sel.lane) else {
+            return;
+        };
+        let Some(status) = cols.get(self.board_sel.col) else {
+            return;
+        };
+        let len = self.board_cell(lane, status).len();
+        if len == 0 {
+            return;
+        }
+        let idx = (self.board_sel.card as isize + delta).clamp(0, len as isize - 1);
+        self.board_sel.card = idx as usize;
+    }
+
+    pub fn board_move_col(&mut self, delta: isize) {
+        let cols = self.board_columns();
+        if cols.is_empty() {
+            return;
+        }
+        let idx = (self.board_sel.col as isize + delta).clamp(0, cols.len() as isize - 1);
+        self.board_sel.col = idx as usize;
+        self.board_sel.card = 0;
+    }
+
+    pub fn board_move_lane(&mut self, delta: isize) {
+        let lanes = self.board_lanes();
+        if lanes.is_empty() {
+            return;
+        }
+        let idx = (self.board_sel.lane as isize + delta).clamp(0, lanes.len() as isize - 1);
+        self.board_sel.lane = idx as usize;
+        self.board_sel.card = 0;
+    }
+
+    pub fn board_scroll_by(&mut self, delta: isize) {
+        let new = self.board_scroll as isize + delta;
+        self.board_scroll = new.max(0) as u16;
+    }
+
+    /// Open the currently selected card's issue.
+    pub fn board_open(&mut self) {
+        let lanes = self.board_lanes();
+        let cols = self.board_columns();
+        let Some(lane) = lanes.get(self.board_sel.lane) else {
+            return;
+        };
+        let Some(status) = cols.get(self.board_sel.col) else {
+            return;
+        };
+        let cell = self.board_cell(lane, status);
+        match cell.get(self.board_sel.card) {
+            Some(issue) => {
+                let key = issue.key.clone();
+                self.open_by_key(&key);
+            }
+            None => self.status = "no card here".into(),
         }
     }
 
@@ -1390,5 +1566,112 @@ mod tests {
         app.open_by_key(&key);
         assert_eq!(app.selected, 2);
         assert_eq!(app.detail.as_ref().unwrap().key, key);
+    }
+
+    #[test]
+    fn board_columns_follow_workflow_order() {
+        let app = demo_app();
+        let cols = app.board_columns();
+        // Demo data spans Backlog, To Do, In Progress, In Review, Done.
+        let positions: Vec<usize> = ["Backlog", "To Do", "In Progress", "In Review", "Done"]
+            .iter()
+            .filter_map(|s| cols.iter().position(|c| c == s))
+            .collect();
+        assert!(
+            positions.windows(2).all(|w| w[0] < w[1]),
+            "columns should follow workflow order, got {cols:?}"
+        );
+    }
+
+    #[test]
+    fn board_lanes_group_by_epic_with_no_epic_bucket() {
+        let app = demo_app();
+        let lanes = app.board_lanes();
+        assert!(lanes.contains(&None), "a 'no epic' lane should exist");
+        assert!(
+            lanes.iter().any(|l| l.as_deref() == Some("DS-2602")),
+            "an epic-grouped lane should exist, got {lanes:?}"
+        );
+    }
+
+    #[test]
+    fn board_cell_only_contains_matching_lane_and_status() {
+        let app = demo_app();
+        let lane = Some("DS-2602".to_string());
+        let cell = app.board_cell(&lane, "To Do");
+        assert!(!cell.is_empty());
+        assert!(cell.iter().all(|i| i.epic == lane && i.status == "To Do"));
+    }
+
+    #[test]
+    fn board_navigation_moves_within_bounds() {
+        let mut app = demo_app();
+        app.open_board();
+        // Column navigation clamps at the edges.
+        let cols_len = app.board_columns().len();
+        for _ in 0..(cols_len + 5) {
+            app.board_move_col(1);
+        }
+        assert_eq!(app.board_sel.col, cols_len - 1);
+        for _ in 0..(cols_len + 5) {
+            app.board_move_col(-1);
+        }
+        assert_eq!(app.board_sel.col, 0);
+
+        // Lane navigation clamps too.
+        let lanes_len = app.board_lanes().len();
+        for _ in 0..(lanes_len + 5) {
+            app.board_move_lane(1);
+        }
+        assert_eq!(app.board_sel.lane, lanes_len - 1);
+    }
+
+    #[test]
+    fn board_open_loads_the_selected_card() {
+        let mut app = demo_app();
+        app.open_board();
+        // Find a lane/column with at least one card and select it directly.
+        let lanes = app.board_lanes();
+        let cols = app.board_columns();
+        let mut found = false;
+        'outer: for (li, lane) in lanes.iter().enumerate() {
+            for (ci, status) in cols.iter().enumerate() {
+                if !app.board_cell(lane, status).is_empty() {
+                    app.board_sel.lane = li;
+                    app.board_sel.col = ci;
+                    app.board_sel.card = 0;
+                    found = true;
+                    break 'outer;
+                }
+            }
+        }
+        assert!(found, "expected at least one non-empty cell");
+        app.board_open();
+        assert_eq!(app.screen, Screen::Detail);
+        assert!(app.detail.is_some());
+    }
+
+    #[test]
+    fn board_scroll_by_never_goes_negative() {
+        let mut app = demo_app();
+        app.board_scroll = 0;
+        app.board_scroll_by(-5);
+        assert_eq!(app.board_scroll, 0);
+        app.board_scroll_by(3);
+        assert_eq!(app.board_scroll, 3);
+    }
+
+    #[test]
+    fn open_board_clamps_stale_selection() {
+        let mut app = demo_app();
+        app.board_sel = BoardSelection {
+            lane: 999,
+            col: 999,
+            card: 999,
+        };
+        app.open_board();
+        assert_eq!(app.screen, Screen::Board);
+        assert!(app.board_sel.lane < app.board_lanes().len());
+        assert!(app.board_sel.col < app.board_columns().len());
     }
 }
