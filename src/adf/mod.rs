@@ -321,3 +321,89 @@ mod tests {
         assert!(joined.contains("ship it"));
     }
 }
+
+#[cfg(test)]
+mod robustness_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn flat(doc: &serde_json::Value) -> String {
+        render(doc)
+            .lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn empty_and_malformed_docs_do_not_panic() {
+        let _ = render(&json!({}));
+        let _ = render(&json!({ "type": "doc" }));
+        let _ = render(&json!({ "type": "doc", "content": "not-an-array" }));
+        let _ = render(&json!({ "type": "doc", "content": [ { "type": "mystery" } ] }));
+        // A heading with no content array must still render safely.
+        let out = render(&json!({
+            "type": "doc",
+            "content": [ { "type": "heading", "attrs": { "level": 2 } } ]
+        }));
+        assert!(!out.lines.is_empty());
+    }
+
+    #[test]
+    fn ordered_and_nested_lists_render() {
+        let doc = json!({
+            "type": "doc",
+            "content": [
+                { "type": "orderedList", "content": [
+                    { "type": "listItem", "content": [
+                        { "type": "paragraph", "content": [ { "type": "text", "text": "first" } ] },
+                        { "type": "bulletList", "content": [
+                            { "type": "listItem", "content": [
+                                { "type": "paragraph", "content": [ { "type": "text", "text": "nested" } ] }
+                            ] }
+                        ] }
+                    ] }
+                ] }
+            ]
+        });
+        let s = flat(&doc);
+        assert!(s.contains("1."));
+        assert!(s.contains("first"));
+        assert!(s.contains("nested"));
+    }
+
+    #[test]
+    fn code_block_is_fenced() {
+        let doc = json!({
+            "type": "doc",
+            "content": [
+                { "type": "codeBlock", "attrs": { "language": "rust" },
+                  "content": [ { "type": "text", "text": "let x = 1;" } ] }
+            ]
+        });
+        let s = flat(&doc);
+        assert!(s.contains("```"));
+        assert!(s.contains("rust"));
+        assert!(s.contains("let x = 1;"));
+    }
+
+    #[test]
+    fn table_renders_headers_and_cells() {
+        let doc = json!({
+            "type": "doc",
+            "content": [
+                { "type": "table", "content": [
+                    { "type": "tableRow", "content": [
+                        { "type": "tableHeader", "content": [ { "type": "paragraph", "content": [ { "type": "text", "text": "Name" } ] } ] }
+                    ] },
+                    { "type": "tableRow", "content": [
+                        { "type": "tableCell", "content": [ { "type": "paragraph", "content": [ { "type": "text", "text": "Ada" } ] } ] }
+                    ] }
+                ] }
+            ]
+        });
+        let s = flat(&doc);
+        assert!(s.contains("Name"));
+        assert!(s.contains("Ada"));
+    }
+}
