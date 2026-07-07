@@ -31,6 +31,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     draw_header(f, app, root[0]);
 
     match app.screen {
+        Screen::Welcome => draw_welcome(f, app, root[1]),
         Screen::Home => draw_home(f, app, root[1]),
         Screen::List => draw_list(f, app, root[1], true),
         Screen::Detail => draw_detail(f, app, root[1]),
@@ -38,6 +39,19 @@ pub fn draw(f: &mut Frame, app: &App) {
     }
 
     draw_footer(f, app, root[2]);
+
+    // Highlight the active drag selection by inverting the covered rows.
+    if let Some((y0, y1)) = app.selection_range() {
+        let area = f.area();
+        let buf = f.buffer_mut();
+        for y in y0..=y1.min(area.height.saturating_sub(1)) {
+            for x in 0..area.width {
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    cell.set_style(Style::default().add_modifier(Modifier::REVERSED));
+                }
+            }
+        }
+    }
 
     if app.show_help {
         draw_help_overlay(f, f.area());
@@ -67,6 +81,14 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         ),
         Span::styled("  ·  ", Style::default().fg(MUTED)),
         Span::styled(app.source.label(), Style::default().fg(MUTED)),
+        Span::styled(
+            if app.mouse_enabled {
+                "  🖱 mouse"
+            } else {
+                ""
+            },
+            Style::default().fg(OK),
+        ),
     ]);
     let right = Line::from(vec![
         Span::styled("", Style::default()),
@@ -97,6 +119,14 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
 // ── Footer ───────────────────────────────────────────────────────────────────
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let keys = match app.screen {
+        Screen::Welcome => match app.welcome_phase {
+            crate::app::WelcomePhase::Intro => {
+                "s set up live · d demo · w write config · ? help · q quit"
+            }
+            crate::app::WelcomePhase::Setup => {
+                "type to edit · tab next · ⏎ verify & save · esc back"
+            }
+        },
         Screen::Detail => "↑/↓ scroll · esc back · a about · ? help · q quit",
         Screen::About => "esc back · ? help · q quit",
         _ => "↑/↓ move · ⏎ open · l list · r refresh · a about · ? help · q quit",
@@ -125,6 +155,203 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         .alignment(Alignment::Right),
         cols[1],
     );
+}
+
+// ── Welcome / onboarding ─────────────────────────────────────────────────────
+
+/// Jax, the terminal sidekick. Blinks now and then. 🍁
+fn jax(tick: u64) -> Vec<Line<'static>> {
+    // Blink for a couple of frames on a slow cycle.
+    let blinking = (tick / 6).is_multiple_of(8);
+    let eyes = if blinking { "-  -" } else { "●  ●" };
+    let leaf = ['🍁', '🍂'][(tick / 8 % 2) as usize];
+    let body = Style::default().fg(ACCENT);
+    let face = Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD);
+    vec![
+        Line::from(Span::styled("   .------.   ", body)),
+        Line::from(vec![
+            Span::styled("   | ", body),
+            Span::styled(eyes.to_string(), face),
+            Span::styled(" |   ", body),
+        ]),
+        Line::from(Span::styled("   |  ‿   |   ", body)),
+        Line::from(Span::styled("   '--++--'   ", body)),
+        Line::from(vec![
+            Span::styled("     /", body),
+            Span::styled(leaf.to_string(), Style::default()),
+            Span::styled("\\     ", body),
+        ]),
+    ]
+}
+
+fn draw_welcome(f: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(Style::default().fg(ACCENT2))
+        .title(Span::styled(
+            "  welcome to jira-tui  ",
+            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    match app.welcome_phase {
+        crate::app::WelcomePhase::Intro => draw_welcome_intro(f, app, inner),
+        crate::app::WelcomePhase::Setup => draw_welcome_setup(f, app, inner),
+    }
+}
+
+fn draw_welcome_intro(f: &mut Frame, app: &App, area: Rect) {
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(""));
+    for l in jax(app.tick) {
+        lines.push(l.alignment(Alignment::Center));
+    }
+    lines.push(Line::from(""));
+    lines.push(
+        Line::from(Span::styled(
+            "Hi, I'm Jax — your terminal Jira sidekick. 🍁",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .alignment(Alignment::Center),
+    );
+    lines.push(Line::from(""));
+    lines.push(
+        Line::from(Span::styled(
+            "You're exploring built-in sample data right now — nothing touches Jira.",
+            Style::default().fg(MUTED),
+        ))
+        .alignment(Alignment::Center),
+    );
+    lines.push(Line::from(""));
+
+    let choices = [
+        (
+            "s",
+            "Set up live access",
+            "enter your Jira site, email, and API token",
+        ),
+        ("d", "Continue in demo", "keep browsing the sample data"),
+        (
+            "w",
+            "Write config file",
+            "scaffold ~/.config/jira-tui/config.toml",
+        ),
+    ];
+    for (k, title, desc) in choices {
+        lines.push(
+            Line::from(vec![
+                Span::styled(
+                    format!("  [{k}]  "),
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("{title}  "),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(desc.to_string(), Style::default().fg(MUTED)),
+            ])
+            .alignment(Alignment::Center),
+        );
+    }
+    lines.push(Line::from(""));
+    lines.push(
+        Line::from(Span::styled(
+            "Tip: press 'm' any time for mouse mode; hold Shift-drag for native copy.",
+            Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
+        ))
+        .alignment(Alignment::Center),
+    );
+
+    f.render_widget(Paragraph::new(Text::from(lines)), area);
+}
+
+fn draw_welcome_setup(f: &mut Frame, app: &App, area: Rect) {
+    use crate::app::Field;
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(""));
+    // A smaller Jax cheering you on.
+    for l in jax(app.tick).into_iter().take(4) {
+        lines.push(l.alignment(Alignment::Center));
+    }
+    lines.push(Line::from(""));
+    lines.push(
+        Line::from(Span::styled(
+            "Set up live access",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ))
+        .alignment(Alignment::Center),
+    );
+    lines.push(
+        Line::from(Span::styled(
+            "Your token is verified against Jira and saved to ~/.config/jira-tui/token (0600).",
+            Style::default().fg(MUTED),
+        ))
+        .alignment(Alignment::Center),
+    );
+    lines.push(Line::from(""));
+
+    let field = |label: &str, value: String, focused: bool, mask: bool| -> Line<'static> {
+        let shown = if mask {
+            "•".repeat(value.chars().count())
+        } else {
+            value
+        };
+        let caret = if focused { "▏" } else { " " };
+        let label_style = if focused {
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(MUTED)
+        };
+        let box_style = if focused {
+            Style::default().fg(Color::White)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        Line::from(vec![
+            Span::styled(format!("  {label:<8} "), label_style),
+            Span::styled(format!("{shown}{caret}"), box_style),
+        ])
+    };
+
+    lines.push(field(
+        "site",
+        app.field_site.clone(),
+        app.focus == Field::Site,
+        false,
+    ));
+    lines.push(Line::from(""));
+    lines.push(field(
+        "email",
+        app.field_email.clone(),
+        app.focus == Field::Email,
+        false,
+    ));
+    lines.push(Line::from(""));
+    lines.push(field(
+        "token",
+        app.field_token.clone(),
+        app.focus == Field::Token,
+        true,
+    ));
+    lines.push(Line::from(""));
+
+    if !app.setup_msg.is_empty() {
+        lines.push(
+            Line::from(Span::styled(
+                app.setup_msg.clone(),
+                Style::default().fg(WARN),
+            ))
+            .alignment(Alignment::Center),
+        );
+    }
+
+    f.render_widget(Paragraph::new(Text::from(lines)), area);
 }
 
 // ── Home dashboard ───────────────────────────────────────────────────────────
@@ -225,6 +452,9 @@ fn draw_list(f: &mut Frame, app: &App, area: Rect, full: bool) {
     for (i, issue) in app.issues.iter().enumerate().skip(start).take(height) {
         lines.push(issue_row(issue, i == app.selected));
     }
+    // Record geometry so mouse clicks can be mapped back to issues.
+    app.list_area.set(inner);
+    app.list_start.set(start);
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
 
@@ -290,6 +520,7 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
 
     let block = card(&format!("  {}  ", detail.key), ACCENT);
     let inner = block.inner(area);
+    app.detail_area.set(inner);
     f.render_widget(block, area);
 
     let mut lines: Vec<Line> = Vec::new();

@@ -20,7 +20,7 @@ impl Config {
     /// Assemble config from env vars, an optional config file, and token.txt.
     /// Returns `None` when credentials are insufficient for live mode.
     pub fn load() -> Option<Config> {
-        let file = read_config_file();
+        let file = crate::config::read_kv();
 
         let base_url = std::env::var("JIRA_BASE_URL")
             .ok()
@@ -60,8 +60,14 @@ impl Config {
 
 #[cfg(feature = "live")]
 fn read_token_file() -> Option<String> {
-    for candidate in ["token.txt", "../jira-tasks/token.txt"] {
-        if let Ok(s) = std::fs::read_to_string(candidate) {
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(p) = crate::config::token_file_path() {
+        candidates.push(p);
+    }
+    candidates.push(std::path::PathBuf::from("token.txt"));
+    candidates.push(std::path::PathBuf::from("../jira-tasks/token.txt"));
+    for candidate in candidates {
+        if let Ok(s) = std::fs::read_to_string(&candidate) {
             let t = s.trim().to_string();
             if !t.is_empty() {
                 return Some(t);
@@ -69,29 +75,6 @@ fn read_token_file() -> Option<String> {
         }
     }
     None
-}
-
-/// Minimal `key = "value"` reader for the optional config file. Intentionally
-/// tiny — no TOML dependency for a handful of flat settings.
-#[cfg(feature = "live")]
-fn read_config_file() -> std::collections::HashMap<String, String> {
-    let mut map = std::collections::HashMap::new();
-    let path = dirs::config_dir().map(|d| d.join("jira-tui/config.toml"));
-    let Some(path) = path else { return map };
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return map;
-    };
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') || line.starts_with('[') {
-            continue;
-        }
-        if let Some((k, v)) = line.split_once('=') {
-            let v = v.trim().trim_matches('"').trim_matches('\'').to_string();
-            map.insert(k.trim().to_string(), v);
-        }
-    }
-    map
 }
 
 #[cfg(feature = "live")]

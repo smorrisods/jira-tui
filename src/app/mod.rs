@@ -1,10 +1,16 @@
 //! Application state, event handling, and the data-loading glue.
 
+use std::cell::Cell;
+
+use ratatui::layout::Rect;
+
+use crate::config::{self, Settings};
 use crate::domain::{demo_detail, demo_issues, IssueDetail, IssueSummary, Source};
 use crate::git::GitContext;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Screen {
+    Welcome,
     Home,
     List,
     Detail,
@@ -23,12 +29,47 @@ pub struct App {
     pub status: String,
     pub show_help: bool,
     pub should_quit: bool,
+
+    // Mouse mode + drag selection.
+    pub mouse_enabled: bool,
+    pub selecting: bool,
+    pub sel_start_y: u16,
+    pub sel_end_y: u16,
+    /// Row range (inclusive, screen coords) whose text should be copied.
+    pub pending_copy: Option<(u16, u16)>,
+
+    // Draw geometry recorded during render, for mapping mouse coordinates.
+    pub list_area: Cell<Rect>,
+    pub list_start: Cell<usize>,
+    pub detail_area: Cell<Rect>,
+
+    // Onboarding welcome + credential setup.
+    pub welcome_phase: WelcomePhase,
+    pub field_site: String,
+    pub field_email: String,
+    pub field_token: String,
+    pub focus: Field,
+    pub setup_msg: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum WelcomePhase {
+    Intro,
+    Setup,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Field {
+    Site,
+    Email,
+    Token,
 }
 
 impl App {
     pub fn new(force_demo: bool) -> Self {
         let git = GitContext::detect();
         let (issues, source, status) = load_issues(force_demo);
+        let settings = Settings::load();
 
         // If the current branch maps to a known issue, pre-select it.
         let mut selected = 0;
@@ -41,7 +82,11 @@ impl App {
         App {
             issues,
             selected,
-            screen: Screen::Home,
+            screen: if config::is_onboarded() {
+                Screen::Home
+            } else {
+                Screen::Welcome
+            },
             detail: None,
             detail_scroll: 0,
             source,
@@ -50,11 +95,35 @@ impl App {
             status,
             show_help: false,
             should_quit: false,
+            mouse_enabled: settings.mouse,
+            selecting: false,
+            sel_start_y: 0,
+            sel_end_y: 0,
+            pending_copy: None,
+            list_area: Cell::new(Rect::default()),
+            list_start: Cell::new(0),
+            detail_area: Cell::new(Rect::default()),
+            welcome_phase: WelcomePhase::Intro,
+            field_site: "https://your-org.atlassian.net".to_string(),
+            field_email: String::new(),
+            field_token: String::new(),
+            focus: Field::Site,
+            setup_msg: String::new(),
         }
     }
 
     pub fn selected_issue(&self) -> Option<&IssueSummary> {
         self.issues.get(self.selected)
+    }
+
+    /// The Jira URL for the selected issue, when we know the site.
+    pub fn selected_issue_url(&self) -> Option<String> {
+        let issue = self.selected_issue()?;
+        let site = match &self.source {
+            Source::Live { site, .. } => site.clone(),
+            _ => "your-org.atlassian.net".to_string(),
+        };
+        Some(format!("https://{site}/browse/{}", issue.key))
     }
 
     pub fn move_selection(&mut self, delta: isize) {
@@ -90,6 +159,170 @@ impl App {
         self.detail_scroll = 0;
         self.detail = Some(self.load_detail(&issue.key));
         self.screen = Screen::Detail;
+    }
+
+    // ── Onboarding ───────────────────────────────────────────────────────────
+
+    /// Dismiss the welcome screen and remember not to show it again.
+    pub fn finish_onboarding(&mut self) {
+        config::mark_onboarded();
+        self.screen = Screen::Home;
+    }
+
+    /// Write the default config file from the welcome screen.
+    pub fn write_config_from_welcome(&mut self) {
+        match config::write_default_config() {
+            Ok((path, true)) => {
+                self.status = format!("wrote config to {}", path.display());
+            }
+            Ok((path, false)) => {
+                self.status = format!("config already exists at {}", path.display());
+            }
+            Err(e) => {
+                self.status = format!("could not write config: {e}");
+            }
+        }
+    }
+
+    // ── Credential setup form ────────────────────────────────────────────────
+
+    fn focused_field_mut(&mut self) -> &mut String {
+        match self.focus {
+            Field::Site => &mut self.field_site,
+            Field::Email => &mut self.field_email,
+            Field::Token => &mut self.field_token,
+        }
+    }
+
+    pub fn input_char(&mut self, c: char) {
+        self.focused_field_mut().push(c);
+    }
+
+    pub fn input_backspace(&mut self) {
+        self.focused_field_mut().pop();
+    }
+
+    pub fn focus_next(&mut self) {
+        self.focus = match self.focus {
+            Field::Site => Field::Email,
+            Field::Email => Field::Token,
+            Field::Token => Field::Site,
+        };
+    }
+
+    pub fn focus_prev(&mut self) {
+        self.focus = match self.focus {
+            Field::Site => Field::Token,
+            Field::Email => Field::Site,
+            Field::Token => Field::Email,
+        };
+    }
+
+    /// Validate, verify against Jira, and persist the entered credentials.
+    /// On success, switches to live data and finishes onboarding.
+    pub fn submit_credentials(&mut self) {
+        let site = self.field_site.trim().trim_end_matches('/').to_string();
+        let email = self.field_email.trim().to_string();
+        let token = self.field_token.trim().to_string();
+        if site.is_empty() || email.is_empty() || token.is_empty() {
+            self.setup_msg = "Please fill site, email, and token.".into();
+            return;
+        }
+
+        // Persist first so the standard config path picks them up.
+        if let Err(e) = config::save_token(&token) {
+            self.setup_msg = format!("Could not save token: {e}");
+            return;
+        }
+        if let Err(e) = config::save_settings(&site, &email, "DS") {
+            self.setup_msg = format!("Could not save settings: {e}");
+            return;
+        }
+        std::env::set_var("JIRA_BASE_URL", &site);
+        std::env::set_var("JIRA_EMAIL", &email);
+        std::env::set_var("JIRA_API_TOKEN", &token);
+
+        #[cfg(feature = "live")]
+        {
+            self.setup_msg = "Verifying…".into();
+            let (issues, source, status) = load_issues(false);
+            match source {
+                Source::Live { .. } => {
+                    self.issues = issues;
+                    self.source = source;
+                    self.status = status;
+                    config::mark_onboarded();
+                    self.screen = Screen::Home;
+                }
+                _ => {
+                    self.setup_msg =
+                        "Saved, but Jira did not accept those credentials. Check and retry, or press Esc to continue in demo mode.".into();
+                }
+            }
+        }
+        #[cfg(not(feature = "live"))]
+        {
+            self.setup_msg =
+                "Saved. This build has no live support; rebuild with the `live` feature.".into();
+        }
+    }
+
+    // ── Mouse mode + drag selection ──────────────────────────────────────────
+
+    /// Map a screen row to an issue index within the recorded list area.
+    pub fn list_index_at(&self, y: u16) -> Option<usize> {
+        let area = self.list_area.get();
+        if area.height == 0 || y < area.y || y >= area.y + area.height {
+            return None;
+        }
+        let idx = self.list_start.get() + (y - area.y) as usize;
+        (idx < self.issues.len()).then_some(idx)
+    }
+
+    pub fn mouse_down(&mut self, y: u16) {
+        if matches!(self.screen, Screen::Home | Screen::List) {
+            if let Some(idx) = self.list_index_at(y) {
+                self.selected = idx;
+            }
+        }
+        self.selecting = true;
+        self.sel_start_y = y;
+        self.sel_end_y = y;
+    }
+
+    pub fn mouse_drag(&mut self, y: u16) {
+        if self.selecting {
+            self.sel_end_y = y;
+        }
+    }
+
+    pub fn mouse_up(&mut self, y: u16) {
+        if !self.selecting {
+            return;
+        }
+        self.selecting = false;
+        self.sel_end_y = y;
+        if self.sel_start_y == self.sel_end_y {
+            // A click, not a drag: open the issue under the cursor.
+            if matches!(self.screen, Screen::Home | Screen::List) && self.list_index_at(y).is_some()
+            {
+                self.open_detail();
+            }
+        } else {
+            let a = self.sel_start_y.min(self.sel_end_y);
+            let b = self.sel_start_y.max(self.sel_end_y);
+            self.pending_copy = Some((a, b));
+        }
+    }
+
+    /// The inclusive row range currently being drag-selected, for highlighting.
+    pub fn selection_range(&self) -> Option<(u16, u16)> {
+        self.selecting.then(|| {
+            (
+                self.sel_start_y.min(self.sel_end_y),
+                self.sel_start_y.max(self.sel_end_y),
+            )
+        })
     }
 
     #[allow(unused_variables)]
@@ -135,6 +368,7 @@ fn load_issues(force_demo: bool) -> (Vec<IssueSummary>, Source, String) {
                     Ok(issues) if !issues.is_empty() => {
                         let host = cfg.site_host();
                         let n = issues.len();
+                        crate::config::cache_issues(&issues);
                         return (
                             issues,
                             Source::Live { site: host, user },
@@ -149,6 +383,15 @@ fn load_issues(force_demo: bool) -> (Vec<IssueSummary>, Source, String) {
                         );
                     }
                     Err(e) => {
+                        // Prefer the last cached list over sample data offline.
+                        if let Some(cached) = crate::config::load_cached_issues() {
+                            let n = cached.len();
+                            return (
+                                cached,
+                                Source::Cache { user },
+                                format!("Jira unreachable ({e}) — showing {n} cached issues"),
+                            );
+                        }
                         return (
                             demo_issues(),
                             Source::Demo,
@@ -164,4 +407,97 @@ fn load_issues(force_demo: bool) -> (Vec<IssueSummary>, Source, String) {
         Source::Demo,
         "Offline demo — set JIRA_EMAIL + token for live mode".into(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::layout::Rect;
+
+    fn demo_app() -> App {
+        let mut app = App::new(true);
+        app.screen = Screen::Home;
+        app
+    }
+
+    #[test]
+    fn move_selection_clamps_to_bounds() {
+        let mut app = demo_app();
+        app.selected = 0;
+        app.move_selection(-5);
+        assert_eq!(app.selected, 0);
+        app.move_selection(1000);
+        assert_eq!(app.selected, app.issues.len() - 1);
+    }
+
+    #[test]
+    fn list_index_at_maps_rows_to_issues() {
+        let app = demo_app();
+        app.list_area.set(Rect::new(0, 4, 80, 8));
+        app.list_start.set(0);
+        assert_eq!(app.list_index_at(4), Some(0));
+        assert_eq!(app.list_index_at(6), Some(2));
+        // Above the list area.
+        assert_eq!(app.list_index_at(0), None);
+        // Below the populated rows.
+        assert_eq!(app.list_index_at(200), None);
+    }
+
+    #[test]
+    fn click_opens_detail() {
+        let mut app = demo_app();
+        app.list_area.set(Rect::new(0, 4, 80, 8));
+        app.list_start.set(0);
+        app.mouse_down(5);
+        app.mouse_up(5);
+        assert_eq!(app.screen, Screen::Detail);
+        assert!(app.detail.is_some());
+        assert_eq!(app.selected, 1);
+    }
+
+    #[test]
+    fn drag_sets_a_pending_copy_range() {
+        let mut app = demo_app();
+        app.list_area.set(Rect::new(0, 4, 80, 8));
+        app.mouse_down(5);
+        assert_eq!(app.selection_range(), Some((5, 5)));
+        app.mouse_drag(8);
+        assert_eq!(app.selection_range(), Some((5, 8)));
+        app.mouse_up(8);
+        assert_eq!(app.pending_copy, Some((5, 8)));
+        assert!(!app.selecting);
+        assert_eq!(app.screen, Screen::Home, "a drag must not open detail");
+    }
+
+    #[test]
+    fn credential_form_edits_focused_field() {
+        let mut app = demo_app();
+        app.focus = Field::Email;
+        app.input_char('a');
+        app.input_char('b');
+        assert_eq!(app.field_email, "ab");
+        app.input_backspace();
+        assert_eq!(app.field_email, "a");
+        app.focus_next();
+        assert_eq!(app.focus, Field::Token);
+        app.focus_prev();
+        assert_eq!(app.focus, Field::Email);
+    }
+
+    #[test]
+    fn submit_with_empty_fields_reports_and_does_not_panic() {
+        let mut app = demo_app();
+        app.field_site.clear();
+        app.field_email.clear();
+        app.field_token.clear();
+        app.submit_credentials();
+        assert!(!app.setup_msg.is_empty());
+    }
+
+    #[test]
+    fn selected_issue_url_is_a_browse_link() {
+        let app = demo_app();
+        let url = app.selected_issue_url().unwrap();
+        assert!(url.contains("/browse/DS-"));
+    }
 }

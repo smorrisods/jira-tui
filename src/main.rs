@@ -1,17 +1,15 @@
 //! jira-tui — a keyboard-driven Jira terminal UI with a little bit of soul.
 
-mod adf;
-mod app;
-mod domain;
-mod git;
-mod jira;
-mod ui;
+use jira_tui::{app, config, infra, ui};
 
 use std::io::{self, Stdout};
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -24,6 +22,8 @@ use app::{App, Screen};
 /// Frame cadence — also the animation tick rate for the About panel.
 const TICK: Duration = Duration::from_millis(90);
 
+type Term = Terminal<CrosstermBackend<Stdout>>;
+
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "-h" || a == "--help") {
@@ -34,39 +34,80 @@ fn main() -> Result<()> {
         println!("jira-tui v{}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
+    if args.iter().any(|a| a == "--init") {
+        return init_config();
+    }
     let force_demo = args.iter().any(|a| a == "--demo");
     let start_about = args.iter().any(|a| a == "--about");
+    let force_onboard = args.iter().any(|a| a == "--onboard");
 
     let mut app = App::new(force_demo);
+    if force_onboard {
+        app.screen = Screen::Welcome;
+        app.welcome_phase = app::WelcomePhase::Intro;
+    }
     if start_about {
         app.screen = Screen::About;
     }
 
     let mut terminal = setup_terminal()?;
     install_panic_hook();
+    if app.mouse_enabled {
+        let _ = execute!(io::stdout(), EnableMouseCapture);
+    }
     let result = run(&mut terminal, &mut app);
+    let _ = execute!(io::stdout(), DisableMouseCapture);
     restore_terminal(&mut terminal)?;
     result
 }
 
-fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> Result<()> {
+fn run(terminal: &mut Term, app: &mut App) -> Result<()> {
     loop {
         terminal.draw(|f| ui::draw(f, app))?;
 
         // Poll for input, but wake on TICK so animations keep moving.
         if event::poll(TICK)? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    handle_key(app, key);
-                }
+            match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => handle_key(app, key),
+                Event::Mouse(me) => handle_mouse(app, me),
+                _ => {}
             }
         }
+
+        // Fulfil a drag-select copy using the frame we just rendered.
+        if let Some((y0, y1)) = app.pending_copy.take() {
+            let text = read_rows(terminal, y0, y1);
+            let n = text.lines().filter(|l| !l.trim().is_empty()).count();
+            let _ = infra::osc52_copy(&text);
+            app.status = format!("copied {n} line(s) to clipboard");
+        }
+
         app.tick = app.tick.wrapping_add(1);
 
         if app.should_quit {
             return Ok(());
         }
     }
+}
+
+/// Reconstruct the plain text of an inclusive screen-row range from the last
+/// rendered frame's buffer (used for drag-to-copy).
+fn read_rows(terminal: &mut Term, y0: u16, y1: u16) -> String {
+    let buf = terminal.current_buffer_mut();
+    let area = *buf.area();
+    let mut out = String::new();
+    let last = y1.min(area.height.saturating_sub(1));
+    for y in y0..=last {
+        let mut line = String::new();
+        for x in 0..area.width {
+            if let Some(cell) = buf.cell((x, y)) {
+                line.push_str(cell.symbol());
+            }
+        }
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+    out
 }
 
 fn handle_key(app: &mut App, key: KeyEvent) {
@@ -82,11 +123,20 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Onboarding has its own key map (including a text-entry form).
+    if app.screen == Screen::Welcome {
+        handle_welcome_key(app, key);
+        return;
+    }
+
     match key.code {
         KeyCode::Char('?') => app.show_help = true,
         KeyCode::Char('a') => app.screen = Screen::About,
         KeyCode::Char('g') => app.screen = Screen::Home,
         KeyCode::Char('r') => app.refresh(),
+        KeyCode::Char('m') => toggle_mouse(app),
+        KeyCode::Char('y') => yank_key(app),
+        KeyCode::Char('Y') => yank_url(app),
         KeyCode::Char('q') => back_or_quit(app),
         KeyCode::Esc | KeyCode::Char('h') => back_or_quit(app),
 
@@ -112,6 +162,77 @@ fn handle_key(app: &mut App, key: KeyEvent) {
     }
 }
 
+fn handle_welcome_key(app: &mut App, key: KeyEvent) {
+    use app::WelcomePhase;
+    match app.welcome_phase {
+        WelcomePhase::Intro => match key.code {
+            KeyCode::Char('s') => {
+                app.welcome_phase = WelcomePhase::Setup;
+                app.setup_msg.clear();
+            }
+            KeyCode::Char('d') | KeyCode::Enter => app.finish_onboarding(),
+            KeyCode::Char('w') => app.write_config_from_welcome(),
+            KeyCode::Char('?') => app.show_help = true,
+            KeyCode::Char('q') | KeyCode::Esc => app.finish_onboarding(),
+            _ => {}
+        },
+        WelcomePhase::Setup => match key.code {
+            KeyCode::Esc => {
+                app.welcome_phase = WelcomePhase::Intro;
+                app.setup_msg.clear();
+            }
+            KeyCode::Enter => app.submit_credentials(),
+            KeyCode::Tab | KeyCode::Down => app.focus_next(),
+            KeyCode::BackTab | KeyCode::Up => app.focus_prev(),
+            KeyCode::Backspace => app.input_backspace(),
+            KeyCode::Char(c) => app.input_char(c),
+            _ => {}
+        },
+    }
+}
+
+fn handle_mouse(app: &mut App, me: MouseEvent) {
+    // Hold Shift to bypass the app and use the terminal's native selection.
+    if me.modifiers.contains(KeyModifiers::SHIFT) {
+        return;
+    }
+    match me.kind {
+        MouseEventKind::ScrollUp => nav(app, -1),
+        MouseEventKind::ScrollDown => nav(app, 1),
+        MouseEventKind::Down(MouseButton::Left) => app.mouse_down(me.row),
+        MouseEventKind::Drag(MouseButton::Left) => app.mouse_drag(me.row),
+        MouseEventKind::Up(MouseButton::Left) => app.mouse_up(me.row),
+        _ => {}
+    }
+}
+
+fn toggle_mouse(app: &mut App) {
+    app.mouse_enabled = !app.mouse_enabled;
+    app.selecting = false;
+    if app.mouse_enabled {
+        let _ = execute!(io::stdout(), EnableMouseCapture);
+        app.status = "mouse mode on · click to open · drag to copy · shift-drag = native".into();
+    } else {
+        let _ = execute!(io::stdout(), DisableMouseCapture);
+        app.status = "mouse mode off · terminal selection restored".into();
+    }
+}
+
+fn yank_key(app: &mut App) {
+    if let Some(issue) = app.selected_issue() {
+        let key = issue.key.clone();
+        let _ = infra::osc52_copy(&key);
+        app.status = format!("copied {key} to clipboard");
+    }
+}
+
+fn yank_url(app: &mut App) {
+    if let Some(url) = app.selected_issue_url() {
+        let _ = infra::osc52_copy(&url);
+        app.status = format!("copied {url} to clipboard");
+    }
+}
+
 fn nav(app: &mut App, delta: isize) {
     match app.screen {
         Screen::Detail => {
@@ -119,19 +240,36 @@ fn nav(app: &mut App, delta: isize) {
             app.detail_scroll = new.max(0) as u16;
         }
         Screen::Home | Screen::List => app.move_selection(delta),
-        Screen::About => {}
+        Screen::About | Screen::Welcome => {}
     }
 }
 
 fn back_or_quit(app: &mut App) {
     match app.screen {
-        Screen::Home => app.should_quit = true,
+        Screen::Home | Screen::Welcome => app.should_quit = true,
         Screen::List | Screen::Detail | Screen::About => app.screen = Screen::Home,
     }
 }
 
-// Terminal lifecycle
-fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
+// ── Config init ──────────────────────────────────────────────────────────────
+fn init_config() -> Result<()> {
+    let (path, created) = config::write_default_config()?;
+    if created {
+        println!("Wrote default config to {}", path.display());
+    } else {
+        println!(
+            "Config already exists at {} (left unchanged)",
+            path.display()
+        );
+    }
+    if let Some(cache) = config::cache_dir() {
+        println!("Cache directory: {}", cache.display());
+    }
+    Ok(())
+}
+
+// ── Terminal lifecycle ───────────────────────────────────────────────────────
+fn setup_terminal() -> Result<Term> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -140,7 +278,7 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     Ok(terminal)
 }
 
-fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+fn restore_terminal(terminal: &mut Term) -> Result<()> {
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
@@ -153,7 +291,7 @@ fn install_panic_hook() {
     let original = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = execute!(io::stdout(), DisableMouseCapture, LeaveAlternateScreen);
         original(info);
     }));
 }
@@ -170,13 +308,20 @@ USAGE:\n\
 OPTIONS:\n\
     --demo        Force offline demo mode (ignore any credentials)\n\
     --about       Open straight to the animated about panel\n\
+    --onboard     Re-run the first-run welcome / live setup\n\
+    --init        Write a default config to ~/.config/jira-tui/config.toml\n\
     -V, --version Print version\n\
     -h, --help    Print this help\n\
+\n\
+MOUSE:\n\
+    Press 'm' to toggle mouse mode (click to open, wheel to scroll, drag to\n\
+    copy via OSC 52). Hold Shift while dragging to use your terminal's native\n\
+    selection instead.\n\
 \n\
 LIVE MODE:\n\
     Set JIRA_EMAIL and JIRA_API_TOKEN (or a token.txt file), and optionally\n\
     JIRA_BASE_URL / JIRA_PROJECT, to load your real assigned work. Without\n\
-    them, jira-tui runs against built-in sample data.\n",
+    them, jira-tui runs against built-in sample data (or the last cached list).\n",
         env!("CARGO_PKG_VERSION")
     );
 }
