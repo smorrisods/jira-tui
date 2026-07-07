@@ -15,9 +15,10 @@ with an optional live REST client and an always-available offline demo mode.
 - `src/config` — XDG config/cache paths, settings, secure token file, onboarding
   marker, and the issue cache.
 - `src/infra` — clipboard support via OSC 52.
-- `src/app` — application state, data loading, onboarding, event-driven updates.
-- `src/ui` — `ratatui` screens, theme, the welcome screen (Jax), and the animated
-  About panel.
+- `src/app` — application state, data loading, onboarding, transitions,
+  round-trip edit, sort/filter, quick-view + list focus, and search/go-to-issue.
+- `src/ui` — `ratatui` screens, theme, the welcome screen (Jax), the animated
+  About panel, and the ambient Jax companion.
 - `src/lib.rs` — library surface so integration tests can drive the real code;
   `src/main.rs` is a thin binary (terminal lifecycle + event loop).
 
