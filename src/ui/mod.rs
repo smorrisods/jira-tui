@@ -36,10 +36,16 @@ pub fn draw(f: &mut Frame, app: &App) {
         Screen::List => draw_list(f, app, root[1], true),
         Screen::Detail => draw_detail(f, app, root[1]),
         Screen::Preview => draw_preview(f, app, root[1]),
+        Screen::Edit => draw_editor(f, app, root[1]),
         Screen::About => draw_about(f, app, root[1]),
     }
 
     draw_footer(f, app, root[2]);
+
+    // The ambient Jax companion floats in a bottom corner (pure fun 🦦).
+    if app.show_jax && !matches!(app.screen, Screen::Welcome | Screen::Edit | Screen::About) {
+        draw_jax_companion(f, app, f.area());
+    }
 
     if app.picker_open {
         draw_transition_picker(f, app, f.area());
@@ -164,8 +170,9 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
             "↑/↓ scroll · t transition · e edit · esc/← back · a about · ? help · q quit"
         }
         Screen::Preview => "y apply to Jira · esc/← cancel · ↑/↓ scroll",
+        Screen::Edit => "type to edit · ^S preview · esc cancel",
         Screen::About => "esc/← back · ? help · q quit",
-        _ => "↑/↓ move · ⏎ open · l list · r refresh · a about · ? help · q quit",
+        _ => "↑/↓ move · →/⏎ open · s sort · f filter · v quick · J jax · ? help · q quit",
     };
     let block = Block::default()
         .borders(Borders::ALL)
@@ -470,14 +477,26 @@ fn stat_line(label: &str, n: usize, colour: Color) -> Line<'static> {
 
 // ── Issue list ───────────────────────────────────────────────────────────────
 fn draw_list(f: &mut Frame, app: &App, area: Rect, full: bool) {
-    let title = if full {
-        "  all my work  "
+    // Split off a quick-view panel at the bottom when enabled.
+    let (list_area, quick_area) = if app.quick_view {
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(3), Constraint::Length(9)])
+            .split(area);
+        (rows[0], Some(rows[1]))
     } else {
-        "  my work  "
+        (area, None)
     };
-    let block = card(title, ACCENT);
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+
+    let base = if full { "all my work" } else { "my work" };
+    let mut title = format!("  {base} · {}", app.sort_label());
+    if let Some(filter) = app.filter_label() {
+        title.push_str(&format!(" · {filter}"));
+    }
+    title.push_str(&format!("  ({})  ", app.issues.len()));
+    let block = card(&title, ACCENT);
+    let inner = block.inner(list_area);
+    f.render_widget(block, list_area);
 
     let mut lines: Vec<Line> = Vec::new();
     let height = inner.height as usize;
@@ -492,6 +511,74 @@ fn draw_list(f: &mut Frame, app: &App, area: Rect, full: bool) {
     app.list_area.set(inner);
     app.list_start.set(start);
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
+
+    if let Some(qa) = quick_area {
+        draw_quick_view(f, app, qa);
+    }
+}
+
+fn draw_quick_view(f: &mut Frame, app: &App, area: Rect) {
+    let block = card("  quick view  ", ACCENT2);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let Some(issue) = app.selected_issue() else {
+        return;
+    };
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(vec![
+        Span::styled(
+            format!("{} ", issue.key),
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
+        chip(&issue.issue_type, ACCENT2),
+        Span::raw(" "),
+        chip(&issue.status, status_colour(&issue.status)),
+        Span::raw(" "),
+        chip(issue.priority.label(), priority_colour(&issue.priority)),
+        if issue.blocked {
+            Span::styled("  ⛔ blocked", Style::default().fg(DANGER))
+        } else {
+            Span::raw("")
+        },
+    ]));
+    lines.push(Line::from(Span::styled(
+        issue.summary.clone(),
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(Span::styled(
+        format!(
+            "assignee: {}   updated: {}",
+            issue
+                .assignee
+                .clone()
+                .unwrap_or_else(|| "unassigned".into()),
+            issue.updated
+        ),
+        Style::default().fg(MUTED),
+    )));
+
+    // If we've opened this issue before, show a snippet of its description.
+    if let Some(detail) = app.quick_view_detail() {
+        lines.push(divider());
+        let rendered = adf::render(&detail.description);
+        let avail = inner.height.saturating_sub(lines.len() as u16) as usize;
+        for line in rendered.lines.into_iter().take(avail) {
+            lines.push(line);
+        }
+    } else {
+        lines.push(Line::from(Span::styled(
+            "→ or ⏎ to open full detail",
+            Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
+        )));
+    }
+
+    f.render_widget(
+        Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
+        inner,
+    );
 }
 
 fn issue_row(issue: &IssueSummary, selected: bool) -> Line<'static> {
@@ -768,6 +855,179 @@ fn centered_rect_h(width_pct: u16, height: u16, area: Rect) -> Rect {
     Rect::new(x, y, w, height.min(area.height))
 }
 
+// ── In-TUI editor ────────────────────────────────────────────────────────────
+fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
+    let key = app.detail.as_ref().map(|d| d.key.as_str()).unwrap_or("");
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(Style::default().fg(WARN))
+        .title(Span::styled(
+            format!("  editing {key} · Markdown  "),
+            Style::default().fg(WARN).add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(Span::styled(
+            "  ^S preview · esc cancel  ",
+            Style::default().fg(MUTED),
+        ));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let ed = &app.editor;
+    let height = inner.height.max(1) as usize;
+    let scroll = if ed.cy >= height {
+        ed.cy - height + 1
+    } else {
+        0
+    };
+
+    let gutter_w = 4u16;
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, line) in ed.lines.iter().enumerate().skip(scroll).take(height) {
+        lines.push(Line::from(vec![
+            Span::styled(format!("{:>3} ", i + 1), Style::default().fg(MUTED)),
+            Span::raw(line.clone()),
+        ]));
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+
+    // Place the real terminal cursor.
+    let cx = inner.x + gutter_w + ed.cx as u16;
+    let cy = inner.y + (ed.cy - scroll) as u16;
+    if cx < inner.x + inner.width && cy < inner.y + inner.height {
+        f.set_cursor_position((cx, cy));
+    }
+}
+
+// ── Jax companion (entertainment) ────────────────────────────────────────────
+fn draw_jax_companion(f: &mut Frame, app: &App, area: Rect) {
+    let w = 30u16.min(area.width);
+    let h = 8u16.min(area.height.saturating_sub(3));
+    let x = area.x + 2;
+    let y = area.y + area.height.saturating_sub(h + 3);
+    let rect = Rect::new(x, y, w, h);
+    f.render_widget(Clear, rect);
+
+    let (caption, body) = jax_scene(app.tick);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(ACCENT2))
+        .title(Span::styled(
+            format!("  jax · {caption}  "),
+            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    f.render_widget(
+        Paragraph::new(Text::from(body)).alignment(Alignment::Center),
+        inner,
+    );
+}
+
+/// A rotating cast of little animated Jax scenes.
+fn jax_scene(tick: u64) -> (&'static str, Vec<Line<'static>>) {
+    let scene = (tick / 45) % 6;
+    let frame = (tick / 3) % 4;
+    let blink = (tick / 6).is_multiple_of(9);
+    let eyes = if blink { "- ‿ -" } else { "●‿●" };
+    let a = Style::default().fg(ACCENT);
+    let w = Style::default().fg(Color::White);
+    let m = Style::default().fg(MUTED);
+
+    let ln = |s: String, st: Style| Line::from(Span::styled(s, st));
+
+    match scene {
+        0 => {
+            // waving
+            let arm = if frame.is_multiple_of(2) {
+                "  o/"
+            } else {
+                "  \\o"
+            };
+            (
+                "👋 hi!",
+                vec![
+                    ln(" .---.".into(), a),
+                    ln(format!(" |{eyes}|"), w),
+                    ln(format!("{arm}|  |"), a),
+                    ln("  '--'".into(), a),
+                ],
+            )
+        }
+        1 => {
+            // sleeping
+            let z = ["z  ", " Z ", "  z", " Z "][frame as usize];
+            (
+                "😴 zzz…",
+                vec![
+                    ln(format!("      {z}"), m),
+                    ln(" .---.".into(), a),
+                    ln(" |-‿-|".into(), w),
+                    ln("  '--'".into(), a),
+                ],
+            )
+        }
+        2 => {
+            // nerd, reading a spec
+            let cur = if frame.is_multiple_of(2) { "▌" } else { " " };
+            (
+                "🤓 reading specs",
+                vec![
+                    ln(" .---.  __".into(), a),
+                    ln(format!(" |◕‿◕| |{cur}|"), w),
+                    ln("  '--'  ‾‾".into(), a),
+                    ln(" // TODO".into(), m),
+                ],
+            )
+        }
+        3 => {
+            // fishing
+            let bob = ["°", ".", "°", "o"][frame as usize];
+            let fish = if frame == 3 { "><>" } else { "   " };
+            (
+                "🎣 gone fishin'",
+                vec![
+                    ln(" .---. /".into(), a),
+                    ln(format!(" |{eyes}|/"), w),
+                    ln("  '--' ".into(), a),
+                    ln(
+                        format!("~~~~{bob}~{fish}~~"),
+                        Style::default().fg(Color::Blue),
+                    ),
+                ],
+            )
+        }
+        4 => {
+            // party
+            let confetti = ["✦ ˚ ✧", "˚ ✧ ✦", "✧ ✦ ˚", "✦ ✧ ˚"][frame as usize];
+            (
+                "🎉 woo! 🪅",
+                vec![
+                    ln(confetti.into(), Style::default().fg(ACCENT2)),
+                    ln(" .---.".into(), a),
+                    ln(format!(" |{eyes}| 🪅"), w),
+                    ln(" \\'--'/".into(), a),
+                ],
+            )
+        }
+        _ => {
+            // otter friend floats by
+            let pos = (frame * 3) as usize;
+            let pad = " ".repeat(pos.min(10));
+            (
+                "🦦 otter break",
+                vec![
+                    ln(" .---.".into(), a),
+                    ln(format!(" |{eyes}|"), w),
+                    ln("  '--'".into(), a),
+                    ln(format!("{pad}🦦~~"), Style::default().fg(Color::Blue)),
+                ],
+            )
+        }
+    }
+}
+
 // ── About (animated) ─────────────────────────────────────────────────────────
 const BANNER: [&str; 6] = [
     "     ██╗██╗██████╗  █████╗   ████████╗██╗   ██╗██╗",
@@ -911,18 +1171,19 @@ fn draw_help_overlay(f: &mut Frame, area: Rect) {
     let rows = [
         ("↑ / k", "move up"),
         ("↓ / j", "move down"),
-        ("⏎ / l", "open selected issue"),
+        ("→ / ⏎", "open selected issue"),
         ("esc/←/⌫", "back"),
+        ("s / S", "cycle sort / flip direction"),
+        ("f", "cycle status filter"),
+        ("v", "toggle quick-view panel"),
         ("t", "change status (in an issue)"),
-        ("e", "edit description in $EDITOR"),
-        ("g", "go home"),
-        ("l", "full list"),
+        ("e / E", "edit description (in-TUI / $EDITOR)"),
         ("a", "about panel"),
         ("m", "toggle mouse mode"),
+        ("J", "toggle Jax companion 🦦"),
         ("y / Y", "copy issue key / URL"),
         ("r", "refresh from source"),
-        ("?", "toggle this help"),
-        ("q", "quit"),
+        ("? / q", "toggle help / quit"),
     ];
     let lines: Vec<Line> = rows
         .iter()
