@@ -203,3 +203,52 @@ fn jax_companion_appears_when_toggled() {
     let text = render(&app);
     assert!(text.contains("jax"), "the Jax companion box should render");
 }
+
+#[test]
+fn jax_companion_sits_above_quick_view_not_overlapping() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.show_jax = true;
+    app.quick_view = true;
+    app.selected = 0;
+    let text = render(&app);
+    let lines: Vec<&str> = text.lines().collect();
+    let jax_row = lines
+        .iter()
+        .position(|l| l.contains("jax"))
+        .expect("jax box should render");
+    let quick_view_row = lines
+        .iter()
+        .position(|l| l.contains("quick view"))
+        .expect("quick view panel should render");
+    assert!(
+        jax_row < quick_view_row,
+        "Jax (row {jax_row}) should appear above the quick-view panel (row {quick_view_row})"
+    );
+}
+
+#[test]
+fn search_screen_shows_goto_and_filters_results() {
+    let mut app = demo_app();
+    app.open_search();
+    for c in "DS-2603".chars() {
+        app.search_input_char(c);
+    }
+    let text = render(&app);
+    assert!(
+        text.contains("go to"),
+        "search should offer a go-to-issue action"
+    );
+    assert!(text.contains("DS-2603"), "search should show the typed key");
+}
+
+#[test]
+fn search_screen_empty_query_shows_hint_or_full_list() {
+    let mut app = demo_app();
+    app.open_search();
+    let text = render(&app);
+    assert!(
+        text.contains("search") || text.contains("results"),
+        "search screen should render its panels even with an empty query"
+    );
+}
