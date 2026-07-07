@@ -125,3 +125,55 @@ fn preview_screen_renders_pending_edit() {
     assert!(text.contains("Fresh heading"));
     assert!(text.contains("apply"));
 }
+
+#[test]
+fn in_tui_editor_renders_buffer() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.begin_tui_edit();
+    let text = render(&app);
+    assert!(text.contains("editing"), "editor should be titled");
+    assert!(
+        text.contains("Problem"),
+        "editor should show the description Markdown"
+    );
+}
+
+#[test]
+fn quick_view_panel_shows_selected_issue() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.quick_view = true;
+    app.selected = 0;
+    let text = render(&app);
+    assert!(
+        text.contains("quick view"),
+        "quick view panel should render"
+    );
+}
+
+#[test]
+fn work_list_title_shows_sort_and_filter() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.cycle_filter();
+    let text = render(&app);
+    assert!(
+        text.contains("sort"),
+        "list title should show the sort mode"
+    );
+    assert!(
+        text.contains("filter"),
+        "list title should show the active filter"
+    );
+}
+
+#[test]
+fn jax_companion_appears_when_toggled() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.show_jax = true;
+    let text = render(&app);
+    assert!(text.contains("jax"), "the Jax companion box should render");
+}
