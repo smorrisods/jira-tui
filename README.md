@@ -127,6 +127,25 @@ Press **`/`** from Home, the full list, or an open issue to search:
 - **`↑`/`↓`** to move between results, **`⏎`** to open the highlighted one,
   **`esc`** to cancel back to where you were.
 
+## Swimlane board
+
+Press **`b`** from Home or the full list to open a terminal Kanban board:
+
+- **Columns** are your workflow statuses (Backlog → To Do → In Progress → In
+  Review → Done, plus anything else present), each with a live count.
+- **Swimlanes** group cards by parent **Epic** — issues under the same Epic
+  share a lane, with a **"No epic"** lane for everything else — so you can see
+  at a glance how work is distributed across initiatives, the way Jira's own
+  board view groups things by default.
+- **`↑`/`↓`** move between cards in the current lane/column, **`←`/`→`** switch
+  columns, **`PageUp`/`PageDown`** switch lanes, **`⏎`** opens the highlighted
+  card, **`/`** jumps into search, **`esc`**/**`q`** goes back home.
+- The whole board scrolls (mouse wheel or the same keys) if it's taller than
+  the terminal.
+
+The board reflects your current sort and status filter, so narrowing the list
+first (see below) narrows the board too.
+
 ## Editing
 
 Inside an issue (`Detail`):
@@ -150,8 +169,10 @@ inline `code`/**bold**/*italic*/links), so the round trip stays ADF-native.
 Press **`m`** to toggle mouse mode:
 
 - **Click** a row to open that issue.
-- **Wheel** to scroll the list, the issue detail, or the quick-view panel —
-  whichever is under the pointer.
+- **Wheel** scrolls whatever panel is **under the pointer** — the list, the
+  quick-view panel, the issue detail, or the board — regardless of which panel
+  currently has keyboard focus (`Tab`). Mouse always follows the cursor;
+  keyboard follows focus — they're independent.
 - **Drag** to select rows; on release the text is copied to your system clipboard
   via **OSC 52** (works over SSH, no X11/Wayland dependency).
 - **Shift-drag** bypasses the app so your terminal's **native selection/copy**
@@ -172,6 +193,7 @@ copies its browse URL.
 | `f` | cycle status filter |
 | `v` | toggle quick-view panel |
 | `Tab` | focus list ↔ quick view (enables arrow-key scroll) |
+| `b` | swimlane board (Kanban-style, grouped by epic) |
 | `g` | go home |
 | `l` | full list |
 | `t` | change status (in an issue) |
@@ -229,8 +251,8 @@ screen via `ratatui`'s `TestBackend`.
 Milestone 1 (browse) and Milestone 2 (quick transitions + the Markdown
 round-trip edit) are working end to end against demo, cached, and live data, with
 onboarding, mouse mode, clipboard support, sort/filter, a focusable quick-view
-panel, and search / go-to-issue. Attachments are next — see `docs/` for the full
-spec and roadmap.
+panel, search / go-to-issue, and a swimlane board grouped by epic. Attachments
+are next — see `docs/` for the full spec and roadmap.
 
 ## Guidelines
 
