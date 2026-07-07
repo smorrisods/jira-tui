@@ -1,0 +1,10 @@
+/target
+**/*.rs.bk
+Cargo.lock.orig
+
+# Local Jira auth material — never commit
+token.txt
+
+# OS / editor cruft
+.DS_Store
+*.swp
