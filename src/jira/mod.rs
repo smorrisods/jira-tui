@@ -5,6 +5,7 @@
 //! `live` is disabled or credentials are missing, the app falls back to demo
 //! data — the TUI is always explorable.
 
+#[cfg(feature = "live")]
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -14,6 +15,7 @@ pub struct Config {
     pub project: String,
 }
 
+#[cfg(feature = "live")]
 impl Config {
     /// Assemble config from env vars, an optional config file, and token.txt.
     /// Returns `None` when credentials are insufficient for live mode.
@@ -56,6 +58,7 @@ impl Config {
     }
 }
 
+#[cfg(feature = "live")]
 fn read_token_file() -> Option<String> {
     for candidate in ["token.txt", "../jira-tasks/token.txt"] {
         if let Ok(s) = std::fs::read_to_string(candidate) {
@@ -70,6 +73,7 @@ fn read_token_file() -> Option<String> {
 
 /// Minimal `key = "value"` reader for the optional config file. Intentionally
 /// tiny — no TOML dependency for a handful of flat settings.
+#[cfg(feature = "live")]
 fn read_config_file() -> std::collections::HashMap<String, String> {
     let mut map = std::collections::HashMap::new();
     let path = dirs::config_dir().map(|d| d.join("jira-tui/config.toml"));
@@ -144,6 +148,25 @@ mod live {
         cur.as_str().map(|s| s.to_string())
     }
 
+    fn is_blocked(fields: &Value) -> bool {
+        fields
+            .get("issuelinks")
+            .and_then(|l| l.as_array())
+            .map(|arr| {
+                arr.iter().any(|link| {
+                    // An inward "is blocked by" link means this issue is blocked.
+                    link.get("inwardIssue").is_some()
+                        && link
+                            .get("type")
+                            .and_then(|t| t.get("inward"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_lowercase().contains("block"))
+                            .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false)
+    }
+
     fn summary_from(issue: &Value) -> IssueSummary {
         let key = issue
             .get("key")
@@ -158,7 +181,7 @@ mod live {
             status: str_field(&f, &["status", "name"]).unwrap_or_else(|| "Unknown".into()),
             priority: priority_from(&str_field(&f, &["priority", "name"]).unwrap_or_default()),
             assignee: str_field(&f, &["assignee", "displayName"]),
-            blocked: false,
+            blocked: is_blocked(&f),
             updated: str_field(&f, &["updated"])
                 .map(|s| s.chars().take(10).collect())
                 .unwrap_or_default(),
@@ -168,8 +191,10 @@ mod live {
     pub fn fetch_my_work(cfg: &Config) -> Result<Vec<IssueSummary>> {
         let jql = "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC";
         let encoded = url_encode(jql);
+        // Enhanced JQL search endpoint (`/search/jql`); the classic `/search`
+        // endpoint has been sunset on Jira Cloud.
         let path = format!(
-            "/rest/api/3/search?jql={encoded}&maxResults=50&fields=summary,status,issuetype,priority,assignee,updated"
+            "/rest/api/3/search/jql?jql={encoded}&maxResults=50&fields=summary,status,issuetype,priority,assignee,updated,issuelinks"
         );
         let data = get(cfg, &path)?;
         let issues = data
@@ -288,11 +313,4 @@ mod live {
         }
         out
     }
-}
-
-// Keep the non-live build honest about the unused Result import.
-#[cfg(not(feature = "live"))]
-#[allow(dead_code)]
-fn _unused() -> anyhow::Result<()> {
-    Ok(())
 }
