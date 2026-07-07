@@ -30,14 +30,32 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     draw_header(f, app, root[0]);
 
+    // The quick-view panel spans the full width beneath Home/List, taking a
+    // generous share of the remaining height so fields and the ADF body are
+    // both readable at a glance.
+    let quick_view_active = app.quick_view && matches!(app.screen, Screen::Home | Screen::List);
+    let (body_area, quick_area) = if quick_view_active {
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(6), Constraint::Percentage(50)])
+            .split(root[1]);
+        (rows[0], Some(rows[1]))
+    } else {
+        (root[1], None)
+    };
+
     match app.screen {
-        Screen::Welcome => draw_welcome(f, app, root[1]),
-        Screen::Home => draw_home(f, app, root[1]),
-        Screen::List => draw_list(f, app, root[1], true),
-        Screen::Detail => draw_detail(f, app, root[1]),
-        Screen::Preview => draw_preview(f, app, root[1]),
-        Screen::Edit => draw_editor(f, app, root[1]),
-        Screen::About => draw_about(f, app, root[1]),
+        Screen::Welcome => draw_welcome(f, app, body_area),
+        Screen::Home => draw_home(f, app, body_area),
+        Screen::List => draw_list(f, app, body_area, true),
+        Screen::Detail => draw_detail(f, app, body_area),
+        Screen::Preview => draw_preview(f, app, body_area),
+        Screen::Edit => draw_editor(f, app, body_area),
+        Screen::About => draw_about(f, app, body_area),
+    }
+
+    if let Some(qa) = quick_area {
+        draw_quick_view(f, app, qa);
     }
 
     draw_footer(f, app, root[2]);
@@ -477,17 +495,6 @@ fn stat_line(label: &str, n: usize, colour: Color) -> Line<'static> {
 
 // ── Issue list ───────────────────────────────────────────────────────────────
 fn draw_list(f: &mut Frame, app: &App, area: Rect, full: bool) {
-    // Split off a quick-view panel at the bottom when enabled.
-    let (list_area, quick_area) = if app.quick_view {
-        let rows = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(3), Constraint::Length(9)])
-            .split(area);
-        (rows[0], Some(rows[1]))
-    } else {
-        (area, None)
-    };
-
     let base = if full { "all my work" } else { "my work" };
     let mut title = format!("  {base} · {}", app.sort_label());
     if let Some(filter) = app.filter_label() {
@@ -495,8 +502,8 @@ fn draw_list(f: &mut Frame, app: &App, area: Rect, full: bool) {
     }
     title.push_str(&format!("  ({})  ", app.issues.len()));
     let block = card(&title, ACCENT);
-    let inner = block.inner(list_area);
-    f.render_widget(block, list_area);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
 
     let mut lines: Vec<Line> = Vec::new();
     let height = inner.height as usize;
@@ -511,72 +518,71 @@ fn draw_list(f: &mut Frame, app: &App, area: Rect, full: bool) {
     app.list_area.set(inner);
     app.list_start.set(start);
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
-
-    if let Some(qa) = quick_area {
-        draw_quick_view(f, app, qa);
-    }
 }
 
+/// Full-width quick-view panel: the selected issue's fields and full ADF body,
+/// once loaded into the detail cache (loaded lazily by the app's event loop).
 fn draw_quick_view(f: &mut Frame, app: &App, area: Rect) {
-    let block = card("  quick view  ", ACCENT2);
+    let Some(issue) = app.selected_issue() else {
+        let block = card("  quick view  ", ACCENT2);
+        f.render_widget(block, area);
+        return;
+    };
+    let title = format!("  quick view · {}  ", issue.key);
+    let block = card(&title, ACCENT2);
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let Some(issue) = app.selected_issue() else {
-        return;
-    };
-    let mut lines: Vec<Line> = Vec::new();
-    lines.push(Line::from(vec![
-        Span::styled(
-            format!("{} ", issue.key),
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-        ),
-        chip(&issue.issue_type, ACCENT2),
-        Span::raw(" "),
-        chip(&issue.status, status_colour(&issue.status)),
-        Span::raw(" "),
-        chip(issue.priority.label(), priority_colour(&issue.priority)),
-        if issue.blocked {
-            Span::styled("  ⛔ blocked", Style::default().fg(DANGER))
-        } else {
-            Span::raw("")
-        },
-    ]));
-    lines.push(Line::from(Span::styled(
-        issue.summary.clone(),
-        Style::default()
-            .fg(Color::White)
-            .add_modifier(Modifier::BOLD),
-    )));
-    lines.push(Line::from(Span::styled(
-        format!(
-            "assignee: {}   updated: {}",
-            issue
-                .assignee
-                .clone()
-                .unwrap_or_else(|| "unassigned".into()),
-            issue.updated
-        ),
-        Style::default().fg(MUTED),
-    )));
-
-    // If we've opened this issue before, show a snippet of its description.
-    if let Some(detail) = app.quick_view_detail() {
-        lines.push(divider());
-        let rendered = adf::render(&detail.description);
-        let avail = inner.height.saturating_sub(lines.len() as u16) as usize;
-        for line in rendered.lines.into_iter().take(avail) {
-            lines.push(line);
-        }
+    let lines: Vec<Line> = if let Some(detail) = app.quick_view_detail() {
+        issue_detail_lines(detail)
     } else {
-        lines.push(Line::from(Span::styled(
-            "→ or ⏎ to open full detail",
-            Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
-        )));
-    }
+        // Not cached yet: show what we know from the summary row while the
+        // full detail loads in the background.
+        vec![
+            Line::from(vec![
+                Span::styled(
+                    format!("{} ", issue.key),
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                ),
+                chip(&issue.issue_type, ACCENT2),
+                Span::raw(" "),
+                chip(&issue.status, status_colour(&issue.status)),
+                Span::raw(" "),
+                chip(issue.priority.label(), priority_colour(&issue.priority)),
+                if issue.blocked {
+                    Span::styled("  ⛔ blocked", Style::default().fg(DANGER))
+                } else {
+                    Span::raw("")
+                },
+            ]),
+            Line::from(Span::styled(
+                issue.summary.clone(),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                format!(
+                    "assignee: {}   updated: {}",
+                    issue
+                        .assignee
+                        .clone()
+                        .unwrap_or_else(|| "unassigned".into()),
+                    issue.updated
+                ),
+                Style::default().fg(MUTED),
+            )),
+            Line::from(Span::styled(
+                "loading full detail…",
+                Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
+            )),
+        ]
+    };
 
     f.render_widget(
-        Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
+        Paragraph::new(Text::from(lines))
+            .wrap(Wrap { trim: false })
+            .scroll((app.quick_view_scroll, 0)),
         inner,
     );
 }
@@ -646,6 +652,17 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
     app.detail_area.set(inner);
     f.render_widget(block, area);
 
+    let lines = issue_detail_lines(detail);
+    let para = Paragraph::new(Text::from(lines))
+        .wrap(Wrap { trim: false })
+        .scroll((app.detail_scroll, 0));
+    f.render_widget(para, inner);
+}
+
+/// Render an issue's fields and ADF body (identity, metadata, description,
+/// acceptance criteria, transitions strip). Shared by the full Detail screen
+/// and the inline quick-view panel so both show the same content.
+fn issue_detail_lines(detail: &crate::domain::IssueDetail) -> Vec<Line<'static>> {
     let mut lines: Vec<Line> = Vec::new();
     // Identity line
     lines.push(Line::from(vec![
@@ -755,10 +772,7 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(strip));
     }
 
-    let para = Paragraph::new(Text::from(lines))
-        .wrap(Wrap { trim: false })
-        .scroll((app.detail_scroll, 0));
-    f.render_widget(para, inner);
+    lines
 }
 
 // ── Edit preview ─────────────────────────────────────────────────────────────

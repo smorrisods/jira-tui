@@ -91,6 +91,9 @@ fn run(terminal: &mut Term, app: &mut App) -> Result<()> {
             }
         }
 
+        // Populate the quick-view panel lazily (cheap no-op once cached).
+        app.ensure_quick_view_loaded();
+
         app.tick = app.tick.wrapping_add(1);
 
         if app.should_quit {
@@ -292,6 +295,16 @@ fn handle_key(app: &mut App, key: KeyEvent) {
 
         KeyCode::Up | KeyCode::Char('k') => nav(app, -1),
         KeyCode::Down | KeyCode::Char('j') => nav(app, 1),
+        // While quick view is open, PageUp/PageDown scroll its body instead of
+        // jumping the list selection by a page.
+        KeyCode::PageUp if app.quick_view && matches!(app.screen, Screen::Home | Screen::List) => {
+            app.quick_view_scroll_by(-6)
+        }
+        KeyCode::PageDown
+            if app.quick_view && matches!(app.screen, Screen::Home | Screen::List) =>
+        {
+            app.quick_view_scroll_by(6)
+        }
         KeyCode::PageUp => nav(app, -8),
         KeyCode::PageDown => nav(app, 8),
 

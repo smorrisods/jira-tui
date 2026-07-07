@@ -69,6 +69,7 @@ pub struct App {
 
     // Quick-view panel + a cache of opened issue details.
     pub quick_view: bool,
+    pub quick_view_scroll: u16,
     pub detail_cache: HashMap<String, IssueDetail>,
 
     /// Ambient Jax companion (pure entertainment 🦦).
@@ -257,6 +258,7 @@ impl App {
             sort_asc: false,
             filter_status: None,
             quick_view: false,
+            quick_view_scroll: 0,
             detail_cache: HashMap::new(),
             show_jax: false,
             editor: EditorState::default(),
@@ -438,6 +440,7 @@ impl App {
             idx = len - 1;
         }
         self.selected = idx as usize;
+        self.quick_view_scroll = 0;
     }
 
     pub fn assigned_to_me(&self) -> Vec<&IssueSummary> {
@@ -466,6 +469,28 @@ impl App {
     pub fn quick_view_detail(&self) -> Option<&IssueDetail> {
         let key = &self.selected_issue()?.key;
         self.detail_cache.get(key)
+    }
+
+    /// Fetch and cache the selected issue's detail for the quick-view panel if
+    /// it isn't already cached. Cheap no-op once cached; call each frame while
+    /// quick view is open so panels populate without a full "open" action.
+    pub fn ensure_quick_view_loaded(&mut self) {
+        if !self.quick_view {
+            return;
+        }
+        let Some(key) = self.selected_issue().map(|i| i.key.clone()) else {
+            return;
+        };
+        if self.detail_cache.contains_key(&key) {
+            return;
+        }
+        let detail = self.load_detail(&key);
+        self.detail_cache.insert(key, detail);
+    }
+
+    pub fn quick_view_scroll_by(&mut self, delta: isize) {
+        let new = self.quick_view_scroll as isize + delta;
+        self.quick_view_scroll = new.max(0) as u16;
     }
 
     // ── In-TUI editor ────────────────────────────────────────────────────────
