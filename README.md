@@ -18,14 +18,21 @@ It's the third act of a small trilogy:
   that can collect and verify your Jira credentials, or drop you into demo mode.
 - **Always explorable.** Runs against built-in sample data with zero setup, and
   caches your last live "my work" list for instant, offline starts.
+- **Sort, filter, and peek.** Sort your work by date/priority/status/key, filter
+  by status, and toggle a quick-view panel to peek at the selected issue without
+  leaving the list.
 - **ADF-native rendering.** Headings, task lists, code blocks, tables, and inline
   marks render as structured terminal text — not flattened Markdown.
+- **Edit in place.** Change status with a picker, and edit descriptions either in
+  a **built-in Markdown editor** or your external `$EDITOR` — recompiled to ADF
+  and previewed before anything is sent to Jira.
 - **Git-aware.** Detects your repo and branch and elevates the `DS-123` issue in
   your current branch name.
 - **Mouse mode + clipboard.** Optional click-to-open, wheel scroll, and
   drag-to-copy via OSC 52 — with Shift-drag reserved for native terminal
   selection.
-- **A bit of soul.** A colour-wave animated ASCII about panel (`a` or `--about`).
+- **A bit of soul.** A colour-wave animated ASCII about panel (`a`) and a
+  toggleable ambient mascot, **Jax** (`J`), who fishes, naps, and parties. 🦦
 
 ## Quick start
 
@@ -87,6 +94,17 @@ mouse = false   # start with mouse mode on/off
 Missing or invalid credentials never crash the app — it falls back to the last
 cached list, then to demo data.
 
+## The work list
+
+The `my work` panel supports quick triage:
+
+- **`s` / `S`** — cycle the sort field (updated date → priority → status → key)
+  and flip the direction. The current mode shows in the panel title.
+- **`f`** — cycle a status filter (all → each status → all).
+- **`v`** — toggle a **quick-view** panel that peeks at the selected issue (and,
+  once you've opened it, a snippet of its description) without leaving the list.
+- **`→` / `⏎`** — open the selected issue; **`esc` / `←` / `⌫`** — go back.
+
 ## Editing
 
 Inside an issue (`Detail`):
@@ -94,10 +112,12 @@ Inside an issue (`Detail`):
 - **`t` — change status:** opens a transition picker; pick a target and it's
   applied (via Jira REST in live mode, locally in demo). The current status is
   marked, and a toast confirms the move.
-- **`e` — edit the description:** serialises the issue's ADF to Markdown, opens
-  it in **`$VISUAL`/`$EDITOR`** (falling back to `vi`), then **recompiles your
-  Markdown back to ADF** and shows a **preview**. Press `y` to apply (REST in
-  live mode) or `esc` to cancel — nothing is sent to Jira until you confirm.
+- **`e` — edit the description:** serialises the issue's ADF to Markdown and
+  opens it in a **built-in editor** (`^S` to preview, `esc` to cancel). Prefer
+  your own editor? **`E`** opens `$VISUAL`/`$EDITOR` (falling back to `vi`)
+  instead. Either way your Markdown is **recompiled to ADF** and shown as a
+  **preview**; press `y` to apply (REST in live mode) or `esc` to cancel —
+  nothing is sent to Jira until you confirm.
 
 The Markdown ↔ ADF conversion follows the same mapping rules as the
 `jira-ds-skill` pipeline (headings, bullet/ordered/task lists, code blocks, and
@@ -122,14 +142,18 @@ copies its browse URL.
 | Key | Action |
 | --- | --- |
 | `↑ / k`, `↓ / j` | move selection (scroll in detail) |
-| `⏎ / l` | open the selected issue |
+| `→ / ⏎` | open the selected issue |
 | `esc / ← / ⌫` | back (or quit from home) |
+| `s / S` | cycle sort / flip direction |
+| `f` | cycle status filter |
+| `v` | toggle quick-view panel |
 | `g` | go home |
 | `l` | full list |
 | `t` | change status (in an issue) |
-| `e` | edit description in `$EDITOR` |
+| `e / E` | edit description (in-TUI / `$EDITOR`) |
 | `a` | about panel |
 | `m` | toggle mouse mode |
+| `J` | toggle the Jax companion 🦦 |
 | `y` / `Y` | copy issue key / URL to clipboard |
 | `r` | refresh from source |
 | `?` | toggle help |
