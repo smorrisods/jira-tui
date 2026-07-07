@@ -105,8 +105,27 @@ The `my work` panel supports quick triage:
   selected issue's full fields (type, status, priority, assignee, reporter,
   epic, components, labels, links) and its complete ADF-rendered description,
   acceptance criteria, and transitions — loaded automatically as you move the
-  selection. Use `PageUp`/`PageDown` to scroll it.
+  selection.
+- **`Tab`** — move keyboard focus between the list and the quick-view panel
+  (its border brightens when focused). With focus on quick view, `↑`/`↓` and
+  `PageUp`/`PageDown` scroll its body instead of moving the list selection;
+  `Tab` again to hand control back to the list.
+- **Mouse wheel** scrolls whichever panel the pointer is over — hover the list
+  to move the selection, hover quick view to scroll it — no `Tab` needed.
+- **`/`** — open **search / go to issue** (see below).
 - **`→` / `⏎`** — open the selected issue; **`esc` / `←` / `⌫`** — go back.
+
+## Search & go to issue
+
+Press **`/`** from Home, the full list, or an open issue to search:
+
+- Type to filter your work list by **key or summary** (case-insensitive
+  substring match) — results update as you type.
+- Type something that looks like an issue key (`DS-123`) and a **"↵ go to
+  DS-123"** row appears at the top — press `⏎` to jump straight to that issue
+  via a direct fetch, even if it isn't in your current list or view.
+- **`↑`/`↓`** to move between results, **`⏎`** to open the highlighted one,
+  **`esc`** to cancel back to where you were.
 
 ## Editing
 
@@ -131,7 +150,8 @@ inline `code`/**bold**/*italic*/links), so the round trip stays ADF-native.
 Press **`m`** to toggle mouse mode:
 
 - **Click** a row to open that issue.
-- **Wheel** to scroll the list or issue detail.
+- **Wheel** to scroll the list, the issue detail, or the quick-view panel —
+  whichever is under the pointer.
 - **Drag** to select rows; on release the text is copied to your system clipboard
   via **OSC 52** (works over SSH, no X11/Wayland dependency).
 - **Shift-drag** bypasses the app so your terminal's **native selection/copy**
@@ -144,12 +164,14 @@ copies its browse URL.
 
 | Key | Action |
 | --- | --- |
-| `↑ / k`, `↓ / j` | move selection (scroll in detail) |
+| `↑ / k`, `↓ / j` | move selection (scroll in detail, or quick view when focused) |
 | `→ / ⏎` | open the selected issue |
 | `esc / ← / ⌫` | back (or quit from home) |
+| `/` | search / go to issue by key |
 | `s / S` | cycle sort / flip direction |
 | `f` | cycle status filter |
 | `v` | toggle quick-view panel |
+| `Tab` | focus list ↔ quick view (enables arrow-key scroll) |
 | `g` | go home |
 | `l` | full list |
 | `t` | change status (in an issue) |
@@ -206,8 +228,9 @@ screen via `ratatui`'s `TestBackend`.
 
 Milestone 1 (browse) and Milestone 2 (quick transitions + the Markdown
 round-trip edit) are working end to end against demo, cached, and live data, with
-onboarding, mouse mode, and clipboard support. Richer edit flows and attachments
-are next — see `docs/` for the full spec and roadmap.
+onboarding, mouse mode, clipboard support, sort/filter, a focusable quick-view
+panel, and search / go-to-issue. Attachments are next — see `docs/` for the full
+spec and roadmap.
 
 ## Guidelines
 
