@@ -56,6 +56,8 @@ pub struct IssueSummary {
     pub assignee: Option<String>,
     pub blocked: bool,
     pub updated: String,
+    /// Parent (usually Epic) key, used to group issues into board swimlanes.
+    pub epic: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -127,6 +129,7 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             assignee: Some("scott.morris".into()),
             blocked: false,
             updated: "2h ago".into(),
+            epic: None,
         },
         IssueSummary {
             key: "DS-2725".into(),
@@ -137,6 +140,7 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             assignee: Some("scott.morris".into()),
             blocked: false,
             updated: "31m ago".into(),
+            epic: Some("DS-2722".into()),
         },
         IssueSummary {
             key: "DS-2603".into(),
@@ -147,6 +151,7 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             assignee: Some("scott.morris".into()),
             blocked: true,
             updated: "1d ago".into(),
+            epic: Some("DS-2602".into()),
         },
         IssueSummary {
             key: "DS-2604".into(),
@@ -157,6 +162,7 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             assignee: None,
             blocked: false,
             updated: "1d ago".into(),
+            epic: Some("DS-2602".into()),
         },
         IssueSummary {
             key: "DS-2610".into(),
@@ -167,6 +173,7 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             assignee: Some("scott.morris".into()),
             blocked: false,
             updated: "3d ago".into(),
+            epic: Some("DS-2600".into()),
         },
         IssueSummary {
             key: "DS-2648".into(),
@@ -177,6 +184,7 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             assignee: Some("scott.morris".into()),
             blocked: false,
             updated: "5h ago".into(),
+            epic: None,
         },
         IssueSummary {
             key: "DS-2661".into(),
@@ -187,6 +195,7 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             assignee: Some("scott.morris".into()),
             blocked: false,
             updated: "6d ago".into(),
+            epic: None,
         },
         IssueSummary {
             key: "DS-2599".into(),
@@ -197,6 +206,7 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             assignee: None,
             blocked: false,
             updated: "2w ago".into(),
+            epic: Some("DS-2600".into()),
         },
     ]
 }

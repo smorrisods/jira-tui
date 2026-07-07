@@ -265,12 +265,31 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // The swimlane board has its own 2D navigation (card / column / lane).
+    if app.screen == Screen::Board {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => app.board_move_card(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.board_move_card(1),
+            KeyCode::Left | KeyCode::Char('h') => app.board_move_col(-1),
+            KeyCode::Right | KeyCode::Char('l') => app.board_move_col(1),
+            KeyCode::PageUp => app.board_move_lane(-1),
+            KeyCode::PageDown => app.board_move_lane(1),
+            KeyCode::Enter => app.board_open(),
+            KeyCode::Char('/') => app.open_search(),
+            KeyCode::Char('?') => app.show_help = true,
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => back_or_quit(app),
+            _ => {}
+        }
+        return;
+    }
+
     match key.code {
         KeyCode::Char('?') => app.show_help = true,
         KeyCode::Char('a') => app.screen = Screen::About,
         KeyCode::Char('g') => app.screen = Screen::Home,
         KeyCode::Char('r') => app.refresh(),
         KeyCode::Char('m') => toggle_mouse(app),
+        KeyCode::Char('b') if matches!(app.screen, Screen::Home | Screen::List) => app.open_board(),
         KeyCode::Char('/')
             if matches!(app.screen, Screen::Home | Screen::List | Screen::Detail) =>
         {
@@ -366,25 +385,30 @@ fn handle_mouse(app: &mut App, me: MouseEvent) {
         return;
     }
     match me.kind {
-        // Scroll whichever panel the pointer is over: the quick-view panel if
-        // hovering it, otherwise the list (or the current screen's default).
-        MouseEventKind::ScrollUp => {
-            if app.point_in_quick_view(me.column, me.row) {
-                app.quick_view_scroll_by(-1);
-            } else {
-                nav(app, -1);
-            }
-        }
-        MouseEventKind::ScrollDown => {
-            if app.point_in_quick_view(me.column, me.row) {
-                app.quick_view_scroll_by(1);
-            } else {
-                nav(app, 1);
-            }
-        }
+        MouseEventKind::ScrollUp => scroll_at(app, me.column, me.row, -1),
+        MouseEventKind::ScrollDown => scroll_at(app, me.column, me.row, 1),
         MouseEventKind::Down(MouseButton::Left) => app.mouse_down(me.row),
         MouseEventKind::Drag(MouseButton::Left) => app.mouse_drag(me.row),
         MouseEventKind::Up(MouseButton::Left) => app.mouse_up(me.row),
+        _ => {}
+    }
+}
+
+/// Scroll whichever panel the pointer is physically over. This is deliberately
+/// independent of keyboard `Tab` focus: the mouse always follows the pointer,
+/// while `Tab` + arrow keys is a separate, keyboard-only focus model.
+fn scroll_at(app: &mut App, x: u16, y: u16, delta: isize) {
+    if app.point_in_quick_view(x, y) {
+        app.quick_view_scroll_by(delta);
+        return;
+    }
+    match app.screen {
+        Screen::Home | Screen::List => app.move_selection(delta),
+        Screen::Detail | Screen::Preview => {
+            let new = app.detail_scroll as isize + delta;
+            app.detail_scroll = new.max(0) as u16;
+        }
+        Screen::Board => app.board_scroll_by(delta),
         _ => {}
     }
 }
@@ -434,7 +458,7 @@ fn nav(app: &mut App, delta: isize) {
                 app.move_selection(delta);
             }
         }
-        Screen::About | Screen::Welcome | Screen::Edit | Screen::Search => {}
+        Screen::About | Screen::Welcome | Screen::Edit | Screen::Search | Screen::Board => {}
     }
 }
 
@@ -443,7 +467,7 @@ fn back_or_quit(app: &mut App) {
         Screen::Home | Screen::Welcome => app.should_quit = true,
         Screen::Preview | Screen::Edit => app.cancel_edit(),
         Screen::Search => app.close_search(),
-        Screen::List | Screen::Detail | Screen::About => app.screen = Screen::Home,
+        Screen::List | Screen::Detail | Screen::About | Screen::Board => app.screen = Screen::Home,
     }
 }
 
@@ -525,4 +549,65 @@ LIVE MODE:\n\
     them, jira-tui runs against built-in sample data (or the last cached list).\n",
         env!("CARGO_PKG_VERSION")
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jira_tui::app::{App, ListFocus, Screen};
+    use ratatui::layout::Rect;
+
+    fn demo_app() -> App {
+        let mut app = App::new(true);
+        app.screen = Screen::Home;
+        app
+    }
+
+    /// Regression test: the mouse wheel must always follow the pointer
+    /// position, never the keyboard `Tab` focus. Hovering the list should
+    /// move the list selection even while quick view has keyboard focus.
+    #[test]
+    fn wheel_over_list_ignores_keyboard_focus() {
+        let mut app = demo_app();
+        app.quick_view = true;
+        app.list_focus = ListFocus::QuickView; // keyboard focus is on quick view
+        app.quick_view_area.set(Rect::new(0, 30, 100, 10)); // panel lives elsewhere
+        app.selected = 0;
+        app.quick_view_scroll = 0;
+
+        // Scroll over the list area (row 5), well outside the quick-view rect.
+        scroll_at(&mut app, 10, 5, 1);
+
+        assert_eq!(app.selected, 1, "wheel over the list should move selection");
+        assert_eq!(
+            app.quick_view_scroll, 0,
+            "quick view must not scroll when the pointer is over the list"
+        );
+    }
+
+    #[test]
+    fn wheel_over_quick_view_scrolls_it_regardless_of_focus() {
+        let mut app = demo_app();
+        app.quick_view = true;
+        app.list_focus = ListFocus::List; // keyboard focus is on the list
+        app.quick_view_area.set(Rect::new(0, 30, 100, 10));
+        app.selected = 0;
+
+        scroll_at(&mut app, 10, 32, 1); // inside the quick-view rect
+
+        assert_eq!(
+            app.selected, 0,
+            "list selection must not move when the pointer is over quick view"
+        );
+        assert_eq!(app.quick_view_scroll, 1);
+    }
+
+    #[test]
+    fn wheel_scrolls_board_when_no_quick_view() {
+        let mut app = demo_app();
+        app.open_board();
+        app.board_scroll = 0;
+        scroll_at(&mut app, 5, 5, 1);
+        assert_eq!(app.board_scroll, 1);
+    }
 }

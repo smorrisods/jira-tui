@@ -240,6 +240,9 @@ mod live {
             updated: str_field(&f, &["updated"])
                 .map(|s| s.chars().take(10).collect())
                 .unwrap_or_default(),
+            // Used to group issues into board swimlanes. Usually an Epic, but
+            // whatever Jira reports as the parent for issues without one.
+            epic: str_field(&f, &["parent", "key"]),
         }
     }
 
@@ -249,7 +252,7 @@ mod live {
         // Enhanced JQL search endpoint (`/search/jql`); the classic `/search`
         // endpoint has been sunset on Jira Cloud.
         let path = format!(
-            "/rest/api/3/search/jql?jql={encoded}&maxResults=50&fields=summary,status,issuetype,priority,assignee,updated,issuelinks"
+            "/rest/api/3/search/jql?jql={encoded}&maxResults=50&fields=summary,status,issuetype,priority,assignee,updated,issuelinks,parent"
         );
         let data = get(cfg, &path)?;
         let issues = data
