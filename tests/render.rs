@@ -94,3 +94,34 @@ fn welcome_setup_shows_credential_fields() {
     assert!(!text.contains("supersecret"), "token must be masked");
     assert!(text.contains('•'), "masked token should render bullets");
 }
+
+#[test]
+fn transition_picker_lists_targets() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.open_transitions();
+    let text = render(&app);
+    assert!(text.contains("move to"), "picker should show a title");
+    assert!(
+        text.contains("In Progress"),
+        "picker should list transitions"
+    );
+    assert!(
+        text.contains("current"),
+        "picker should mark the current status"
+    );
+}
+
+#[test]
+fn preview_screen_renders_pending_edit() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.finish_edit("## Fresh heading\n\nEdited body text.");
+    assert_eq!(app.screen, Screen::Preview);
+    let text = render(&app);
+    assert!(text.contains("preview"), "preview should be titled");
+    assert!(text.contains("Fresh heading"));
+    assert!(text.contains("apply"));
+}
