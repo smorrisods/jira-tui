@@ -11,4 +11,6 @@ pub mod domain;
 pub mod git;
 pub mod infra;
 pub mod jira;
+#[cfg(feature = "mcp")]
+pub mod mcp;
 pub mod ui;
