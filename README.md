@@ -87,6 +87,22 @@ mouse = false   # start with mouse mode on/off
 Missing or invalid credentials never crash the app — it falls back to the last
 cached list, then to demo data.
 
+## Editing
+
+Inside an issue (`Detail`):
+
+- **`t` — change status:** opens a transition picker; pick a target and it's
+  applied (via Jira REST in live mode, locally in demo). The current status is
+  marked, and a toast confirms the move.
+- **`e` — edit the description:** serialises the issue's ADF to Markdown, opens
+  it in **`$VISUAL`/`$EDITOR`** (falling back to `vi`), then **recompiles your
+  Markdown back to ADF** and shows a **preview**. Press `y` to apply (REST in
+  live mode) or `esc` to cancel — nothing is sent to Jira until you confirm.
+
+The Markdown ↔ ADF conversion follows the same mapping rules as the
+`jira-ds-skill` pipeline (headings, bullet/ordered/task lists, code blocks, and
+inline `code`/**bold**/*italic*/links), so the round trip stays ADF-native.
+
 ## Mouse & clipboard
 
 Press **`m`** to toggle mouse mode:
@@ -107,9 +123,11 @@ copies its browse URL.
 | --- | --- |
 | `↑ / k`, `↓ / j` | move selection (scroll in detail) |
 | `⏎ / l` | open the selected issue |
-| `esc / h` | back (or quit from home) |
+| `esc / ← / ⌫` | back (or quit from home) |
 | `g` | go home |
 | `l` | full list |
+| `t` | change status (in an issue) |
+| `e` | edit description in `$EDITOR` |
 | `a` | about panel |
 | `m` | toggle mouse mode |
 | `y` / `Y` | copy issue key / URL to clipboard |
@@ -131,15 +149,15 @@ copies its browse URL.
 ```
 src/
   domain/   stable models + demo data
-  adf/      ADF JSON -> styled terminal text
-  jira/     live REST client (feature: live)
+  adf/      ADF <-> styled text and ADF <-> Markdown (render, to_markdown, compile)
+  jira/     live REST client: read + transitions + description writes (feature: live)
   git/      repo/branch detection + key parsing
   config/   XDG config, settings, token, and issue cache
   infra/    clipboard (OSC 52)
-  app/      state, data loading, event updates, onboarding
-  ui/       ratatui screens, theme, welcome (Jax), animated about
+  app/      state, data loading, onboarding, transitions, round-trip edit
+  ui/       ratatui screens, theme, welcome (Jax), animated about, toasts
   lib.rs    library surface (so tests can drive the real code)
-  main.rs   thin binary: terminal lifecycle + event loop
+  main.rs   thin binary: terminal lifecycle, event loop, $EDITOR launch
 tests/      cli.rs (process) + render.rs (headless TestBackend)
 docs/       product + technical design specs (SPEC, IMPLEMENTATION, …)
 ```
@@ -159,11 +177,10 @@ screen via `ratatui`'s `TestBackend`.
 
 ## Status
 
-Milestone 1 (browse) is working end to end against demo, cached, and live data,
-with onboarding, mouse mode, and clipboard support. Quick transitions and the
-Markdown round-trip edit flow (compile a draft to ADF and push via the
-`jira-ds-skill` tooling) are the next milestones — see `docs/` for the full spec
-and roadmap.
+Milestone 1 (browse) and Milestone 2 (quick transitions + the Markdown
+round-trip edit) are working end to end against demo, cached, and live data, with
+onboarding, mouse mode, and clipboard support. Richer edit flows and attachments
+are next — see `docs/` for the full spec and roadmap.
 
 ## Guidelines
 

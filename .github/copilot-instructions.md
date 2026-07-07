@@ -7,9 +7,10 @@ with an optional live REST client and an always-available offline demo mode.
 
 - `src/domain` — stable internal models (`IssueSummary`, `IssueDetail`, `Source`)
   and the baked-in demo data.
-- `src/adf` — Atlassian Document Format (ADF) JSON rendered to styled terminal
-  text. Display only.
-- `src/jira` — the `live`-feature REST client (`ureq`).
+- `src/adf` — Atlassian Document Format (ADF): render to styled terminal text,
+  plus `to_markdown` / `compile` for the round-trip edit. Display + conversion.
+- `src/jira` — the `live`-feature REST client (`ureq`): reads, workflow
+  transitions, and description writes.
 - `src/git` — repo/branch detection and `DS-123` issue-key parsing.
 - `src/config` — XDG config/cache paths, settings, secure token file, onboarding
   marker, and the issue cache.

@@ -12,9 +12,9 @@ little personality — it does not need to be strictly utilitarian.
 ## Core Principles
 
 - **ADF-first display.** Jira rich text is ADF (a JSON document tree). Render it
-  as structured text (headings, task lists, code blocks) via `src/adf`. Never
-  show raw Markdown as if it were the stored content, and never write Markdown
-  strings back into Jira fields.
+  as structured text (headings, task lists, code blocks) via `src/adf`. The
+  round-trip edit converts ADF → Markdown for `$EDITOR` and recompiles Markdown →
+  ADF; never write raw Markdown strings into Jira fields.
 - **Demo mode always works.** The TUI must be fully explorable with zero network
   and zero credentials. Live Jira is an enhancement gated behind the `live`
   feature and the presence of credentials; missing creds fall back to the cached
