@@ -10,11 +10,19 @@ with an optional live REST client and an always-available offline demo mode.
 - `src/adf` — Atlassian Document Format (ADF): render to styled terminal text,
   plus `to_markdown` / `compile` for the round-trip edit. Display + conversion.
 - `src/jira` — the `live`-feature REST client (`ureq`): reads, workflow
-  transitions, and description writes.
+  transitions, description writes, comments, and issue creation.
 - `src/git` — repo/branch detection and `DS-123` issue-key parsing.
 - `src/config` — XDG config/cache paths, settings, secure token file, onboarding
   marker, and the issue cache.
 - `src/infra` — clipboard support via OSC 52.
+- `src/mcp` — the `mcp`-feature Model Context Protocol server: exposes Jira
+  read/write tools to agents, converting Markdown ⇄ ADF via `src/adf` so
+  agents never construct raw ADF JSON. Reuses `src/jira::Config` for auth
+  (same env vars / token file / `config.toml` as the TUI) and falls back to
+  demo data for read tools when no credentials are configured. Served over
+  stdio by the thin `src/bin/jira_mcp.rs` binary. This is the only part of
+  the crate that pulls in an async runtime (`tokio`, via `rmcp`) — the main
+  `jira-tui` binary stays fully synchronous.
 - `src/app` — application state, split by concern into submodules
   (`sort_filter`, `quick_view`, `search`, `board`, `transitions`, `edit`,
   `onboarding`, `mouse`, `detail`), with shared struct/constructor/tests
@@ -33,7 +41,9 @@ with an optional live REST client and an always-available offline demo mode.
 ## What to keep true
 
 - **ADF-first:** render ADF structurally; never treat raw Markdown as stored
-  content and never write Markdown strings into Jira.
+  content and never write Markdown strings into Jira. This applies equally to
+  the MCP server: its tools accept/return Markdown but always convert through
+  `adf::compile`/`adf::to_markdown` before touching Jira.
 - **Demo mode never breaks:** no credentials and no network must still yield a
   fully explorable UI. Live mode is additive and falls back to cache, then demo.
 - **Secrets:** the API token lives in a `0600` `token` file under the XDG config

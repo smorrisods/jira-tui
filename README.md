@@ -215,16 +215,66 @@ copies its browse URL.
 | `$XDG_CONFIG_HOME/jira-tui/.onboarded` | first-run marker |
 | `$XDG_CACHE_HOME/jira-tui/my-work.json` | cached "my work" list |
 
+## MCP server for agents
+
+`jira-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server
+that lets agents read and write Jira the same ADF-safe way the TUI does —
+descriptions and comments go in and out as **Markdown**; the server converts
+to/from ADF for you, so an agent never has to construct raw ADF JSON.
+
+Build and run it (a separate `mcp` feature, so the plain `jira-tui` binary
+doesn't pull in an async runtime):
+
+```bash
+cargo build --release --features mcp   # ./target/release/jira-mcp
+./target/release/jira-mcp              # speaks MCP over stdio
+```
+
+Point any stdio-based MCP client at that binary. Example client config:
+
+```json
+{
+  "mcpServers": {
+    "jira": {
+      "command": "/path/to/jira-tui/target/release/jira-mcp"
+    }
+  }
+}
+```
+
+It reuses the exact same credentials as the TUI (`JIRA_EMAIL` /
+`JIRA_API_TOKEN` / `JIRA_BASE_URL` / `JIRA_PROJECT`, `~/.config/jira-tui/token`,
+`config.toml`) — if you've already run `--onboard` or `--init`, there's nothing
+extra to set up.
+
+**Read tools** (`list_my_work`, `get_issue`, `search_issues`,
+`list_transitions`, `get_description_markdown`) fall back to the same baked-in
+demo data the TUI uses when no credentials are configured, so an agent can
+explore the tool surface with zero setup.
+
+**Write tools** (`create_issue`, `update_summary`, `add_comment`,
+`transition_issue`, `update_description_markdown`) require live credentials —
+mutating the static demo data would be a no-op — and return a clear
+configuration error otherwise instead of silently doing nothing.
+
+**Full round-trip parity** with the TUI's in-app editor: `get_description_markdown`
+/ `update_description_markdown` mirror the same `adf::to_markdown` /
+`adf::compile` conversion used by pressing `e` on an issue, so an agent can
+fetch a description as Markdown, edit it, and push it back without ever
+touching ADF.
+
 ## Layout
 
 ```
 src/
   domain/          stable models + demo data
   adf/             ADF <-> styled text and ADF <-> Markdown (render, to_markdown, compile)
-  jira/            live REST client: read + transitions + description writes (feature: live)
+  jira/            live REST client: read + transitions + description + comment writes (feature: live)
   git/             repo/branch detection + key parsing
   config/          XDG config, settings, token, and issue cache
   infra/           clipboard (OSC 52)
+  mcp/             Model Context Protocol server (feature: mcp): tools + ADF/Markdown
+                   conversion + demo-data fallback, shared by src/bin/jira_mcp.rs
   app/             App state, split by concern:
     mod.rs           core struct, constructor, selection/flash helpers, load_issues
     sort_filter.rs   sort + filter cycling for the work list
@@ -255,6 +305,7 @@ src/
   main.rs          thin binary: CLI args, terminal lifecycle, run loop
   keys.rs          keyboard + mouse event handling (binary-only module)
   editor_launch.rs external $EDITOR suspend/resume (binary-only module)
+  bin/jira_mcp.rs  thin `jira-mcp` binary entry point (feature: mcp)
 tests/      cli.rs (process) + render.rs (headless TestBackend)
 docs/       product + technical design specs (SPEC, IMPLEMENTATION, …)
 ```
@@ -265,6 +316,7 @@ docs/       product + technical design specs (SPEC, IMPLEMENTATION, …)
 cargo test        # unit + integration suite
 cargo clippy --all-targets
 cargo clippy --no-default-features --all-targets   # offline build stays clean
+cargo clippy --features mcp --all-targets          # MCP server build stays clean
 ```
 
 The suite covers ADF rendering (including malformed input), branch-key parsing,
