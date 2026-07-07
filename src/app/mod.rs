@@ -17,6 +17,7 @@ pub enum Screen {
     Detail,
     Preview,
     Edit,
+    Search,
     About,
 }
 
@@ -47,6 +48,23 @@ impl SortKey {
     }
 }
 
+/// Which panel arrow keys/PageUp/PageDown affect when the quick-view panel is
+/// open; toggled with `Tab`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ListFocus {
+    #[default]
+    List,
+    QuickView,
+}
+
+/// A row in the Search screen: either a direct "go to issue key" action or a
+/// match against the current work list (index into `all_issues`).
+#[derive(Clone, Debug)]
+pub enum SearchRow {
+    Goto(String),
+    Match(usize),
+}
+
 pub struct App {
     /// Full server-side list; `issues` is the filtered + sorted view of this.
     pub all_issues: Vec<IssueSummary>,
@@ -70,7 +88,15 @@ pub struct App {
     // Quick-view panel + a cache of opened issue details.
     pub quick_view: bool,
     pub quick_view_scroll: u16,
+    pub list_focus: ListFocus,
     pub detail_cache: HashMap<String, IssueDetail>,
+
+    // Search / go-to-issue.
+    pub search_query: String,
+    pub search_rows: Vec<SearchRow>,
+    pub search_selected: usize,
+    /// Screen to return to when Search is cancelled.
+    pub search_return_to: Screen,
 
     /// Ambient Jax companion (pure entertainment 🦦).
     pub show_jax: bool,
@@ -94,6 +120,7 @@ pub struct App {
     pub list_area: Cell<Rect>,
     pub list_start: Cell<usize>,
     pub detail_area: Cell<Rect>,
+    pub quick_view_area: Cell<Rect>,
 
     // Onboarding welcome + credential setup.
     pub welcome_phase: WelcomePhase,
@@ -259,7 +286,12 @@ impl App {
             filter_status: None,
             quick_view: false,
             quick_view_scroll: 0,
+            list_focus: ListFocus::List,
             detail_cache: HashMap::new(),
+            search_query: String::new(),
+            search_rows: Vec::new(),
+            search_selected: 0,
+            search_return_to: Screen::Home,
             show_jax: false,
             editor: EditorState::default(),
             flash_msg: String::new(),
@@ -272,6 +304,7 @@ impl App {
             list_area: Cell::new(Rect::default()),
             list_start: Cell::new(0),
             detail_area: Cell::new(Rect::default()),
+            quick_view_area: Cell::new(Rect::default()),
             welcome_phase: WelcomePhase::Intro,
             field_site: "https://ontariodotca.atlassian.net".to_string(),
             field_email: String::new(),
@@ -458,11 +491,22 @@ impl App {
         let Some(issue) = self.selected_issue().cloned() else {
             return;
         };
+        self.open_by_key(&issue.key);
+    }
+
+    /// Load and open an issue by key directly, regardless of whether it's in
+    /// the current filtered/sorted view. Used by search results and "go to
+    /// issue". If the key is present in the current view, `selected` is
+    /// synced so back-navigation lands somewhere sensible.
+    pub fn open_by_key(&mut self, key: &str) {
         self.detail_scroll = 0;
-        let detail = self.load_detail(&issue.key);
-        self.detail_cache.insert(issue.key.clone(), detail.clone());
+        let detail = self.load_detail(key);
+        self.detail_cache.insert(key.to_string(), detail.clone());
         self.detail = Some(detail);
         self.screen = Screen::Detail;
+        if let Some(pos) = self.issues.iter().position(|i| i.key == key) {
+            self.selected = pos;
+        }
     }
 
     /// The cached detail for the currently selected issue, if any (quick view).
@@ -491,6 +535,94 @@ impl App {
     pub fn quick_view_scroll_by(&mut self, delta: isize) {
         let new = self.quick_view_scroll as isize + delta;
         self.quick_view_scroll = new.max(0) as u16;
+    }
+
+    // ── Search + go to issue ─────────────────────────────────────────────────
+
+    /// Open the Search screen, remembering where to return on cancel.
+    pub fn open_search(&mut self) {
+        self.search_return_to = self.screen;
+        self.search_query.clear();
+        self.recompute_search();
+        self.screen = Screen::Search;
+    }
+
+    pub fn close_search(&mut self) {
+        self.screen = self.search_return_to;
+    }
+
+    pub fn search_input_char(&mut self, c: char) {
+        self.search_query.push(c);
+        self.recompute_search();
+    }
+
+    pub fn search_backspace(&mut self) {
+        self.search_query.pop();
+        self.recompute_search();
+    }
+
+    /// If the query looks like an issue key (`LETTERS-DIGITS`), return it
+    /// normalised to uppercase — this powers the "go to issue" shortcut.
+    pub fn search_key_candidate(&self) -> Option<String> {
+        let q = self.search_query.trim();
+        if q.is_empty() {
+            return None;
+        }
+        let (letters, rest) = q.split_once('-')?;
+        if !letters.is_empty()
+            && letters.chars().all(|c| c.is_ascii_alphabetic())
+            && !rest.is_empty()
+            && rest.chars().all(|c| c.is_ascii_digit())
+        {
+            Some(format!("{}-{}", letters.to_uppercase(), rest))
+        } else {
+            None
+        }
+    }
+
+    fn recompute_search(&mut self) {
+        let mut rows = Vec::new();
+        if let Some(key) = self.search_key_candidate() {
+            rows.push(SearchRow::Goto(key));
+        }
+        let q = self.search_query.trim().to_lowercase();
+        for (idx, issue) in self.all_issues.iter().enumerate() {
+            if q.is_empty()
+                || issue.key.to_lowercase().contains(&q)
+                || issue.summary.to_lowercase().contains(&q)
+            {
+                rows.push(SearchRow::Match(idx));
+            }
+        }
+        self.search_rows = rows;
+        self.search_selected = 0;
+    }
+
+    pub fn search_move(&mut self, delta: isize) {
+        if self.search_rows.is_empty() {
+            return;
+        }
+        let len = self.search_rows.len() as isize;
+        let mut idx = self.search_selected as isize + delta;
+        idx = idx.clamp(0, len - 1);
+        self.search_selected = idx as usize;
+    }
+
+    /// Open whatever is highlighted in the Search screen: a direct "go to
+    /// issue" jump, or the selected match from the work list.
+    pub fn confirm_search(&mut self) {
+        let Some(row) = self.search_rows.get(self.search_selected).cloned() else {
+            return;
+        };
+        match row {
+            SearchRow::Goto(key) => self.open_by_key(&key),
+            SearchRow::Match(idx) => {
+                if let Some(issue) = self.all_issues.get(idx) {
+                    let key = issue.key.clone();
+                    self.open_by_key(&key);
+                }
+            }
+        }
     }
 
     // ── In-TUI editor ────────────────────────────────────────────────────────
@@ -745,6 +877,36 @@ impl App {
     }
 
     // ── Mouse mode + drag selection ──────────────────────────────────────────
+
+    /// Whether the given screen coordinate falls within a recorded panel area.
+    fn point_in(area: Rect, x: u16, y: u16) -> bool {
+        area.width > 0
+            && area.height > 0
+            && x >= area.x
+            && x < area.x + area.width
+            && y >= area.y
+            && y < area.y + area.height
+    }
+
+    /// Whether the point is over the quick-view panel (used to route mouse
+    /// wheel scrolling to that panel instead of the list).
+    pub fn point_in_quick_view(&self, x: u16, y: u16) -> bool {
+        self.quick_view && Self::point_in(self.quick_view_area.get(), x, y)
+    }
+
+    /// Toggle keyboard focus between the list and the quick-view panel
+    /// (`Tab`). A no-op — and forced back to the list — when quick view is
+    /// closed, so arrow keys never get stuck scrolling a hidden panel.
+    pub fn toggle_list_focus(&mut self) {
+        if !self.quick_view {
+            self.list_focus = ListFocus::List;
+            return;
+        }
+        self.list_focus = match self.list_focus {
+            ListFocus::List => ListFocus::QuickView,
+            ListFocus::QuickView => ListFocus::List,
+        };
+    }
 
     /// Map a screen row to an issue index within the recorded list area.
     pub fn list_index_at(&self, y: u16) -> Option<usize> {
@@ -1107,5 +1269,126 @@ mod tests {
         ed.backspace();
         assert_eq!(ed.lines, vec!["ab".to_string()]);
         assert_eq!((ed.cy, ed.cx), (0, 1));
+    }
+
+    #[test]
+    fn toggle_list_focus_flips_only_when_quick_view_open() {
+        let mut app = demo_app();
+        // Quick view closed: toggling is a no-op (always forced to List).
+        app.toggle_list_focus();
+        assert_eq!(app.list_focus, ListFocus::List);
+
+        app.quick_view = true;
+        app.toggle_list_focus();
+        assert_eq!(app.list_focus, ListFocus::QuickView);
+        app.toggle_list_focus();
+        assert_eq!(app.list_focus, ListFocus::List);
+
+        // Closing quick view resets focus even if it was on QuickView.
+        app.quick_view = true;
+        app.list_focus = ListFocus::QuickView;
+        app.quick_view = false;
+        app.toggle_list_focus();
+        assert_eq!(app.list_focus, ListFocus::List);
+    }
+
+    #[test]
+    fn point_in_quick_view_respects_recorded_area_and_visibility() {
+        let mut app = demo_app();
+        app.quick_view_area.set(Rect::new(10, 10, 20, 5));
+        // Quick view not open: never true, even inside the recorded rect.
+        assert!(!app.point_in_quick_view(12, 12));
+        app.quick_view = true;
+        assert!(app.point_in_quick_view(12, 12));
+        assert!(!app.point_in_quick_view(0, 0));
+    }
+
+    #[test]
+    fn search_finds_matches_by_key_and_summary() {
+        let mut app = demo_app();
+        app.open_search();
+        for c in "accordion".chars() {
+            app.search_input_char(c);
+        }
+        assert!(app.search_rows.iter().any(|r| matches!(
+            r,
+            SearchRow::Match(idx) if app.all_issues[*idx].summary.to_lowercase().contains("accordion")
+        )));
+    }
+
+    #[test]
+    fn search_key_candidate_detects_issue_keys_only() {
+        let mut app = demo_app();
+        app.search_query = "DS-2603".to_string();
+        assert_eq!(app.search_key_candidate(), Some("DS-2603".to_string()));
+        app.search_query = "ds-2603".to_string();
+        assert_eq!(app.search_key_candidate(), Some("DS-2603".to_string()));
+        app.search_query = "accordion".to_string();
+        assert_eq!(app.search_key_candidate(), None);
+        app.search_query = "DS-".to_string();
+        assert_eq!(app.search_key_candidate(), None);
+    }
+
+    #[test]
+    fn confirm_search_goto_opens_issue_directly_even_if_unfiltered() {
+        let mut app = demo_app();
+        app.open_search();
+        for c in "DS-2603".chars() {
+            app.search_input_char(c);
+        }
+        // The Goto row should be first.
+        assert!(matches!(app.search_rows.first(), Some(SearchRow::Goto(k)) if k == "DS-2603"));
+        app.search_selected = 0;
+        app.confirm_search();
+        assert_eq!(app.screen, Screen::Detail);
+        assert_eq!(app.detail.as_ref().unwrap().key, "DS-2603");
+    }
+
+    #[test]
+    fn confirm_search_match_opens_that_issue() {
+        let mut app = demo_app();
+        let target_key = app.all_issues[1].key.clone();
+        app.open_search();
+        for c in target_key.chars() {
+            app.search_input_char(c);
+        }
+        // Find the Match row for our target and select it.
+        let pos = app
+            .search_rows
+            .iter()
+            .position(
+                |r| matches!(r, SearchRow::Match(idx) if app.all_issues[*idx].key == target_key),
+            )
+            .unwrap();
+        app.search_selected = pos;
+        app.confirm_search();
+        assert_eq!(app.detail.as_ref().unwrap().key, target_key);
+    }
+
+    #[test]
+    fn close_search_returns_to_prior_screen() {
+        let mut app = demo_app();
+        app.screen = Screen::List;
+        app.open_search();
+        assert_eq!(app.screen, Screen::Search);
+        app.close_search();
+        assert_eq!(app.screen, Screen::List);
+    }
+
+    #[test]
+    fn demo_detail_unknown_key_is_clearly_labelled_not_found() {
+        let detail = crate::domain::demo_detail("DS-99999");
+        assert_eq!(detail.key, "DS-99999", "must preserve the requested key");
+        assert!(detail.summary.to_lowercase().contains("not found"));
+    }
+
+    #[test]
+    fn open_by_key_syncs_selection_when_present_in_view() {
+        let mut app = demo_app();
+        let key = app.issues[2].key.clone();
+        app.selected = 0;
+        app.open_by_key(&key);
+        assert_eq!(app.selected, 2);
+        assert_eq!(app.detail.as_ref().unwrap().key, key);
     }
 }

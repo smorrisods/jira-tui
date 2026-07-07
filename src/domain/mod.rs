@@ -203,7 +203,15 @@ pub fn demo_issues() -> Vec<IssueSummary> {
 
 /// A detailed view for a demo issue key, with a rich ADF description so the
 /// ADF renderer is genuinely exercised offline.
+///
+/// Unknown keys (e.g. from "go to issue" on a key outside the demo set) return
+/// a clearly-labelled placeholder that preserves the requested key, rather
+/// than silently substituting a different issue.
 pub fn demo_detail(key: &str) -> IssueDetail {
+    if !demo_issues().iter().any(|i| i.key == key) {
+        return demo_detail_not_found(key);
+    }
+
     let description = json!({
         "type": "doc",
         "version": 1,
@@ -261,7 +269,7 @@ pub fn demo_detail(key: &str) -> IssueDetail {
     let base = demo_issues()
         .into_iter()
         .find(|i| i.key == key)
-        .unwrap_or_else(|| demo_issues()[0].clone());
+        .expect("checked above");
 
     IssueDetail {
         key: base.key.clone(),
@@ -294,6 +302,38 @@ pub fn demo_detail(key: &str) -> IssueDetail {
                 to: name.to_string(),
             })
             .collect(),
+    }
+}
+
+/// Placeholder detail for a key that isn't part of the demo dataset, used by
+/// "go to issue" when offline. Keeps the requested key intact instead of
+/// silently showing an unrelated issue.
+fn demo_detail_not_found(key: &str) -> IssueDetail {
+    let description = json!({
+        "type": "doc",
+        "version": 1,
+        "content": [
+            { "type": "paragraph", "content": [
+                { "type": "text", "text": "This key isn't part of the offline demo dataset. " },
+                { "type": "text", "text": "Connect to live Jira to look it up for real." }
+            ] }
+        ]
+    });
+    IssueDetail {
+        key: key.to_string(),
+        summary: "Not found in demo data".to_string(),
+        issue_type: "Unknown".to_string(),
+        status: "Unknown".to_string(),
+        priority: Priority::Medium,
+        assignee: None,
+        reporter: None,
+        labels: Vec::new(),
+        components: Vec::new(),
+        parent: None,
+        links: Vec::new(),
+        description,
+        acceptance_criteria: None,
+        transitions: Vec::new(),
     }
 }
 

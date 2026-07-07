@@ -51,6 +51,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Screen::Detail => draw_detail(f, app, body_area),
         Screen::Preview => draw_preview(f, app, body_area),
         Screen::Edit => draw_editor(f, app, body_area),
+        Screen::Search => draw_search(f, app, body_area),
         Screen::About => draw_about(f, app, body_area),
     }
 
@@ -60,9 +61,10 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     draw_footer(f, app, root[2]);
 
-    // The ambient Jax companion floats in a bottom corner (pure fun 🦦).
+    // The ambient Jax companion floats above the quick-view panel when it's
+    // open (so it never covers it), or at the bottom of the body otherwise.
     if app.show_jax && !matches!(app.screen, Screen::Welcome | Screen::Edit | Screen::About) {
-        draw_jax_companion(f, app, f.area());
+        draw_jax_companion(f, app, body_area);
     }
 
     if app.picker_open {
@@ -189,8 +191,12 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         }
         Screen::Preview => "y apply to Jira · esc/← cancel · ↑/↓ scroll",
         Screen::Edit => "type to edit · ^S preview · esc cancel",
+        Screen::Search => "type to filter · ↑/↓ move · ⏎ open · esc cancel",
         Screen::About => "esc/← back · ? help · q quit",
-        _ => "↑/↓ move · →/⏎ open · s sort · f filter · v quick · J jax · ? help · q quit",
+        Screen::Home | Screen::List if app.quick_view => {
+            "↑/↓ move · →/⏎ open · tab focus quick view · / search · ? help · q quit"
+        }
+        _ => "↑/↓ move · →/⏎ open · s sort · f filter · v quick · / search · ? help · q quit",
     };
     let block = Block::default()
         .borders(Borders::ALL)
@@ -495,13 +501,18 @@ fn stat_line(label: &str, n: usize, colour: Color) -> Line<'static> {
 
 // ── Issue list ───────────────────────────────────────────────────────────────
 fn draw_list(f: &mut Frame, app: &App, area: Rect, full: bool) {
+    use crate::app::ListFocus;
     let base = if full { "all my work" } else { "my work" };
     let mut title = format!("  {base} · {}", app.sort_label());
     if let Some(filter) = app.filter_label() {
         title.push_str(&format!(" · {filter}"));
     }
     title.push_str(&format!("  ({})  ", app.issues.len()));
-    let block = card(&title, ACCENT);
+    // Dim the list's border when the quick-view panel has keyboard focus
+    // (Tab), so it's clear which panel arrow keys currently affect.
+    let list_focused = !(app.quick_view && app.list_focus == ListFocus::QuickView);
+    let border = if list_focused { ACCENT } else { MUTED };
+    let block = card_bordered(&title, ACCENT, border);
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -523,14 +534,25 @@ fn draw_list(f: &mut Frame, app: &App, area: Rect, full: bool) {
 /// Full-width quick-view panel: the selected issue's fields and full ADF body,
 /// once loaded into the detail cache (loaded lazily by the app's event loop).
 fn draw_quick_view(f: &mut Frame, app: &App, area: Rect) {
+    use crate::app::ListFocus;
+    let focused = app.list_focus == ListFocus::QuickView;
+    let border = if focused { ACCENT2 } else { MUTED };
+
     let Some(issue) = app.selected_issue() else {
-        let block = card("  quick view  ", ACCENT2);
+        let block = card_bordered("  quick view  ", ACCENT2, border);
+        app.quick_view_area.set(block.inner(area));
         f.render_widget(block, area);
         return;
     };
-    let title = format!("  quick view · {}  ", issue.key);
-    let block = card(&title, ACCENT2);
+    let hint = if focused {
+        " · ↑/↓ scroll "
+    } else {
+        " · tab to scroll "
+    };
+    let title = format!("  quick view · {}{hint} ", issue.key);
+    let block = card_bordered(&title, ACCENT2, border);
     let inner = block.inner(area);
+    app.quick_view_area.set(inner);
     f.render_widget(block, area);
 
     let lines: Vec<Line> = if let Some(detail) = app.quick_view_detail() {
@@ -585,6 +607,84 @@ fn draw_quick_view(f: &mut Frame, app: &App, area: Rect) {
             .scroll((app.quick_view_scroll, 0)),
         inner,
     );
+}
+
+// ── Search / go-to-issue ─────────────────────────────────────────────────────
+fn draw_search(f: &mut Frame, app: &App, area: Rect) {
+    use crate::app::SearchRow;
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(3)])
+        .split(area);
+
+    // Query input line.
+    let input_block = card_bordered("  search / go to issue  ", ACCENT, ACCENT);
+    let input_inner = input_block.inner(rows[0]);
+    f.render_widget(input_block, rows[0]);
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                "› ",
+                Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(app.search_query.clone(), Style::default().fg(Color::White)),
+            Span::styled("▏", Style::default().fg(ACCENT)),
+        ])),
+        input_inner,
+    );
+
+    // Results.
+    let results_block = card("  results  ", ACCENT2);
+    let inner = results_block.inner(rows[1]);
+    f.render_widget(results_block, rows[1]);
+
+    if app.search_rows.is_empty() {
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "No matches. Type an issue key like DS-123 to jump to it directly.",
+                Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
+            ))),
+            inner,
+        );
+        return;
+    }
+
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, row) in app.search_rows.iter().enumerate() {
+        let selected = i == app.search_selected;
+        let cursor = if selected { "▌" } else { " " };
+        let cursor_style = if selected {
+            Style::default().fg(ACCENT2)
+        } else {
+            Style::default()
+        };
+        match row {
+            SearchRow::Goto(key) => {
+                lines.push(Line::from(vec![
+                    Span::styled(cursor.to_string(), cursor_style),
+                    Span::styled(
+                        "↵ go to ",
+                        Style::default().fg(WARN).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        key.clone(),
+                        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        "  (fetch directly, even if it's not in your list)",
+                        Style::default().fg(MUTED),
+                    ),
+                ]));
+            }
+            SearchRow::Match(idx) => {
+                if let Some(issue) = app.all_issues.get(*idx) {
+                    lines.push(issue_row(issue, selected));
+                }
+            }
+        }
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
 
 fn issue_row(issue: &IssueSummary, selected: bool) -> Line<'static> {
@@ -914,11 +1014,14 @@ fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
 }
 
 // ── Jax companion (entertainment) ────────────────────────────────────────────
+/// Draws Jax bottom-aligned within `area`. Callers pass a bounding region that
+/// already excludes anything Jax must not cover (e.g. the quick-view panel),
+/// so this simply hugs the bottom-left corner of whatever it's given.
 fn draw_jax_companion(f: &mut Frame, app: &App, area: Rect) {
     let w = 30u16.min(area.width);
-    let h = 8u16.min(area.height.saturating_sub(3));
+    let h = 8u16.min(area.height.saturating_sub(1));
     let x = area.x + 2;
-    let y = area.y + area.height.saturating_sub(h + 3);
+    let y = area.y + area.height.saturating_sub(h + 1);
     let rect = Rect::new(x, y, w, h);
     f.render_widget(Clear, rect);
 
@@ -1187,9 +1290,11 @@ fn draw_help_overlay(f: &mut Frame, area: Rect) {
         ("↓ / j", "move down"),
         ("→ / ⏎", "open selected issue"),
         ("esc/←/⌫", "back"),
+        ("/", "search or go to an issue by key"),
         ("s / S", "cycle sort / flip direction"),
         ("f", "cycle status filter"),
         ("v", "toggle quick-view panel"),
+        ("tab", "focus list ↔ quick view (enables arrow scroll)"),
         ("t", "change status (in an issue)"),
         ("e / E", "edit description (in-TUI / $EDITOR)"),
         ("a", "about panel"),
@@ -1216,13 +1321,19 @@ fn draw_help_overlay(f: &mut Frame, area: Rect) {
 
 // ── Small helpers ────────────────────────────────────────────────────────────
 fn card(title: &str, colour: Color) -> Block<'static> {
+    card_bordered(title, colour, MUTED)
+}
+
+fn card_bordered(title: &str, title_colour: Color, border_colour: Color) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(MUTED))
+        .border_style(Style::default().fg(border_colour))
         .title(Span::styled(
             title.to_string(),
-            Style::default().fg(colour).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(title_colour)
+                .add_modifier(Modifier::BOLD),
         ))
 }
 

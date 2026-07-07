@@ -251,12 +251,34 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // The Search / go-to-issue screen captures typing.
+    if app.screen == Screen::Search {
+        match key.code {
+            KeyCode::Esc => app.close_search(),
+            KeyCode::Enter => app.confirm_search(),
+            KeyCode::Up => app.search_move(-1),
+            KeyCode::Down => app.search_move(1),
+            KeyCode::Backspace => app.search_backspace(),
+            KeyCode::Char(c) => app.search_input_char(c),
+            _ => {}
+        }
+        return;
+    }
+
     match key.code {
         KeyCode::Char('?') => app.show_help = true,
         KeyCode::Char('a') => app.screen = Screen::About,
         KeyCode::Char('g') => app.screen = Screen::Home,
         KeyCode::Char('r') => app.refresh(),
         KeyCode::Char('m') => toggle_mouse(app),
+        KeyCode::Char('/')
+            if matches!(app.screen, Screen::Home | Screen::List | Screen::Detail) =>
+        {
+            app.open_search()
+        }
+        KeyCode::Tab if matches!(app.screen, Screen::Home | Screen::List) => {
+            app.toggle_list_focus()
+        }
         KeyCode::Char('J') => {
             app.show_jax = !app.show_jax;
             app.status = if app.show_jax {
@@ -280,6 +302,9 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char('v') if matches!(app.screen, Screen::Home | Screen::List) => {
             app.quick_view = !app.quick_view;
+            if !app.quick_view {
+                app.list_focus = app::ListFocus::List;
+            }
         }
 
         KeyCode::Char('l') if app.screen != Screen::Detail => app.screen = Screen::List,
@@ -295,16 +320,6 @@ fn handle_key(app: &mut App, key: KeyEvent) {
 
         KeyCode::Up | KeyCode::Char('k') => nav(app, -1),
         KeyCode::Down | KeyCode::Char('j') => nav(app, 1),
-        // While quick view is open, PageUp/PageDown scroll its body instead of
-        // jumping the list selection by a page.
-        KeyCode::PageUp if app.quick_view && matches!(app.screen, Screen::Home | Screen::List) => {
-            app.quick_view_scroll_by(-6)
-        }
-        KeyCode::PageDown
-            if app.quick_view && matches!(app.screen, Screen::Home | Screen::List) =>
-        {
-            app.quick_view_scroll_by(6)
-        }
         KeyCode::PageUp => nav(app, -8),
         KeyCode::PageDown => nav(app, 8),
 
@@ -351,8 +366,22 @@ fn handle_mouse(app: &mut App, me: MouseEvent) {
         return;
     }
     match me.kind {
-        MouseEventKind::ScrollUp => nav(app, -1),
-        MouseEventKind::ScrollDown => nav(app, 1),
+        // Scroll whichever panel the pointer is over: the quick-view panel if
+        // hovering it, otherwise the list (or the current screen's default).
+        MouseEventKind::ScrollUp => {
+            if app.point_in_quick_view(me.column, me.row) {
+                app.quick_view_scroll_by(-1);
+            } else {
+                nav(app, -1);
+            }
+        }
+        MouseEventKind::ScrollDown => {
+            if app.point_in_quick_view(me.column, me.row) {
+                app.quick_view_scroll_by(1);
+            } else {
+                nav(app, 1);
+            }
+        }
         MouseEventKind::Down(MouseButton::Left) => app.mouse_down(me.row),
         MouseEventKind::Drag(MouseButton::Left) => app.mouse_drag(me.row),
         MouseEventKind::Up(MouseButton::Left) => app.mouse_up(me.row),
@@ -395,8 +424,17 @@ fn nav(app: &mut App, delta: isize) {
             let new = app.detail_scroll as isize + delta.signum() * delta.abs().max(1);
             app.detail_scroll = new.max(0) as u16;
         }
-        Screen::Home | Screen::List => app.move_selection(delta),
-        Screen::About | Screen::Welcome | Screen::Edit => {}
+        Screen::Home | Screen::List => {
+            // Tab moves keyboard focus between the list and the quick-view
+            // panel; while quick view has focus, arrows/PageUp/PageDown
+            // scroll it instead of moving the list selection.
+            if app.quick_view && app.list_focus == app::ListFocus::QuickView {
+                app.quick_view_scroll_by(delta);
+            } else {
+                app.move_selection(delta);
+            }
+        }
+        Screen::About | Screen::Welcome | Screen::Edit | Screen::Search => {}
     }
 }
 
@@ -404,6 +442,7 @@ fn back_or_quit(app: &mut App) {
     match app.screen {
         Screen::Home | Screen::Welcome => app.should_quit = true,
         Screen::Preview | Screen::Edit => app.cancel_edit(),
+        Screen::Search => app.close_search(),
         Screen::List | Screen::Detail | Screen::About => app.screen = Screen::Home,
     }
 }
