@@ -101,8 +101,11 @@ The `my work` panel supports quick triage:
 - **`s` / `S`** — cycle the sort field (updated date → priority → status → key)
   and flip the direction. The current mode shows in the panel title.
 - **`f`** — cycle a status filter (all → each status → all).
-- **`v`** — toggle a **quick-view** panel that peeks at the selected issue (and,
-  once you've opened it, a snippet of its description) without leaving the list.
+- **`v`** — toggle a full-width **quick-view** panel below the list showing the
+  selected issue's full fields (type, status, priority, assignee, reporter,
+  epic, components, labels, links) and its complete ADF-rendered description,
+  acceptance criteria, and transitions — loaded automatically as you move the
+  selection. Use `PageUp`/`PageDown` to scroll it.
 - **`→` / `⏎`** — open the selected issue; **`esc` / `←` / `⌫`** — go back.
 
 ## Editing
