@@ -9,7 +9,7 @@ license = "MIT"
 default = ["live"]
 # `live` pulls in the HTTP stack for talking to real Jira. Disable it
 # (`--no-default-features`) for a pure offline / demo build.
-live = ["ureq", "base64"]
+live = ["ureq"]
 
 [dependencies]
 ratatui = "0.29"
@@ -18,8 +18,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 dirs = "5"
+base64 = "0.22"
 ureq = { version = "2", features = ["json", "tls"], optional = true }
-base64 = { version = "0.22", optional = true }
 
 [profile.release]
 opt-level = 2

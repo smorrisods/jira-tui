@@ -1,10 +1,11 @@
 //! Domain models — stable internal shapes independent of Jira's API surface.
 
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 /// Jira priority. Some variants are only constructed in live mode.
 #[allow(dead_code)]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Priority {
     Highest,
     High,
@@ -34,7 +35,7 @@ impl Priority {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IssueSummary {
     pub key: String,
     pub summary: String,
@@ -74,11 +75,12 @@ pub struct IssueLink {
 }
 
 /// Where the data on screen came from, shown in the footer.
-/// `Live` is only constructed when the `live` feature is enabled.
+/// `Live`/`Cache` are only constructed when the `live` feature is enabled.
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub enum Source {
     Demo,
+    Cache { user: String },
     Live { site: String, user: String },
 }
 
@@ -86,6 +88,7 @@ impl Source {
     pub fn label(&self) -> String {
         match self {
             Source::Demo => "demo · offline sample data".into(),
+            Source::Cache { user } => format!("cache · {user} · offline"),
             Source::Live { site, user } => format!("live · {site} · {user}"),
         }
     }
@@ -268,5 +271,80 @@ pub fn demo_detail(key: &str) -> IssueDetail {
             "In Review".into(),
             "Done".into(),
         ],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn demo_issues_are_present_and_unique() {
+        let issues = demo_issues();
+        assert!(issues.len() >= 5);
+        let mut keys: Vec<&str> = issues.iter().map(|i| i.key.as_str()).collect();
+        keys.sort();
+        keys.dedup();
+        assert_eq!(keys.len(), issues.len(), "issue keys must be unique");
+    }
+
+    #[test]
+    fn demo_issues_include_a_blocked_one() {
+        assert!(demo_issues().iter().any(|i| i.blocked));
+    }
+
+    #[test]
+    fn demo_detail_matches_requested_key() {
+        let d = demo_detail("DS-2725");
+        assert_eq!(d.key, "DS-2725");
+        assert_eq!(
+            d.description.get("type").and_then(|t| t.as_str()),
+            Some("doc")
+        );
+        assert!(d.acceptance_criteria.is_some());
+    }
+
+    #[test]
+    fn demo_detail_falls_back_for_unknown_key() {
+        // Unknown keys should not panic; they fall back to a sensible default.
+        let d = demo_detail("DS-0000");
+        assert!(!d.summary.is_empty());
+    }
+
+    #[test]
+    fn priority_glyph_and_label_are_nonempty() {
+        for p in [
+            Priority::Highest,
+            Priority::High,
+            Priority::Medium,
+            Priority::Low,
+            Priority::Lowest,
+        ] {
+            assert!(!p.glyph().is_empty());
+            assert!(!p.label().is_empty());
+        }
+    }
+
+    #[test]
+    fn source_labels_render() {
+        assert!(Source::Demo.label().contains("demo"));
+        assert!(Source::Cache { user: "me".into() }
+            .label()
+            .contains("cache"));
+        assert!(Source::Live {
+            site: "x.atlassian.net".into(),
+            user: "me".into()
+        }
+        .label()
+        .contains("live"));
+    }
+
+    #[test]
+    fn issue_summary_round_trips_through_json() {
+        let issues = demo_issues();
+        let json = serde_json::to_string(&issues).unwrap();
+        let back: Vec<IssueSummary> = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.len(), issues.len());
+        assert_eq!(back[0].key, issues[0].key);
     }
 }
