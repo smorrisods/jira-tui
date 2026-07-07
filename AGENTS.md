@@ -17,20 +17,31 @@ little personality — it does not need to be strictly utilitarian.
   strings back into Jira fields.
 - **Demo mode always works.** The TUI must be fully explorable with zero network
   and zero credentials. Live Jira is an enhancement gated behind the `live`
-  feature and the presence of credentials; missing creds fall back to demo data,
-  never a crash.
+  feature and the presence of credentials; missing creds fall back to the cached
+  list, then to demo data, never a crash.
+- **Onboarding is friendly.** First run shows a welcome screen that can collect
+  and verify credentials or continue in demo. Secrets never land in
+  `config.toml` — the API token is saved to a `0600` `token` file.
 - **Preview before mutate.** Any action that changes Jira must be legible and
   confirmable first.
 - **Intent over resources.** Lead with developer jobs (start work, open branch
   issue, triage blocked) rather than raw REST surface.
+- **Respect XDG.** Config, token, onboarding marker, and cache live under the XDG
+  config/cache directories.
+- **Mouse is opt-in and polite.** Mouse mode is a toggle; Shift-drag must always
+  fall through to the terminal's native selection.
 
 ## Rust Conventions
 
 - Keep fast UI state separate from slow remote state.
 - Domain models in `src/domain` stay stable even if Jira API shapes vary.
 - Prefer small, readable functions; avoid clever borrows that hurt legibility.
-- Run `cargo fmt` and keep `cargo clippy` clean before committing.
-- Add unit tests for pure logic (ADF rendering, branch parsing, mapping).
+- Run `cargo fmt` and keep `cargo clippy` clean (both the default and
+  `--no-default-features` builds) before committing.
+- Add tests for pure logic and rendering: unit tests live beside the code, and
+  the integration suite in `tests/` covers the CLI (`tests/cli.rs`) and headless
+  screen rendering via `ratatui`'s `TestBackend` (`tests/render.rs`). The library
+  surface in `src/lib.rs` exists so tests can drive the real `app`/`ui`/`adf`.
 
 ## Canadian English
 
