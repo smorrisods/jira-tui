@@ -10,6 +10,11 @@ default = ["live"]
 # `live` pulls in the HTTP stack for talking to real Jira. Disable it
 # (`--no-default-features`) for a pure offline / demo build.
 live = ["ureq"]
+# `mcp` adds the `jira-mcp` binary: a Model Context Protocol server that lets
+# agents read and write Jira issues. Implies `live` (a Jira MCP server with
+# no way to reach Jira isn't useful) and pulls in an async runtime (tokio)
+# used only by that binary — the main `jira-tui` TUI stays fully sync.
+mcp = ["live", "dep:rmcp", "dep:tokio", "dep:schemars"]
 
 [dependencies]
 ratatui = "0.29"
@@ -20,6 +25,18 @@ anyhow = "1"
 dirs = "5"
 base64 = "0.22"
 ureq = { version = "2", features = ["json", "tls"], optional = true }
+rmcp = { version = "2", features = ["server", "transport-io", "schemars"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std"], optional = true }
+schemars = { version = "1", optional = true }
+
+[[bin]]
+name = "jira-tui"
+path = "src/main.rs"
+
+[[bin]]
+name = "jira-mcp"
+path = "src/bin/jira_mcp.rs"
+required-features = ["mcp"]
 
 [profile.release]
 opt-level = 2

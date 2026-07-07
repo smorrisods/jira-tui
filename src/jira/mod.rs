@@ -79,7 +79,8 @@ fn read_token_file() -> Option<String> {
 
 #[cfg(feature = "live")]
 pub use live::{
-    apply_transition, fetch_detail, fetch_my_work, fetch_transitions, update_description, whoami,
+    add_comment, apply_transition, create_issue, fetch_detail, fetch_my_work, fetch_transitions,
+    search_issues, update_description, update_summary, whoami,
 };
 
 #[cfg(feature = "live")]
@@ -247,7 +248,16 @@ mod live {
     }
 
     pub fn fetch_my_work(cfg: &Config) -> Result<Vec<IssueSummary>> {
-        let jql = "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC";
+        search_issues(
+            cfg,
+            "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC",
+        )
+    }
+
+    /// Run an arbitrary JQL query and return matching issue summaries.
+    /// Used both for "my work" (a fixed JQL) and the MCP server's free-form
+    /// search tool.
+    pub fn search_issues(cfg: &Config, jql: &str) -> Result<Vec<IssueSummary>> {
         let encoded = url_encode(jql);
         // Enhanced JQL search endpoint (`/search/jql`); the classic `/search`
         // endpoint has been sunset on Jira Cloud.
@@ -260,6 +270,58 @@ mod live {
             .and_then(|i| i.as_array())
             .ok_or_else(|| anyhow!("no issues array in response"))?;
         Ok(issues.iter().map(summary_from).collect())
+    }
+
+    /// Create a new issue and return its key. `description` is a full ADF
+    /// document (build it with `crate::adf::compile` from Markdown).
+    pub fn create_issue(
+        cfg: &Config,
+        summary: &str,
+        issue_type: &str,
+        description: Option<&Value>,
+    ) -> Result<String> {
+        let mut fields = serde_json::json!({
+            "project": { "key": cfg.project },
+            "summary": summary,
+            "issuetype": { "name": issue_type },
+        });
+        if let Some(desc) = description {
+            fields["description"] = desc.clone();
+        }
+        let url = format!("{}/rest/api/3/issue", cfg.base_url);
+        let resp = ureq::post(&url)
+            .set("Authorization", &auth_header(cfg))
+            .set("Accept", "application/json")
+            .set("Content-Type", "application/json")
+            .send_json(serde_json::json!({ "fields": fields }))
+            .map_err(|e| anyhow!("Jira create failed: {e}"))?;
+        let value: Value = resp.into_json().context("decoding Jira JSON")?;
+        value
+            .get("key")
+            .and_then(|k| k.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow!("Jira create response missing key"))
+    }
+
+    /// Update an issue's summary.
+    pub fn update_summary(cfg: &Config, key: &str, summary: &str) -> Result<()> {
+        send(
+            cfg,
+            "PUT",
+            &format!("/rest/api/3/issue/{key}"),
+            serde_json::json!({ "fields": { "summary": summary } }),
+        )
+    }
+
+    /// Add a comment. `body` is a full ADF document (build it with
+    /// `crate::adf::compile` from Markdown).
+    pub fn add_comment(cfg: &Config, key: &str, body: &Value) -> Result<()> {
+        send(
+            cfg,
+            "POST",
+            &format!("/rest/api/3/issue/{key}/comment"),
+            serde_json::json!({ "body": body }),
+        )
     }
 
     pub fn fetch_detail(cfg: &Config, key: &str) -> Result<IssueDetail> {
