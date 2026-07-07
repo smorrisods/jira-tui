@@ -9,17 +9,26 @@ with an optional live REST client and an always-available offline demo mode.
   and the baked-in demo data.
 - `src/adf` — Atlassian Document Format (ADF) JSON rendered to styled terminal
   text. Display only.
-- `src/jira` — configuration plus the `live`-feature REST client (`ureq`).
+- `src/jira` — the `live`-feature REST client (`ureq`).
 - `src/git` — repo/branch detection and `DS-123` issue-key parsing.
-- `src/app` — application state, data loading, event-driven updates.
-- `src/ui` — `ratatui` screens, theme, and the animated About panel.
+- `src/config` — XDG config/cache paths, settings, secure token file, onboarding
+  marker, and the issue cache.
+- `src/infra` — clipboard support via OSC 52.
+- `src/app` — application state, data loading, onboarding, event-driven updates.
+- `src/ui` — `ratatui` screens, theme, the welcome screen (Jax), and the animated
+  About panel.
+- `src/lib.rs` — library surface so integration tests can drive the real code;
+  `src/main.rs` is a thin binary (terminal lifecycle + event loop).
 
 ## What to keep true
 
 - **ADF-first:** render ADF structurally; never treat raw Markdown as stored
   content and never write Markdown strings into Jira.
 - **Demo mode never breaks:** no credentials and no network must still yield a
-  fully explorable UI. Live mode is additive and falls back gracefully.
+  fully explorable UI. Live mode is additive and falls back to cache, then demo.
+- **Secrets:** the API token lives in a `0600` `token` file under the XDG config
+  dir (or env / `token.txt`), never in `config.toml`.
+- **Mouse mode is opt-in:** Shift-drag must fall through to native selection.
 - **Preview before any mutating Jira call.**
 - **Canadian spelling** in comments, docs, and UI copy (e.g. "colour"), except
   for external API fields and crate names.
@@ -27,7 +36,8 @@ with an optional live REST client and an always-available offline demo mode.
 ## Build and test
 
 - Build: `cargo build`. Offline-only build: `cargo build --no-default-features`.
-- Test: `cargo test`. Keep `cargo clippy` clean and run `cargo fmt`.
+- Test: `cargo test` (unit + `tests/cli.rs` + `tests/render.rs`). Keep
+  `cargo clippy` clean under both feature sets and run `cargo fmt`.
 
 ## Commits
 
