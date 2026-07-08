@@ -99,6 +99,31 @@ personality — it does not need to be strictly utilitarian.
 - Prefer the `gh` CLI for PR/issue/label/workflow-run work over other GitHub
   tooling, unless it can't complete the task cleanly.
 
+## Releases
+
+- **Tag format:** `vX.Y.Z` (matches `Cargo.toml`'s `version`, without the
+  leading `v` there).
+- **Version bump flow:** run `scripts/prepare-release-version.sh --version
+  X.Y.Z` in a clean working tree — it updates `Cargo.toml`/`Cargo.lock` and
+  creates a `chore/release-vX.Y.Z` branch. Open a PR from that branch,
+  merge to `main`, *then* create the tag on `main`. Never tag from a
+  branch other than `main`.
+- **What ships:** Linux `amd64`/`arm64` only for now (binary, `.tar.gz`,
+  `.deb`, `.rpm`, plus one `SHA256SUMS` file covering every artefact — not
+  a `.sha256` per file). `jira-mcp` and macOS/Windows builds are
+  deliberately out of scope until revisited; see
+  `docs/release/distribution-strategy.md` for the full rationale
+  (including a macOS brainstorm for later).
+- **Man page:** generated at build time from `src/cli.rs` via
+  `clap_mangen` (`build.rs`) — never hand-edit a man page file; if the CLI
+  surface changes, update `src/cli.rs` and the man page follows
+  automatically. `src/cli.rs` is the single source of truth, shared by
+  both `main.rs` and `build.rs` — don't duplicate the `Cli` struct
+  definition anywhere else.
+- `.github/workflows/release.yml` handles the actual build/publish once a
+  `v*` tag lands on `main` (or via manual `workflow_dispatch`); see
+  `docs/release/distribution-strategy.md` for the full workflow shape.
+
 ## Reviews
 
 - Leave a dated note in `agent-reviews/` after a substantial session: what worked,

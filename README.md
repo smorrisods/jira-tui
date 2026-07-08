@@ -55,6 +55,30 @@ Offline-only build (no HTTP stack):
 cargo build --no-default-features
 ```
 
+### Installing a release build
+
+Tagged releases publish pre-built Linux (`amd64`/`arm64`) artefacts on the
+[Releases page](https://github.com/smorrisods/jira-tui/releases): a
+standalone binary, a `.tar.gz` archive (unpacks to `bin/jira-tui` +
+`share/man/man1/jira-tui.1.gz`), and `.deb`/`.rpm` packages — plus one
+`SHA256SUMS` file covering every artefact in the release.
+
+```bash
+# verify, then install a package (Debian/Ubuntu shown; use --rpm on Fedora/RHEL)
+sha256sum -c SHA256SUMS --ignore-missing
+sudo dpkg -i jira-tui-<tag>-linux-amd64.deb
+
+# or extract the tarball into a prefix of your choice
+tar -xzf jira-tui-<tag>-linux-amd64.tar.gz -C /usr/local --strip-components=0
+```
+
+Uninstall: `sudo dpkg -r jira-tui` (or `sudo rpm -e jira-tui`) for package
+installs, or just remove `bin/jira-tui` and
+`share/man/man1/jira-tui.1.gz` for a manual tarball install.
+
+macOS/Windows builds aren't published yet — see
+`docs/release/distribution-strategy.md` for the plan.
+
 ## First run & onboarding
 
 On first launch (when no config exists yet) jira-tui shows a welcome screen:
