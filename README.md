@@ -55,6 +55,30 @@ Offline-only build (no HTTP stack):
 cargo build --no-default-features
 ```
 
+### Installing a release build
+
+Tagged releases publish pre-built Linux (`amd64`/`arm64`) artefacts on the
+[Releases page](https://github.com/smorrisods/jira-tui/releases): a
+standalone binary, a `.tar.gz` archive (unpacks to `bin/jira-tui` +
+`share/man/man1/jira-tui.1.gz`), and `.deb`/`.rpm` packages — plus one
+`SHA256SUMS` file covering every artefact in the release.
+
+```bash
+# verify, then install a package (Debian/Ubuntu shown; use --rpm on Fedora/RHEL)
+sha256sum -c SHA256SUMS --ignore-missing
+sudo dpkg -i jira-tui-<tag>-linux-amd64.deb
+
+# or extract the tarball into a prefix of your choice
+tar -xzf jira-tui-<tag>-linux-amd64.tar.gz -C /usr/local --strip-components=0
+```
+
+Uninstall: `sudo dpkg -r jira-tui` (or `sudo rpm -e jira-tui`) for package
+installs, or just remove `bin/jira-tui` and
+`share/man/man1/jira-tui.1.gz` for a manual tarball install.
+
+macOS/Windows builds aren't published yet — see
+`docs/release/distribution-strategy.md` for the plan.
+
 ## First run & onboarding
 
 On first launch (when no config exists yet) jira-tui shows a welcome screen:
@@ -332,7 +356,8 @@ src/
     search.rs        search screen state + query matching
     board.rs         swimlane board selection + navigation
     transitions.rs   status transition picker
-    edit.rs          round-trip Markdown edit (begin/commit/apply)
+    edit.rs          round-trip Markdown edit + new-comment compose (begin/commit/apply)
+    comments.rs      jump-to-comments / step-between-comments scroll navigation
     onboarding.rs    welcome flow + credential form
     mouse.rs         list focus + click/drag selection
     detail.rs        issue detail loading
@@ -352,10 +377,16 @@ src/
     about.rs         animated about screen
     help.rs          help overlay
   lib.rs           library surface (so tests can drive the real code)
-  main.rs          thin binary: CLI args, terminal lifecycle, run loop
+  render.rs        shared issue-detail-to-Lines rendering (used by app for scroll
+                   offsets and by ui for actual drawing)
+  main.rs          thin binary: CLI parsing (via cli.rs), terminal lifecycle, run loop
+  cli.rs           clap `Cli` definition — single source of truth shared with
+                   build.rs (which generates the man page from it) so --help and
+                   the man page can never drift apart (binary-only module)
   keys.rs          keyboard + mouse event handling (binary-only module)
   editor_launch.rs external $EDITOR suspend/resume (binary-only module)
   bin/jira_mcp.rs  thin `jira-mcp` binary entry point (feature: mcp)
+build.rs    generates jira-tui.1 (man page) from src/cli.rs via clap_mangen
 tests/      cli.rs (process) + render.rs (headless TestBackend)
 docs/       product + technical design specs (SPEC, IMPLEMENTATION, …)
 ```

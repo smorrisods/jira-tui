@@ -6,6 +6,7 @@ use std::io::{self, Stdout};
 use std::time::Duration;
 
 use anyhow::Result;
+use clap::Parser;
 use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -15,7 +16,9 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
 use app::{App, Screen};
+use cli::Cli;
 
+mod cli;
 mod editor_launch;
 mod keys;
 
@@ -25,28 +28,18 @@ const TICK: Duration = Duration::from_millis(90);
 type Term = Terminal<CrosstermBackend<Stdout>>;
 
 fn main() -> Result<()> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.iter().any(|a| a == "-h" || a == "--help") {
-        print_help();
-        return Ok(());
-    }
-    if args.iter().any(|a| a == "-V" || a == "--version") {
-        println!("jira-tui v{}", env!("CARGO_PKG_VERSION"));
-        return Ok(());
-    }
-    if args.iter().any(|a| a == "--init") {
+    let cli = Cli::parse();
+
+    if cli.init {
         return init_config();
     }
-    let force_demo = args.iter().any(|a| a == "--demo");
-    let start_about = args.iter().any(|a| a == "--about");
-    let force_onboard = args.iter().any(|a| a == "--onboard");
 
-    let mut app = App::new(force_demo);
-    if force_onboard {
+    let mut app = App::new(cli.demo);
+    if cli.onboard {
         app.screen = Screen::Welcome;
         app.onboarding.welcome_phase = app::WelcomePhase::Intro;
     }
-    if start_about {
+    if cli.about {
         app.screen = Screen::About;
     }
 
@@ -145,39 +138,4 @@ fn install_panic_hook() {
         let _ = execute!(io::stdout(), DisableMouseCapture, LeaveAlternateScreen);
         original(info);
     }));
-}
-
-fn print_help() {
-    println!(
-        "jira-tui v{}\n\
-\n\
-A developer-first, keyboard-driven Jira terminal UI.\n\
-\n\
-USAGE:\n\
-    jira-tui [OPTIONS]\n\
-\n\
-OPTIONS:\n\
-    --demo        Force offline demo mode (ignore any credentials)\n\
-    --about       Open straight to the animated about panel\n\
-    --onboard     Re-run the first-run welcome / live setup\n\
-    --init        Write a default config to ~/.config/jira-tui/config.toml\n\
-    -V, --version Print version\n\
-    -h, --help    Print this help\n\
-\n\
-MOUSE:\n\
-    Press 'm' to toggle mouse mode (click to open, wheel to scroll, drag to\n\
-    copy via OSC 52). Hold Shift while dragging to use your terminal's native\n\
-    selection instead.\n\
-\n\
-EDITING:\n\
-    In an issue, press 't' to change status and 'e' to edit the description in\n\
-    $EDITOR (VISUAL/EDITOR, falling back to vi). Edits are recompiled to ADF and\n\
-    previewed before anything is sent to Jira.\n\
-\n\
-LIVE MODE:\n\
-    Set JIRA_EMAIL and JIRA_API_TOKEN (or a token.txt file), and optionally\n\
-    JIRA_BASE_URL / JIRA_PROJECT, to load your real assigned work. Without\n\
-    them, jira-tui runs against built-in sample data (or the last cached list).\n",
-        env!("CARGO_PKG_VERSION")
-    );
 }
