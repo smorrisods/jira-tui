@@ -78,7 +78,12 @@ const DEFAULT_CONFIG: &str = r#"# jira-tui configuration
 # Jira site and account (used in live mode).
 # base_url = "https://your-org.atlassian.net"
 # email = "you@example.com"
-# project = "DS"
+# project = "PROJ"
+
+# Optional: custom field ID for "Acceptance Criteria" on your Jira site
+# (Settings -> Issues -> Custom fields; every site assigns its own numeric
+# ID). Leave commented out to skip fetching acceptance criteria entirely.
+# acceptance_criteria_field = "customfield_10001"
 
 # UI preferences.
 # Start with mouse mode on (click-to-open, wheel scroll, drag-to-copy).
