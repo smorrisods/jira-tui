@@ -9,7 +9,6 @@ use ratatui::Frame;
 use crate::app::{App, ListFocus};
 use crate::domain::IssueSummary;
 
-use super::detail::issue_detail_lines;
 use super::{
     card_bordered, chip, priority_colour, priority_glyph, priority_style, status_colour,
     status_short, status_style, truncate, ACCENT, ACCENT2, DANGER, MUTED,
@@ -69,7 +68,7 @@ pub(crate) fn draw_quick_view(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(block, area);
 
     let lines: Vec<Line> = if let Some(detail) = app.quick_view_detail() {
-        issue_detail_lines(detail)
+        crate::render::issue_detail_lines(detail).lines
     } else {
         // Not cached yet: show what we know from the summary row while the
         // full detail loads in the background.

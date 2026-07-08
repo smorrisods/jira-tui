@@ -189,6 +189,42 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             app.request_edit = true;
         }
 
+        // Comments: add one (Detail or quick-view), jump to the comments
+        // section (]) / back to the top ([), and step between individual
+        // comments (n/p).
+        KeyCode::Char('c')
+            if (app.screen == Screen::Detail && app.detail.is_some())
+                || (matches!(app.screen, Screen::Home | Screen::List)
+                    && app.quick_view
+                    && app.quick_view_detail().is_some()) =>
+        {
+            app.begin_comment();
+        }
+        KeyCode::Char(']')
+            if matches!(app.screen, Screen::Detail | Screen::Preview)
+                || (matches!(app.screen, Screen::Home | Screen::List) && app.quick_view) =>
+        {
+            app.jump_to_comments();
+        }
+        KeyCode::Char('[')
+            if matches!(app.screen, Screen::Detail | Screen::Preview)
+                || (matches!(app.screen, Screen::Home | Screen::List) && app.quick_view) =>
+        {
+            app.jump_to_top();
+        }
+        KeyCode::Char('n')
+            if matches!(app.screen, Screen::Detail | Screen::Preview)
+                || (matches!(app.screen, Screen::Home | Screen::List) && app.quick_view) =>
+        {
+            app.next_comment();
+        }
+        KeyCode::Char('p')
+            if matches!(app.screen, Screen::Detail | Screen::Preview)
+                || (matches!(app.screen, Screen::Home | Screen::List) && app.quick_view) =>
+        {
+            app.prev_comment();
+        }
+
         KeyCode::Up | KeyCode::Char('k') => nav(app, -1),
         KeyCode::Down | KeyCode::Char('j') => nav(app, 1),
         KeyCode::PageUp => nav(app, -8),

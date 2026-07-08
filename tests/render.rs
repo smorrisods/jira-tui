@@ -60,6 +60,48 @@ fn detail_screen_renders_adf() {
 }
 
 #[test]
+fn detail_screen_shows_comment_indicator_and_jumps_to_comments() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.selected = 0;
+    app.open_detail();
+    let comment_count = app.detail.as_ref().unwrap().comments.len();
+    assert!(comment_count > 0, "demo detail should have canned comments");
+
+    let text = render(&app);
+    assert!(
+        text.contains("💬") && text.contains(&comment_count.to_string()),
+        "detail should show a comment-count indicator"
+    );
+
+    app.jump_to_comments();
+    let text = render(&app);
+    let first_author = app.detail.as_ref().unwrap().comments[0].author.clone();
+    assert!(
+        text.contains(&first_author),
+        "scrolling to comments should surface the first comment's author"
+    );
+}
+
+#[test]
+fn quick_view_panel_renders_comments_inline() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.quick_view = true;
+    app.selected = 0;
+    app.ensure_quick_view_loaded();
+    app.jump_to_comments();
+
+    let text = render(&app);
+    let detail = app.quick_view_detail().unwrap();
+    let first_author = detail.comments[0].author.clone();
+    assert!(
+        text.contains(&first_author),
+        "quick view should render full comments, not just an indicator"
+    );
+}
+
+#[test]
 fn about_screen_shows_animated_banner() {
     let mut app = demo_app();
     app.screen = Screen::About;

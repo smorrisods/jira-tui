@@ -80,6 +80,21 @@ pub struct IssueDetail {
     /// field isn't configured or the issue has no value for it.
     pub acceptance_criteria: Option<Value>,
     pub transitions: Vec<Transition>,
+    /// All comments, oldest first. Fetched in full via pagination in live
+    /// mode (see `jira::live::fetch_comments`); a handful of canned entries
+    /// in demo mode.
+    pub comments: Vec<Comment>,
+}
+
+/// A single issue comment.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Comment {
+    pub id: String,
+    pub author: String,
+    /// Display string, formatted the same way as `IssueSummary::updated`.
+    pub created: String,
+    /// Raw ADF comment body, rendered the same way as the description.
+    pub body: Value,
 }
 
 /// A workflow transition available from the current status.
@@ -314,7 +329,59 @@ pub fn demo_detail(key: &str) -> IssueDetail {
                 to: name.to_string(),
             })
             .collect(),
+        comments: demo_comments(),
     }
+}
+
+/// A few canned comments so the comment-reading UI is fully explorable
+/// offline, without any live Jira connection.
+fn demo_comments() -> Vec<Comment> {
+    vec![
+        Comment {
+            id: "1".into(),
+            author: "jane.reporter".into(),
+            created: "3d ago".into(),
+            body: json!({
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    { "type": "paragraph", "content": [
+                        { "type": "text", "text": "Confirmed on Safari 17 — collapsed accordion copy is invisible to Ctrl+F. Blocking a client accessibility audit." }
+                    ] }
+                ]
+            }),
+        },
+        Comment {
+            id: "2".into(),
+            author: "scott.morris".into(),
+            created: "2d ago".into(),
+            body: json!({
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    { "type": "paragraph", "content": [
+                        { "type": "text", "text": "Prototype using " },
+                        { "type": "text", "text": "hidden=\"until-found\"", "marks": [ { "type": "code" } ] },
+                        { "type": "text", "text": " looks promising — pushing a branch for review shortly." }
+                    ] }
+                ]
+            }),
+        },
+        Comment {
+            id: "3".into(),
+            author: "jane.reporter".into(),
+            created: "5h ago".into(),
+            body: json!({
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    { "type": "paragraph", "content": [
+                        { "type": "text", "text": "👍 tested the branch locally, works great in Chrome/Firefox. Let's confirm the fallback path before merging." }
+                    ] }
+                ]
+            }),
+        },
+    ]
 }
 
 /// Placeholder detail for a key that isn't part of the demo dataset, used by
@@ -346,6 +413,7 @@ fn demo_detail_not_found(key: &str) -> IssueDetail {
         description,
         acceptance_criteria: None,
         transitions: Vec::new(),
+        comments: Vec::new(),
     }
 }
 
