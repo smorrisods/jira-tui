@@ -1,7 +1,9 @@
 //! Configuration, XDG paths, and the on-disk issue cache.
 //!
 //! Non-secret settings live in `$XDG_CONFIG_HOME/jira-tui/config.toml`
-//! (falling back to `~/.config`). A small issue cache lives in
+//! (falling back to `~/.config`), parsed and edited with `toml_edit` so a
+//! save from onboarding or the field-mapping screen never disturbs comments
+//! or settings a user added by hand. A small issue cache lives in
 //! `$XDG_CACHE_HOME/jira-tui` so the last live "my work" list can be shown
 //! instantly — and offline — until the next successful refresh.
 
@@ -9,6 +11,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use toml_edit::DocumentMut;
 
 use crate::domain::IssueSummary;
 
@@ -29,25 +32,45 @@ pub fn cache_dir() -> Option<PathBuf> {
     Some(dir)
 }
 
-/// Read the flat `key = "value"` settings from the config file. Intentionally
-/// tiny — no TOML dependency for a handful of flat keys.
-pub fn read_kv() -> HashMap<String, String> {
-    let mut map = HashMap::new();
+/// Parse `config.toml` into an editable document, for callers that intend
+/// to write it back (so a parse error must surface, rather than risk
+/// silently overwriting a file we couldn't understand).
+fn load_document() -> Result<DocumentMut> {
     let Some(path) = config_path() else {
-        return map;
+        return Ok(DocumentMut::new());
     };
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return map;
-    };
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') || line.starts_with('[') {
+    match std::fs::read_to_string(&path) {
+        Ok(content) => content
+            .parse::<DocumentMut>()
+            .with_context(|| format!("parsing {}", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(DocumentMut::new()),
+        Err(e) => Err(e).context(format!("reading {}", path.display())),
+    }
+}
+
+/// Parse `config.toml` for read-only access. Never blocks the app — a
+/// missing or unparseable file is treated the same as an empty one, exactly
+/// like a missing/invalid credential falls back to demo data.
+fn load_document_lenient() -> DocumentMut {
+    load_document().unwrap_or_default()
+}
+
+/// Read the flat settings from `config.toml` as strings (booleans and
+/// numbers are stringified), for callers that just want to look a value up.
+pub fn read_kv() -> HashMap<String, String> {
+    let doc = load_document_lenient();
+    let mut map = HashMap::new();
+    for (key, item) in doc.iter() {
+        let value = if let Some(s) = item.as_str() {
+            s.to_string()
+        } else if let Some(b) = item.as_bool() {
+            b.to_string()
+        } else if let Some(i) = item.as_integer() {
+            i.to_string()
+        } else {
             continue;
-        }
-        if let Some((k, v)) = line.split_once('=') {
-            let v = v.trim().trim_matches('"').trim_matches('\'').to_string();
-            map.insert(k.trim().to_string(), v);
-        }
+        };
+        map.insert(key.to_string(), value);
     }
     map
 }
@@ -151,72 +174,61 @@ pub fn save_token(token: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// Write the non-secret settings to `config.toml`, preserving the mouse pref
-/// and any existing acceptance-criteria field mapping / token file path.
+/// Set (or, when `value` is `None`, remove) a single string key in
+/// `config.toml`, leaving every other key, comment, and blank line exactly
+/// as they were. This is the one place that touches the file on disk so
+/// every setting shares the same "never clobber the rest of the file"
+/// guarantee.
+fn set_config_key(key: &str, value: Option<&str>) -> Result<PathBuf> {
+    let dir = config_dir().context("could not resolve a config directory")?;
+    std::fs::create_dir_all(&dir).context("creating config directory")?;
+    let path = dir.join("config.toml");
+
+    let mut doc = if path.exists() {
+        load_document().with_context(|| {
+            format!(
+                "{} has invalid TOML — fix or remove it, then try again",
+                path.display()
+            )
+        })?
+    } else {
+        DEFAULT_CONFIG
+            .parse::<DocumentMut>()
+            .context("parsing the built-in default config template")?
+    };
+
+    match value {
+        Some(v) if !v.trim().is_empty() => {
+            doc[key] = toml_edit::value(v);
+        }
+        _ => {
+            doc.remove(key);
+        }
+    }
+
+    std::fs::write(&path, doc.to_string()).context("writing config.toml")?;
+    Ok(path)
+}
+
+/// Save the live-mode site/account settings, preserving every other setting
+/// (mouse pref, field mapping, token file, and any comments) untouched.
 pub fn save_settings(base_url: &str, email: &str, project: &str) -> Result<PathBuf> {
-    let kv = read_kv();
-    write_config_toml(
-        base_url,
-        email,
-        project,
-        kv.get("acceptance_criteria_field").map(String::as_str),
-        kv.get("token_file").map(String::as_str),
-    )
+    set_config_key("base_url", Some(base_url))?;
+    set_config_key("email", Some(email))?;
+    set_config_key("project", Some(project))
 }
 
 /// Map (or clear) the "Acceptance Criteria" custom field, preserving the
 /// rest of `config.toml`. `None` clears any existing mapping.
 pub fn save_field_mapping(acceptance_criteria_field: Option<&str>) -> Result<PathBuf> {
-    let kv = read_kv();
-    let base_url = kv.get("base_url").cloned().unwrap_or_default();
-    let email = kv.get("email").cloned().unwrap_or_default();
-    let project = kv.get("project").cloned().unwrap_or_default();
-    write_config_toml(
-        &base_url,
-        &email,
-        &project,
-        acceptance_criteria_field,
-        kv.get("token_file").map(String::as_str),
-    )
+    set_config_key("acceptance_criteria_field", acceptance_criteria_field)
 }
 
-fn write_config_toml(
-    base_url: &str,
-    email: &str,
-    project: &str,
-    acceptance_criteria_field: Option<&str>,
-    token_file: Option<&str>,
-) -> Result<PathBuf> {
-    let dir = config_dir().context("could not resolve a config directory")?;
-    std::fs::create_dir_all(&dir).context("creating config directory")?;
-    let mouse = Settings::load().mouse;
-    let acceptance_criteria_line = match acceptance_criteria_field {
-        Some(field) if !field.trim().is_empty() => {
-            format!("acceptance_criteria_field = \"{field}\"\n")
-        }
-        _ => String::new(),
-    };
-    let token_file_line = match token_file {
-        Some(path) if !path.trim().is_empty() => format!("token_file = \"{path}\"\n"),
-        _ => String::new(),
-    };
-    let content = format!(
-        "# jira-tui configuration\n\
-# Non-secret settings only. The API token lives in the sibling `token` file.\n\
-\n\
-base_url = \"{base_url}\"\n\
-email = \"{email}\"\n\
-project = \"{project}\"\n\
-{acceptance_criteria_line}\
-{token_file_line}\
-\n\
-# Start with mouse mode on (click-to-open, wheel scroll, drag-to-copy).\n\
-# Hold Shift while dragging to use your terminal's native selection instead.\n\
-mouse = {mouse}\n"
-    );
-    let path = dir.join("config.toml");
-    std::fs::write(&path, content).context("writing config.toml")?;
-    Ok(path)
+/// Set (or clear) the token file path override, preserving the rest of
+/// `config.toml`.
+#[cfg_attr(not(feature = "live"), allow(dead_code))]
+pub fn save_token_file_path(token_file: Option<&str>) -> Result<PathBuf> {
+    set_config_key("token_file", token_file)
 }
 
 fn cache_file() -> Option<PathBuf> {
@@ -310,6 +322,49 @@ mod tests {
         // Clearing the mapping removes the key entirely.
         save_field_mapping(None).unwrap();
         assert_eq!(read_kv().get("acceptance_criteria_field"), None);
+
+        // Token file path override round-trips and can be cleared too.
+        save_token_file_path(Some("/custom/token/path")).unwrap();
+        assert_eq!(
+            read_kv().get("token_file").map(String::as_str),
+            Some("/custom/token/path")
+        );
+        save_token_file_path(None).unwrap();
+        assert_eq!(read_kv().get("token_file"), None);
+
+        // The rewrite to toml_edit must preserve comments and formatting a
+        // user added by hand — not just the keys we know about — since a
+        // full-file regeneration would silently discard them.
+        let config_toml_path = config_path().unwrap();
+        std::fs::write(
+            &config_toml_path,
+            "# a comment I wrote myself\nbase_url = \"https://x.atlassian.net\"\nemail = \"me@example.com\"\nproject = \"DS\"\nmouse = false\n# trailing comment\n",
+        )
+        .unwrap();
+        save_field_mapping(Some("customfield_20002")).unwrap();
+        let rewritten = std::fs::read_to_string(&config_toml_path).unwrap();
+        assert!(
+            rewritten.contains("# a comment I wrote myself"),
+            "hand-written comments must survive a save:\n{rewritten}"
+        );
+        assert!(
+            rewritten.contains("# trailing comment"),
+            "trailing comments must survive a save:\n{rewritten}"
+        );
+        assert!(rewritten.contains("customfield_20002"));
+
+        // An unparseable existing config.toml must surface an error rather
+        // than being silently clobbered with a fresh default (data loss).
+        std::fs::write(&config_toml_path, "this is not [ valid toml").unwrap();
+        assert!(
+            save_settings("https://z.atlassian.net", "me@example.com", "DS").is_err(),
+            "saving over an unparseable config.toml must error, not overwrite it"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&config_toml_path).unwrap(),
+            "this is not [ valid toml",
+            "the invalid file must be left untouched after a failed save"
+        );
 
         // Token is written to its own file with 0600 perms on unix.
         let tpath = save_token("secret-token").unwrap();
