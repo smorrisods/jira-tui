@@ -1,5 +1,9 @@
 # jira-tui 🍁
 
+<p align="center">
+  <img src="assets/hero.svg" alt="jira-tui — A keyboard-driven Jira terminal UI in Rust" width="100%">
+</p>
+
 A developer-first, keyboard-driven **Jira terminal UI** written in Rust
 (`ratatui` + `crossterm`) — fast, legible, ADF-native, mouse-friendly, and with a
 little bit of soul (there's an animated about panel and a mascot named Jax).
