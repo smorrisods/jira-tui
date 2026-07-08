@@ -83,12 +83,21 @@ current_package_version() {
 	sed -n 's/^version = "\([^"]*\)"/\1/p' "${REPO_ROOT}/Cargo.toml" | head -n 1
 }
 
-replace_in_file() {
+# Bump only *our own* `name = "jira-tui"` / `version = "..."` stanza in a
+# Cargo.toml or Cargo.lock file, not any dependency that happens to be
+# pinned to the same version string elsewhere in the file. Fails loudly if
+# the expected stanza isn't found (rather than silently leaving the
+# version un-bumped), since `perl -pi` exits 0 even on zero matches.
+bump_own_package_version() {
 	local file="$1"
-	local from="$2"
-	local to="$3"
+	local current="$2"
+	local new="$3"
 
-	perl -0pi -e "s/\\Q${from}\\E/${to}/g" "${file}"
+	perl -0pi -e "s/(name = \"jira-tui\"\nversion = \")\\Q${current}\\E(\")/\${1}${new}\${2}/" "${file}"
+
+	if ! grep -A1 "name = \"jira-tui\"" "${file}" | grep -q "version = \"${new}\""; then
+		fail "Failed to update jira-tui's version stanza in ${file#"${REPO_ROOT}"/} — expected \`name = \"jira-tui\"\` immediately followed by \`version = \"${new}\"\`. File layout may have changed; update this script."
+	fi
 }
 
 VERSION_INPUT=""
@@ -186,7 +195,7 @@ if [[ "${DRY_RUN}" == true ]]; then
 	warn "Dry run only. No files will be changed."
 	printf '  would create or reuse branch %s\n' "${TARGET_BRANCH}"
 	for file in "${FILES[@]}"; do
-		printf '  would update %s\n' "${file#${REPO_ROOT}/}"
+		printf '  would update %s\n' "${file#"${REPO_ROOT}"/}"
 	done
 	exit 0
 fi
@@ -201,15 +210,14 @@ if [[ "${CURRENT_BRANCH_NAME}" != "${TARGET_BRANCH}" ]]; then
 	git -C "${REPO_ROOT}" checkout -b "${TARGET_BRANCH}" >/dev/null
 fi
 
-replace_in_file "${REPO_ROOT}/Cargo.toml" "version = \"${CURRENT_VERSION}\"" "version = \"${NEW_VERSION}\""
+bump_own_package_version "${REPO_ROOT}/Cargo.toml" "${CURRENT_VERSION}" "${NEW_VERSION}"
 # Cargo.lock records our own package's version in its `[[package]] name = "jira-tui"` stanza;
-# bump only that occurrence (not any same-numbered dependency version) by scoping the
-# replacement to the line immediately following our package name.
-perl -0pi -e "s/(name = \"jira-tui\"\nversion = \")\\Q${CURRENT_VERSION}\\E(\")/\${1}${NEW_VERSION}\${2}/" "${REPO_ROOT}/Cargo.lock"
+# bump only that occurrence (not any same-numbered dependency version).
+bump_own_package_version "${REPO_ROOT}/Cargo.lock" "${CURRENT_VERSION}" "${NEW_VERSION}"
 
 success "Updated release version references in:"
 for file in "${FILES[@]}"; do
-	printf '  %b- %s%b\n' "${GREEN}" "${file#${REPO_ROOT}/}" "${RESET}"
+	printf '  %b- %s%b\n' "${GREEN}" "${file#"${REPO_ROOT}"/}" "${RESET}"
 done
 
 warn "Next steps:"
