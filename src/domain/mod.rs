@@ -75,7 +75,9 @@ pub struct IssueDetail {
     pub links: Vec<IssueLink>,
     /// Raw ADF description document.
     pub description: Value,
-    /// Raw ADF acceptance criteria (customfield_10309).
+    /// Raw ADF acceptance criteria, fetched from a configurable custom field
+    /// (see `acceptance_criteria_field` in `config.toml`). `None` if the
+    /// field isn't configured or the issue has no value for it.
     pub acceptance_criteria: Option<Value>,
     pub transitions: Vec<Transition>,
 }

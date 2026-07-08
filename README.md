@@ -81,8 +81,9 @@ You can also configure credentials without the wizard:
 ```bash
 export JIRA_EMAIL="you@example.com"
 export JIRA_API_TOKEN="…"          # or ~/.config/jira-tui/token, or a token.txt file
-export JIRA_BASE_URL="https://your-org.atlassian.net"   # optional
-export JIRA_PROJECT="DS"                                  # optional
+export JIRA_BASE_URL="https://your-org.atlassian.net"     # required for live mode
+export JIRA_PROJECT="PROJ"                                # optional — only used when creating issues
+export JIRA_ACCEPTANCE_CRITERIA_FIELD="customfield_10001" # optional — your site's custom field ID, if any
 ```
 
 Non-secret settings live in `$XDG_CONFIG_HOME/jira-tui/config.toml`
@@ -91,7 +92,8 @@ Non-secret settings live in `$XDG_CONFIG_HOME/jira-tui/config.toml`
 ```toml
 base_url = "https://your-org.atlassian.net"
 email = "you@example.com"
-project = "DS"
+project = "PROJ"
+acceptance_criteria_field = "customfield_10001"   # optional; every Jira site has its own field IDs
 mouse = false   # start with mouse mode on/off
 ```
 

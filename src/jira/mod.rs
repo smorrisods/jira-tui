@@ -13,6 +13,12 @@ pub struct Config {
     pub email: String,
     pub token: String,
     pub project: String,
+    /// Custom field ID for "Acceptance Criteria" (e.g. `customfield_10309`),
+    /// if your Jira instance has one. This is instance-specific — every Jira
+    /// site assigns its own numeric IDs to custom fields — so it's opt-in via
+    /// `JIRA_ACCEPTANCE_CRITERIA_FIELD` or `acceptance_criteria_field` in
+    /// `config.toml`. Left unset, acceptance criteria are simply not fetched.
+    pub acceptance_criteria_field: Option<String>,
 }
 
 #[cfg(feature = "live")]
@@ -22,23 +28,30 @@ impl Config {
     pub fn load() -> Option<Config> {
         let file = crate::config::read_kv();
 
+        // No baked-in default: every Jira site has a different hostname, so
+        // live mode only activates once you've told us which one is yours.
         let base_url = std::env::var("JIRA_BASE_URL")
             .ok()
-            .or_else(|| file.get("base_url").cloned())
-            .unwrap_or_else(|| "https://ontariodotca.atlassian.net".to_string());
+            .or_else(|| file.get("base_url").cloned())?;
         let email = std::env::var("JIRA_EMAIL")
             .ok()
             .or_else(|| file.get("email").cloned())?;
+        // Only used when creating issues; leave unset if you don't create
+        // issues from jira-tui or always want to be asked for a project key.
         let project = std::env::var("JIRA_PROJECT")
             .ok()
             .or_else(|| file.get("project").cloned())
-            .unwrap_or_else(|| "DS".to_string());
+            .unwrap_or_default();
+        let acceptance_criteria_field = std::env::var("JIRA_ACCEPTANCE_CRITERIA_FIELD")
+            .ok()
+            .or_else(|| file.get("acceptance_criteria_field").cloned())
+            .filter(|s| !s.trim().is_empty());
 
         let token = std::env::var("JIRA_API_TOKEN")
             .ok()
             .or_else(read_token_file)?;
 
-        if token.trim().is_empty() {
+        if token.trim().is_empty() || base_url.trim().is_empty() {
             return None;
         }
 
@@ -47,6 +60,7 @@ impl Config {
             email,
             token: token.trim().to_string(),
             project,
+            acceptance_criteria_field,
         })
     }
 
@@ -325,9 +339,14 @@ mod live {
     }
 
     pub fn fetch_detail(cfg: &Config, key: &str) -> Result<IssueDetail> {
-        let path = format!(
-            "/rest/api/3/issue/{key}?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,parent,issuelinks,description,customfield_10309"
-        );
+        let mut fields = "summary,status,issuetype,priority,assignee,reporter,labels,\
+            components,parent,issuelinks,description"
+            .to_string();
+        if let Some(ac_field) = &cfg.acceptance_criteria_field {
+            fields.push(',');
+            fields.push_str(ac_field);
+        }
+        let path = format!("/rest/api/3/issue/{key}?fields={fields}");
         let issue = get(cfg, &path)?;
         let f = issue.get("fields").cloned().unwrap_or(Value::Null);
 
@@ -368,7 +387,10 @@ mod live {
             parent: str_field(&f, &["parent", "key"]),
             links,
             description: f.get("description").cloned().unwrap_or(Value::Null),
-            acceptance_criteria: f.get("customfield_10309").cloned(),
+            acceptance_criteria: cfg
+                .acceptance_criteria_field
+                .as_ref()
+                .and_then(|field| f.get(field).cloned()),
             transitions: fetch_transitions(cfg, key).unwrap_or_default(),
         })
     }

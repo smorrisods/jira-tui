@@ -180,7 +180,7 @@ impl App {
             quick_view_area: Cell::new(Rect::default()),
             board_area: Cell::new(Rect::default()),
             welcome_phase: WelcomePhase::Intro,
-            field_site: "https://ontariodotca.atlassian.net".to_string(),
+            field_site: String::new(),
             field_email: String::new(),
             field_token: String::new(),
             focus: Field::Site,
@@ -225,7 +225,9 @@ impl App {
         let issue = self.selected_issue()?;
         let site = match &self.source {
             Source::Live { site, .. } => site.clone(),
-            _ => "ontariodotca.atlassian.net".to_string(),
+            // Demo data has no real Jira site behind it; use an obviously
+            // fake placeholder host rather than a real organization's Jira.
+            _ => "demo.atlassian.net".to_string(),
         };
         Some(format!("https://{site}/browse/{}", issue.key))
     }
