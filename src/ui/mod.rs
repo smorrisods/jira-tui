@@ -46,12 +46,12 @@ use transition_picker::draw_transition_picker;
 use welcome::draw_welcome;
 
 // ── Theme ────────────────────────────────────────────────────────────────────
-const ACCENT: Color = Color::Cyan;
-const ACCENT2: Color = Color::Magenta;
-const MUTED: Color = Color::DarkGray;
+pub(crate) const ACCENT: Color = Color::Cyan;
+pub(crate) const ACCENT2: Color = Color::Magenta;
+pub(crate) const MUTED: Color = Color::DarkGray;
 const OK: Color = Color::Green;
 const WARN: Color = Color::Yellow;
-const DANGER: Color = Color::Red;
+pub(crate) const DANGER: Color = Color::Red;
 
 pub fn draw(f: &mut Frame, app: &App) {
     let root = Layout::default()
@@ -219,32 +219,41 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
 
 // ── Footer ───────────────────────────────────────────────────────────────────
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
-    use crate::app::Screen;
-    let keys = match app.screen {
+    use crate::app::{EditTarget, Screen};
+    let keys: String = match app.screen {
         Screen::Welcome => match app.onboarding.welcome_phase {
             crate::app::WelcomePhase::Intro => {
-                "s set up live · d demo · w write config · ? help · q quit"
+                "s set up live · d demo · w write config · ? help · q quit".into()
             }
             crate::app::WelcomePhase::Setup => {
-                "type to edit · tab next · ⏎ verify & save · esc back"
+                "type to edit · tab next · ⏎ verify & save · esc back".into()
             }
         },
-        Screen::Detail => {
-            "↑/↓ scroll · t transition · e edit · esc/← back · a about · ? help · q quit"
-        }
-        Screen::Preview => "y apply to Jira · esc/← cancel · ↑/↓ scroll",
-        Screen::Edit => "type to edit · ^S preview · esc cancel",
-        Screen::Search => "type to filter · ↑/↓ move · ⏎ open · esc cancel",
-        Screen::FieldMapping => "type to search fields · ↑/↓ move · ⏎ map · esc cancel",
+        Screen::Detail => "↑/↓ scroll · t transition · e edit · c comment · ]/[ comments/top · \
+             n/p next/prev comment · esc/← back · a about · ? help · q quit"
+            .into(),
+        Screen::Preview => match app.edit_target {
+            EditTarget::Description => "y apply to Jira · esc/← cancel · ↑/↓ scroll".into(),
+            EditTarget::Comment => "y post comment · esc/← cancel · ↑/↓ scroll".into(),
+        },
+        Screen::Edit => match app.edit_target {
+            EditTarget::Description => "type to edit · ^S preview · esc cancel".into(),
+            EditTarget::Comment => "type your comment · ^S preview · esc cancel".into(),
+        },
+        Screen::Search => "type to filter · ↑/↓ move · ⏎ open · esc cancel".into(),
+        Screen::FieldMapping => "type to search fields · ↑/↓ move · ⏎ map · esc cancel".into(),
         Screen::Board => {
-            "↑/↓ card · ←/→ column · pgup/pgdn lane · ⏎ open · / search · esc/q back"
+            "↑/↓ card · ←/→ column · pgup/pgdn lane · ⏎ open · / search · esc/q back".into()
         }
-        Screen::About => "esc/← back · ? help · q quit",
+        Screen::About => "esc/← back · ? help · q quit".into(),
         Screen::Home | Screen::List if app.quick_view => {
-            "↑/↓ move · →/⏎ open · tab focus quick view · b board · / search · ? help · q quit"
+            "↑/↓ move · →/⏎ open · tab focus quick view · c comment · ]/[ comments/top · \
+             n/p next/prev comment · b board · / search · ? help · q quit"
+                .into()
         }
-        _ => "↑/↓ move · →/⏎ open · s sort · f filter · v quick · b board · / search · ? help · q quit",
+        _ => "↑/↓ move · →/⏎ open · s sort · f filter · v quick · b board · / search · ? help · q quit".into(),
     };
+    let keys = keys.as_str();
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -289,26 +298,26 @@ fn card_bordered(title: &str, title_colour: Color, border_colour: Color) -> Bloc
         ))
 }
 
-fn chip(text: &str, colour: Color) -> Span<'static> {
+pub(crate) fn chip(text: &str, colour: Color) -> Span<'static> {
     Span::styled(
         format!(" {text} "),
         Style::default().fg(Color::Black).bg(colour),
     )
 }
 
-fn divider() -> Line<'static> {
+pub(crate) fn divider() -> Line<'static> {
     Line::from(Span::styled("─".repeat(52), Style::default().fg(MUTED)))
 }
 
-fn priority_glyph(p: &Priority) -> String {
+pub(crate) fn priority_glyph(p: &Priority) -> String {
     p.glyph().to_string()
 }
 
-fn priority_style(p: &Priority) -> Style {
+pub(crate) fn priority_style(p: &Priority) -> Style {
     Style::default().fg(priority_colour(p))
 }
 
-fn priority_colour(p: &Priority) -> Color {
+pub(crate) fn priority_colour(p: &Priority) -> Color {
     match p {
         Priority::Highest | Priority::High => DANGER,
         Priority::Medium => WARN,
@@ -320,7 +329,7 @@ fn status_short(s: &str) -> String {
     truncate(s, 10)
 }
 
-fn status_colour(s: &str) -> Color {
+pub(crate) fn status_colour(s: &str) -> Color {
     match s {
         "Done" => OK,
         "In Progress" | "In Review" => ACCENT,
@@ -333,7 +342,7 @@ fn status_style(s: &str) -> Style {
     Style::default().fg(status_colour(s))
 }
 
-fn truncate(s: &str, max: usize) -> String {
+pub(crate) fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
     } else {

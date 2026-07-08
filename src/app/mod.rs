@@ -16,6 +16,7 @@ use crate::domain::{demo_issues, IssueDetail, IssueSummary, Source};
 use crate::git::GitContext;
 
 mod board;
+mod comments;
 mod detail;
 mod edit;
 mod field_mapping;
@@ -30,7 +31,7 @@ mod transitions;
 mod tests;
 
 pub use board::BoardSelection;
-pub use edit::EditorState;
+pub use edit::{EditTarget, EditorState};
 pub use field_mapping::{FieldMappingOutcome, FieldMappingState};
 pub use mouse::{ListFocus, MouseState};
 pub use onboarding::{Field, OnboardingState, WelcomePhase};
@@ -117,6 +118,17 @@ pub struct App {
     pub pending_edit: Option<serde_json::Value>,
     /// Set by a key handler to ask the run loop to launch `$EDITOR`.
     pub request_edit: bool,
+    /// Whether `Screen::Edit`/`Screen::Preview` are composing a description
+    /// edit or a new comment; both share the same compose → preview → apply
+    /// flow, only the apply action and footer text differ.
+    pub edit_target: EditTarget,
+    /// The issue key the current edit/comment applies to. Needed for
+    /// comments composed from quick-view, where there's no `self.detail`.
+    pub edit_key: Option<String>,
+    /// The screen to return to on cancel/apply — Detail when editing from
+    /// the full detail screen, List/Home when composing a comment from
+    /// quick-view.
+    pub edit_return_screen: Screen,
 
     // Field-mapping discovery (custom field IDs are instance-specific).
     pub field_mapping: FieldMappingState,
@@ -173,6 +185,9 @@ impl App {
             picker_index: 0,
             pending_edit: None,
             request_edit: false,
+            edit_target: EditTarget::default(),
+            edit_key: None,
+            edit_return_screen: Screen::Detail,
             field_mapping: FieldMappingState::default(),
         };
         app.recompute_view();

@@ -8,14 +8,6 @@ A developer-first, keyboard-driven **Jira terminal UI** written in Rust
 (`ratatui` + `crossterm`) — fast, legible, ADF-native, mouse-friendly, and with a
 little bit of soul (there's an animated about panel and a mascot named Jax).
 
-It's the third act of a small trilogy:
-
-1. **`jira-tasks`** — the proof-of-concept that showed LLMs can automate Jira
-   through a code-reviewable Markdown → ADF pipeline.
-2. **`jira-ds-skill`** — that pipeline packaged as a versioned agent skill.
-3. **`jira-tui`** — this: a human-facing, at-a-glance way to browse and (soon)
-   update your work without opening the browser.
-
 ## Highlights
 
 - **Guided onboarding.** First launch greets you with a welcome screen (and Jax)
@@ -30,6 +22,9 @@ It's the third act of a small trilogy:
 - **Edit in place.** Change status with a picker, and edit descriptions either in
   a **built-in Markdown editor** or your external `$EDITOR` — recompiled to ADF
   and previewed before anything is sent to Jira.
+- **Read and add comments.** Comments render inline (oldest first) in both the
+  detail screen and quick-view, with jump/step navigation (`]`/`[`, `n`/`p`)
+  and a built-in composer (`c`) that previews before posting.
 - **Git-aware.** Detects your repo and branch and elevates the `DS-123` issue in
   your current branch name.
 - **Mouse mode + clipboard.** Optional click-to-open, wheel scroll, and
@@ -188,9 +183,33 @@ Inside an issue (`Detail`):
   **preview**; press `y` to apply (REST in live mode) or `esc` to cancel —
   nothing is sent to Jira until you confirm.
 
-The Markdown ↔ ADF conversion follows the same mapping rules as the
-`jira-ds-skill` pipeline (headings, bullet/ordered/task lists, code blocks, and
-inline `code`/**bold**/*italic*/links), so the round trip stays ADF-native.
+The Markdown ↔ ADF conversion supports the common formatting elements
+(headings, bullet/ordered/task lists, code blocks, and inline
+`code`/**bold**/*italic*/links), so the round trip stays ADF-native.
+
+## Comments
+
+Both the full `Detail` screen and the quick-view panel render an issue's
+comments (oldest first) below the description and acceptance criteria, so
+you can read the discussion without scanning through the body fields:
+
+- A **"💬 N comments"** indicator sits near the top of the panel, and again
+  as the comments section header, so you know at a glance whether there's
+  discussion to read.
+- **`]`** jumps straight to the comments section; **`[`** jumps back to the
+  top of the panel.
+- **`n`** / **`p`** step to the next / previous individual comment, clamped
+  at the first and last (no wrap-around).
+- **`c`** opens the same built-in Markdown composer used for description
+  edits (empty this time) — `^S` to preview, `esc` to cancel. The compiled
+  ADF is **previewed** before sending; press `y` to post the comment (REST
+  in live mode) or `esc` to cancel. Works from both `Detail` and the
+  quick-view panel.
+- In live mode, comments are fetched with **full pagination** (not just
+  Jira's default most-recent page), so long comment threads are shown in
+  full.
+- Newly posted comments appear immediately (no re-fetch needed) — attributed
+  to your Jira display name in live mode, or `you` in demo/cache mode.
 
 ## Mouse & clipboard
 
@@ -226,6 +245,9 @@ copies its browse URL.
 | `l` | full list |
 | `t` | change status (in an issue) |
 | `e / E` | edit description (in-TUI / `$EDITOR`) |
+| `c` | add a comment (in an issue or quick view) |
+| `] / [` | jump to comments section / back to top |
+| `n / p` | next / previous comment |
 | `a` | about panel |
 | `m` | toggle mouse mode |
 | `J` | toggle the Jax companion 🦦 |

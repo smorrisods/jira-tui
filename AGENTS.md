@@ -5,9 +5,8 @@ Guidelines for humans and AI agents working in `jira-tui`.
 ## Project
 
 `jira-tui` is a developer-first, keyboard-driven Jira terminal UI written in
-Rust (`ratatui` + `crossterm`). It grew out of the `jira-tasks` proof-of-concept
-and the `jira-ds-skill` ADF pipeline. It should feel fast, legible, and have a
-little personality — it does not need to be strictly utilitarian.
+Rust (`ratatui` + `crossterm`). It should feel fast, legible, and have a little
+personality — it does not need to be strictly utilitarian.
 
 ## Core Principles
 
@@ -60,6 +59,41 @@ little personality — it does not need to be strictly utilitarian.
 - Do not pass unescaped backticks to `git commit -m`. Prefer
   `git commit -F <message-file>` so backticks and formatting survive verbatim.
 - Commit at meaningful milestones with a clear, detailed body.
+- Use `test:` for test-only changes (including fixes to tests themselves) —
+  reserve `fix:` for application-code bugs.
+
+## Pull Requests
+
+- **Branching:** work happens on a branch, not directly on `main`. Name
+  feature branches `feature/<short-description>` and fix branches
+  `fix/<short-description>` (add an issue number when one exists, e.g.
+  `fix/issue-19-token-file-fallback`).
+- **Titles:** human-readable summaries starting with a capital letter — no
+  Conventional Commit prefixes (`feat:`, `fix:`, etc.) in the title itself.
+  Describe the outcome/behaviour change, not internal process language.
+- **Content:** PR descriptions must not mention internal workflow artefacts
+  (session notes, todo-tracking mechanics, agent planning chatter) — keep
+  that in `agent-reviews/` and local tooling, not in outward-facing PR text.
+- **Description format:** compact Markdown with `## Summary` and
+  `## Test plan`. Use `###` sub-sections under Summary when it helps group
+  the change (e.g. `### User-facing changes`, `### Internals`,
+  `### Documentation`). Flat bullets with bold lead-ins under each section.
+  Under `## Test plan`, use checklist bullets (`- [x]`/`- [ ]`) naming the
+  concrete commands run; state plainly anything that couldn't be verified.
+  No need to hard-wrap PR body lines to a fixed width — GitHub renders
+  Markdown paragraphs regardless of source line length, so write natural
+  prose/bullet lines and let them run long.
+- **Labels:** every PR gets at least one primary category label
+  (`enhancement`, `bug`, `documentation`, `testing`, `ci`, `build`, `chore`)
+  plus scope labels where useful (`rust`, `dependencies`, `github_actions`).
+  Use `skip-changelog` for changes that shouldn't appear in release notes.
+- **Readiness:** open PRs ready for review by default; only mark a PR draft
+  when explicitly asked or when there's a clearly communicated blocker.
+- **Force-pushing** an already-open PR branch (e.g. after a rebase) requires
+  explicit user confirmation first — history rewrites on shared branches are
+  disruptive.
+- Prefer the `gh` CLI for PR/issue/label/workflow-run work over other GitHub
+  tooling, unless it can't complete the task cleanly.
 
 ## Reviews
 
