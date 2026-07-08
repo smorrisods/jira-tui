@@ -262,9 +262,11 @@ pub fn load_cached_issues() -> Option<Vec<IssueSummary>> {
 mod tests {
     use super::*;
 
-    // Single test to avoid races on the process-global XDG env vars.
+    // Serialized against other tests that mutate the same process-global
+    // XDG env vars — see `crate::test_support::lock_env`.
     #[test]
     fn config_and_cache_lifecycle() {
+        let _guard = crate::test_support::lock_env();
         let base = std::env::temp_dir().join(format!("jira-tui-test-{}", std::process::id()));
         let cfg = base.join("config");
         let cache = base.join("cache");
