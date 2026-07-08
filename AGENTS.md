@@ -112,12 +112,14 @@ personality — it does not need to be strictly utilitarian.
   creates a `chore/release-vX.Y.Z` branch. Open a PR from that branch,
   merge to `main`, *then* create the tag on `main`. Never tag from a
   branch other than `main`.
-- **What ships:** Linux `amd64`/`arm64` only for now (binary, `.tar.gz`,
-  `.deb`, `.rpm`, plus one `SHA256SUMS` file covering every artefact — not
-  a `.sha256` per file). `jira-mcp` and macOS/Windows builds are
-  deliberately out of scope until revisited; see
-  `docs/release/distribution-strategy.md` for the full rationale
-  (including a macOS brainstorm for later).
+- **What ships:** Linux and macOS `amd64`/`arm64` (binary, `.tar.gz`,
+  plus Linux-only `.deb`/`.rpm`), plus one `SHA256SUMS` file covering
+  every artefact — not a `.sha256` per file. `scripts/install.sh` is a
+  curl-pipeable installer that downloads, verifies, and installs the
+  right archive for the current OS/arch. macOS builds are **ad-hoc
+  signed only** (no notarization/Developer account yet). `jira-mcp` and
+  Windows builds are deliberately out of scope until revisited; see
+  `docs/release/distribution-strategy.md` for the full rationale.
 - **Man page:** generated at build time from `src/cli.rs` via
   `clap_mangen` (`build.rs`) — never hand-edit a man page file; if the CLI
   surface changes, update `src/cli.rs` and the man page follows

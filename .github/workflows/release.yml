@@ -105,7 +105,7 @@ jobs:
                 -f tag_name="${TAG_NAME}" \
                 -f target_commitish="${GITHUB_SHA}" \
                 -f name="${RELEASE_NAME}" \
-                -f body='See assets below for Linux downloads, packages, and checksums (SHA256SUMS).' \
+                -f body='See assets below for Linux and macOS downloads, Linux packages, and checksums (SHA256SUMS). macOS builds are ad-hoc signed only (not notarized) — see the README for first-run Gatekeeper guidance.' \
                 -F generate_release_notes=true \
                 -F draft="${RELEASE_DRAFT}" \
                 -F prerelease=false \
@@ -237,17 +237,115 @@ jobs:
             echo "- RPM package: \`jira-tui-${{ needs.prepare-release.outputs.tag_name }}-${{ matrix.artefact_suffix }}.rpm\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
+  build-macos:
+    name: Build macOS (${{ matrix.artefact_suffix }})
+    runs-on: macos-14
+    needs: prepare-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            arch: arm64
+            artefact_suffix: macos-arm64
+          - target: x86_64-apple-darwin
+            arch: amd64
+            artefact_suffix: macos-amd64
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          # Manual releases with an explicit tag must build that tagged ref, not the branch that launched the run.
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag != '' && needs.prepare-release.outputs.tag_name || github.sha }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # Both targets are built on the same macos-14 (Apple Silicon) runner —
+          # x86_64-apple-darwin cross-compiles from there, so we don't need a
+          # separate Intel runner just for the amd64 artefact.
+          targets: ${{ matrix.target }}
+
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+          shared-key: release-macos
+
+      - name: Build release binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release --target "${{ matrix.target }}"
+
+      - name: Ad-hoc code-sign the binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          # No Apple Developer account / notarization budget yet (see
+          # docs/release/distribution-strategy.md) — ad-hoc signing at least
+          # gives the binary a consistent local code identity. Gatekeeper will
+          # still flag it as unidentified on first run; that's documented in
+          # the README and install.sh's output, not hidden.
+          codesign --sign - --force --deep "target/${{ matrix.target }}/release/jira-tui"
+
+      - name: Prepare release artefacts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+
+          TAG="${{ needs.prepare-release.outputs.tag_name }}"
+          TARGET="${{ matrix.target }}"
+          ARCH="${{ matrix.arch }}"
+          SUFFIX="${{ matrix.artefact_suffix }}"
+          BINARY_SOURCE="target/${TARGET}/release/jira-tui"
+          BINARY_OUTPUT="dist/jira-tui-${TAG}-${SUFFIX}"
+
+          # Ship the raw binary alongside the archive for users who want a direct download.
+          cp "${BINARY_SOURCE}" "${BINARY_OUTPUT}"
+
+          scripts/build-release-archive.sh \
+            --version "${TAG}" \
+            --arch "${ARCH}" \
+            --binary "${BINARY_SOURCE}" \
+            --output-prefix "dist/jira-tui-${TAG}-${SUFFIX}"
+
+      - name: Upload workflow artefacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: jira-tui-${{ matrix.artefact_suffix }}
+          path: |
+            dist/jira-tui-${{ needs.prepare-release.outputs.tag_name }}-${{ matrix.artefact_suffix }}*
+          if-no-files-found: error
+
+      - name: Write summary
+        shell: bash
+        run: |
+          {
+            echo "## macOS build summary"
+            echo
+            echo "- Runner: \`macos-14\`"
+            echo "- Target triple: \`${{ matrix.target }}\`"
+            echo "- Artefact suffix: \`${{ matrix.artefact_suffix }}\`"
+            echo "- Code signing: ad-hoc (\`codesign --sign -\`) — not notarized"
+            echo "- Standalone binary: \`jira-tui-${{ needs.prepare-release.outputs.tag_name }}-${{ matrix.artefact_suffix }}\`"
+            echo "- Archive: \`jira-tui-${{ needs.prepare-release.outputs.tag_name }}-${{ matrix.artefact_suffix }}.tar.gz\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
   publish-release:
     name: Publish GitHub Release assets
     needs:
       - prepare-release
       - build-linux
+      - build-macos
     runs-on: ubuntu-24.04
     steps:
-      - name: Download all Linux release assets
+      - name: Download all release assets
         uses: actions/download-artifact@v6
         with:
-          pattern: jira-tui-linux-*
+          pattern: jira-tui-*
           path: release-assets
           merge-multiple: true
 
