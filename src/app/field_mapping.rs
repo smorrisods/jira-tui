@@ -14,6 +14,16 @@ use crate::config;
 #[cfg(feature = "live")]
 const NONE_SENTINEL: (&str, &str) = ("", "— none — don't track acceptance criteria —");
 
+/// Index of the catalog entry matching `mapped` (or the leading sentinel at
+/// index 0 if there's no mapping, or it's no longer in the catalog).
+#[cfg_attr(not(feature = "live"), allow(dead_code))]
+fn index_of_mapping(catalog: &[(String, String)], mapped: Option<&str>) -> usize {
+    match mapped {
+        Some(id) => catalog.iter().position(|(fid, _)| fid == id).unwrap_or(0),
+        None => 0,
+    }
+}
+
 impl App {
     /// Open the field-mapping screen, fetching the site's custom fields.
     /// Only meaningful in live mode; otherwise leaves a status message and
@@ -43,7 +53,15 @@ impl App {
                             .chain(fields.into_iter().map(|f| (f.id, f.name)))
                             .collect();
                     self.field_query.clear();
-                    self.field_selected = 0;
+                    self.field_current_mapping = cfg.acceptance_criteria_field.clone();
+                    // Pre-select whatever's already mapped so re-opening the
+                    // screen to edit a mapping shows (and defaults to
+                    // keeping) the current choice, rather than resetting to
+                    // "none".
+                    self.field_selected = index_of_mapping(
+                        &self.field_catalog,
+                        self.field_current_mapping.as_deref(),
+                    );
                     self.screen = Screen::FieldMapping;
                 }
                 Err(e) => {
@@ -122,10 +140,12 @@ impl App {
         match saved {
             Ok(_) if id.is_empty() => {
                 std::env::remove_var("JIRA_ACCEPTANCE_CRITERIA_FIELD");
+                self.field_current_mapping = None;
                 self.status = "Cleared the acceptance criteria field mapping.".into();
             }
             Ok(_) => {
                 std::env::set_var("JIRA_ACCEPTANCE_CRITERIA_FIELD", &id);
+                self.field_current_mapping = Some(id.clone());
                 self.status = format!("Mapped Acceptance Criteria → {name} ({id})");
                 self.flash(format!("✓ mapped {name}"));
             }
@@ -180,5 +200,28 @@ mod tests {
         assert_eq!(app.field_selected, 0);
         app.field_mapping_move(5);
         assert_eq!(app.field_selected, 1);
+    }
+
+    #[test]
+    fn reopening_pre_selects_the_currently_mapped_field() {
+        let catalog = vec![
+            (String::new(), "— none —".into()),
+            ("customfield_10001".into(), "Acceptance Criteria".into()),
+            ("customfield_10002".into(), "Story Points".into()),
+        ];
+
+        // A previously mapped field is pre-selected, not reset to "none".
+        assert_eq!(
+            index_of_mapping(&catalog, Some("customfield_10002")),
+            2,
+            "re-opening the screen should default to the currently mapped field"
+        );
+
+        // No mapping configured: defaults to the "none" sentinel.
+        assert_eq!(index_of_mapping(&catalog, None), 0);
+
+        // A mapping that no longer exists on the site (e.g. the field was
+        // deleted) falls back to "none" rather than panicking or drifting.
+        assert_eq!(index_of_mapping(&catalog, Some("customfield_99999")), 0);
     }
 }

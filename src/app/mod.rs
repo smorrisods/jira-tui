@@ -136,6 +136,10 @@ pub struct App {
     pub field_catalog: Vec<(String, String)>,
     pub field_query: String,
     pub field_selected: usize,
+    /// The field ID currently mapped in `config.toml`, if any — read fresh
+    /// each time the screen opens so re-editing shows (and pre-selects)
+    /// what's already configured, rather than starting blank.
+    pub field_current_mapping: Option<String>,
 }
 
 impl App {
@@ -201,6 +205,7 @@ impl App {
             field_catalog: Vec::new(),
             field_query: String::new(),
             field_selected: 0,
+            field_current_mapping: None,
         };
         app.recompute_view();
 
