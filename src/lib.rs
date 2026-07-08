@@ -13,4 +13,6 @@ pub mod infra;
 pub mod jira;
 #[cfg(feature = "mcp")]
 pub mod mcp;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod ui;
