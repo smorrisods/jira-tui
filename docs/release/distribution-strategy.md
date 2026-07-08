@@ -29,7 +29,7 @@ Each release publishes:
 
 The first releases do not target:
 
-- macOS or Windows (see "macOS, later" below)
+- macOS or Windows
 - crates.io publication
 - a separate install script
 - the `jira-mcp` binary (the MCP server is a real, tested feature, but shipping it as a release artefact is deferred to keep the first release rehearsable — revisit once the Linux flow is proven)
@@ -161,16 +161,6 @@ Dependency stance:
 - GNU-linked builds; Debian packages declare `Depends: libc6`
 - RPM packages lean on `rpmbuild` auto-detection for shared library requirements
 - musl / fully static builds are deferred until there's a concrete need
-
-## macOS, later (brainstorm — not yet planned in detail)
-
-Not part of the current release scope, but sketched here so it's easy to pick up when a teammate wants to run jira-tui on a Mac:
-
-- **No code-signing/notarization budget for v1.** Without an Apple Developer account, a signed+notarized `.app`/`.pkg` isn't realistic yet. Gatekeeper will flag an unsigned/ad-hoc-signed binary; users would need to right-click → Open the first time, or run `xattr -d com.apple.quarantine jira-tui` after download. Document this clearly rather than pretending it's a polished experience.
-- **Likely shape:** a `.tar.gz` per architecture (`macos-amd64`, `macos-arm64`), built on `macos-14` (Apple Silicon) and `macos-13` (or a Rosetta/x86_64 target cross-compiled from Apple Silicon) — same `bin/` + `share/man/man1/` layout as Linux, added to the same `SHA256SUMS` file.
-- **Ad-hoc signing** (`codesign --sign -`) could at least satisfy local Gatekeeper checks without a paid developer account, worth testing before committing to the approach.
-- **Homebrew tap** (`liminal-hq/homebrew-tap` or similar) is a natural follow-up once there's a stable release cadence — nicer install/update UX than a raw tarball, but it's more infrastructure (a formula to maintain, a tap repo) so it's explicitly a "later" item, not part of the first macOS pass.
-- **No installer/.pkg** for the same reason as Linux's "no install script" — keep the trust surface and maintenance burden small until there's a reason to grow it.
 
 ## Documentation updates required before release
 
