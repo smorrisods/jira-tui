@@ -57,26 +57,52 @@ cargo build --no-default-features
 
 ### Installing a release build
 
-Tagged releases publish pre-built Linux (`amd64`/`arm64`) artefacts on the
+Tagged releases publish pre-built Linux and macOS (`amd64`/`arm64`)
+artefacts on the
 [Releases page](https://github.com/smorrisods/jira-tui/releases): a
 standalone binary, a `.tar.gz` archive (unpacks to `bin/jira-tui` +
-`share/man/man1/jira-tui.1.gz`), and `.deb`/`.rpm` packages — plus one
-`SHA256SUMS` file covering every artefact in the release.
+`share/man/man1/jira-tui.1.gz`), and — Linux only — `.deb`/`.rpm`
+packages. One `SHA256SUMS` file covers every artefact in the release.
+
+**Quickest path — the install script** downloads the right archive for
+your OS/architecture, verifies its checksum, and installs the binary +
+man page:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/smorrisods/jira-tui/main/scripts/install.sh | sh
+```
+
+It installs into `/usr/local` by default (`--prefix`/`PREFIX` to
+override), and supports `--uninstall` to remove a previous install. Run
+it with `--help` to see all options.
+
+**Manual install** works the same way, if you'd rather not pipe a script
+into `sh`:
 
 ```bash
 # verify, then install a package (Debian/Ubuntu shown; use --rpm on Fedora/RHEL)
 sha256sum -c SHA256SUMS --ignore-missing
 sudo dpkg -i jira-tui-<tag>-linux-amd64.deb
 
-# or extract the tarball into a prefix of your choice
+# or extract the tarball into a prefix of your choice (Linux or macOS)
 tar -xzf jira-tui-<tag>-linux-amd64.tar.gz -C /usr/local --strip-components=0
 ```
 
 Uninstall: `sudo dpkg -r jira-tui` (or `sudo rpm -e jira-tui`) for package
 installs, or just remove `bin/jira-tui` and
-`share/man/man1/jira-tui.1.gz` for a manual tarball install.
+`share/man/man1/jira-tui.1.gz` for a manual tarball install (or
+`install.sh --uninstall` if you installed that way).
 
-macOS/Windows builds aren't published yet — see
+**macOS note:** builds are **ad-hoc signed only** — there's no Apple
+Developer account / notarization behind them yet, so Gatekeeper will
+likely flag the binary on first run. Either right-click `jira-tui` in
+Finder and choose **Open**, or run:
+
+```bash
+xattr -d com.apple.quarantine /usr/local/bin/jira-tui
+```
+
+Windows builds aren't published yet — see
 `docs/release/distribution-strategy.md` for the plan.
 
 ## First run & onboarding
@@ -389,6 +415,8 @@ src/
 build.rs    generates jira-tui.1 (man page) from src/cli.rs via clap_mangen
 tests/      cli.rs (process) + render.rs (headless TestBackend)
 docs/       product + technical design specs (SPEC, IMPLEMENTATION, …)
+scripts/    release tooling: prepare-release-version.sh, build-release-archive.sh,
+            build-linux-packages.sh, install.sh
 ```
 
 ## Testing

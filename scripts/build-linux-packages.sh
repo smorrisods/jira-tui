@@ -56,11 +56,14 @@ discover_man_dir() {
 	local release_dir
 	release_dir="$(cd "$(dirname "${binary_path}")" && pwd)"
 
-	# Cargo can leave multiple build-script outputs behind, so prefer the newest generated man dir.
-	find "${release_dir}/build" -type d -path '*/out/man' -printf '%T@ %p\n' \
-		| sort -nr \
-		| head -n 1 \
-		| cut -d' ' -f2-
+	# Cargo can leave multiple build-script outputs behind, so prefer the
+	# newest generated man dir. Uses `stat` (not GNU-only `find -printf`) so
+	# this stays portable if this script is ever run on a non-GNU host.
+	local dir mtime
+	find "${release_dir}/build" -type d -path '*/out/man' 2>/dev/null | while IFS= read -r dir; do
+		mtime="$(stat -f '%m' "${dir}" 2>/dev/null || stat -c '%Y' "${dir}" 2>/dev/null)"
+		printf '%s %s\n' "${mtime}" "${dir}"
+	done | sort -rn | head -n 1 | cut -d' ' -f2-
 }
 
 while [[ $# -gt 0 ]]; do
