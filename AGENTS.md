@@ -82,7 +82,11 @@ personality — it does not need to be strictly utilitarian.
   concrete commands run; state plainly anything that couldn't be verified.
   No need to hard-wrap PR body lines to a fixed width — GitHub renders
   Markdown paragraphs regardless of source line length, so write natural
-  prose/bullet lines and let them run long.
+  prose/bullet lines and let them run long. The same goes for prose in
+  Markdown docs generally (`README.md`, `AGENTS.md`, `docs/**`) — don't
+  manually wrap paragraphs/bullets at ~80 columns; write each as one
+  line. (Doesn't apply to fixed-width content like the ASCII wireframes
+  in `docs/WIREFRAMES.md`, where line length is part of the diagram.)
 - **Labels:** every PR gets at least one primary category label
   (`enhancement`, `bug`, `documentation`, `testing`, `ci`, `build`, `chore`)
   plus scope labels where useful (`rust`, `dependencies`, `github_actions`).
