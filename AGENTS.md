@@ -80,6 +80,9 @@ personality — it does not need to be strictly utilitarian.
   `### Documentation`). Flat bullets with bold lead-ins under each section.
   Under `## Test plan`, use checklist bullets (`- [x]`/`- [ ]`) naming the
   concrete commands run; state plainly anything that couldn't be verified.
+  No need to hard-wrap PR body lines to a fixed width — GitHub renders
+  Markdown paragraphs regardless of source line length, so write natural
+  prose/bullet lines and let them run long.
 - **Labels:** every PR gets at least one primary category label
   (`enhancement`, `bug`, `documentation`, `testing`, `ci`, `build`, `chore`)
   plus scope labels where useful (`rust`, `dependencies`, `github_actions`).
