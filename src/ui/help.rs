@@ -32,6 +32,7 @@ pub(crate) fn draw_help_overlay(f: &mut Frame, area: Rect) {
         ("b", "swimlane board (Kanban-style, grouped by epic)"),
         ("t", "change status (in an issue)"),
         ("e / E", "edit description (in-TUI / $EDITOR)"),
+        ("F", "map a custom field (e.g. Acceptance Criteria)"),
         ("a", "about panel"),
         ("m", "toggle mouse mode"),
         ("J", "toggle Jax companion 🦦"),

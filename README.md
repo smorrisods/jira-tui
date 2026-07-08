@@ -97,6 +97,22 @@ acceptance_criteria_field = "customfield_10001"   # optional; every Jira site ha
 mouse = false   # start with mouse mode on/off
 ```
 
+### Mapping custom fields
+
+Custom field IDs (`customfield_10001`, etc.) are assigned per Jira site, so
+there's no single correct default to ship. Rather than hunting for yours in
+Jira's admin settings, jira-tui can look it up for you:
+
+- After verifying credentials during onboarding, you're dropped straight into
+  a searchable list of your site's custom fields — type to filter by name
+  (e.g. "acceptance"), then `⏎` to map it, or pick the leading **— none —**
+  entry to skip.
+- Press **`F`** at any time (from the work list) to reopen that screen and
+  change or clear the mapping.
+
+Currently only "Acceptance Criteria" is wired up as a mapped field, shown on
+the issue detail screen when configured.
+
 Missing or invalid credentials never crash the app — it falls back to the last
 cached list, then to demo data.
 

@@ -21,6 +21,7 @@ mod about;
 mod board;
 mod detail;
 mod editor;
+mod field_mapping;
 mod help;
 mod home;
 mod jax_companion;
@@ -34,6 +35,7 @@ use about::draw_about;
 use board::draw_board;
 use detail::draw_detail;
 use editor::draw_editor;
+use field_mapping::draw_field_mapping;
 use help::draw_help_overlay;
 use home::draw_home;
 use jax_companion::draw_jax_companion;
@@ -92,6 +94,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Screen::Search => draw_search(f, app, body_area),
         Screen::Board => draw_board(f, app, body_area),
         Screen::About => draw_about(f, app, body_area),
+        Screen::FieldMapping => draw_field_mapping(f, app, body_area),
     }
 
     if let Some(qa) = quick_area {
@@ -232,6 +235,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         Screen::Preview => "y apply to Jira · esc/← cancel · ↑/↓ scroll",
         Screen::Edit => "type to edit · ^S preview · esc cancel",
         Screen::Search => "type to filter · ↑/↓ move · ⏎ open · esc cancel",
+        Screen::FieldMapping => "type to search fields · ↑/↓ move · ⏎ map · esc cancel",
         Screen::Board => {
             "↑/↓ card · ←/→ column · pgup/pgdn lane · ⏎ open · / search · esc/q back"
         }

@@ -144,11 +144,43 @@ pub fn save_token(token: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// Write the non-secret settings to `config.toml`, preserving the mouse pref.
+/// Write the non-secret settings to `config.toml`, preserving the mouse pref
+/// and any existing acceptance-criteria field mapping.
 pub fn save_settings(base_url: &str, email: &str, project: &str) -> Result<PathBuf> {
+    let acceptance_criteria_field = read_kv().get("acceptance_criteria_field").cloned();
+    write_config_toml(
+        base_url,
+        email,
+        project,
+        acceptance_criteria_field.as_deref(),
+    )
+}
+
+/// Map (or clear) the "Acceptance Criteria" custom field, preserving the
+/// rest of `config.toml`. `None` clears any existing mapping.
+pub fn save_field_mapping(acceptance_criteria_field: Option<&str>) -> Result<PathBuf> {
+    let kv = read_kv();
+    let base_url = kv.get("base_url").cloned().unwrap_or_default();
+    let email = kv.get("email").cloned().unwrap_or_default();
+    let project = kv.get("project").cloned().unwrap_or_default();
+    write_config_toml(&base_url, &email, &project, acceptance_criteria_field)
+}
+
+fn write_config_toml(
+    base_url: &str,
+    email: &str,
+    project: &str,
+    acceptance_criteria_field: Option<&str>,
+) -> Result<PathBuf> {
     let dir = config_dir().context("could not resolve a config directory")?;
     std::fs::create_dir_all(&dir).context("creating config directory")?;
     let mouse = Settings::load().mouse;
+    let acceptance_criteria_line = match acceptance_criteria_field {
+        Some(field) if !field.trim().is_empty() => {
+            format!("acceptance_criteria_field = \"{field}\"\n")
+        }
+        _ => String::new(),
+    };
     let content = format!(
         "# jira-tui configuration\n\
 # Non-secret settings only. The API token lives in the sibling `token` file.\n\
@@ -156,6 +188,7 @@ pub fn save_settings(base_url: &str, email: &str, project: &str) -> Result<PathB
 base_url = \"{base_url}\"\n\
 email = \"{email}\"\n\
 project = \"{project}\"\n\
+{acceptance_criteria_line}\
 \n\
 # Start with mouse mode on (click-to-open, wheel scroll, drag-to-copy).\n\
 # Hold Shift while dragging to use your terminal's native selection instead.\n\
@@ -230,6 +263,33 @@ mod tests {
             Some("https://x.atlassian.net")
         );
         assert_eq!(kv.get("email").map(String::as_str), Some("me@example.com"));
+        assert_eq!(kv.get("acceptance_criteria_field"), None);
+
+        // Mapping a custom field preserves the rest of config.toml.
+        save_field_mapping(Some("customfield_10001")).unwrap();
+        let kv = read_kv();
+        assert_eq!(
+            kv.get("acceptance_criteria_field").map(String::as_str),
+            Some("customfield_10001")
+        );
+        assert_eq!(
+            kv.get("base_url").map(String::as_str),
+            Some("https://x.atlassian.net"),
+            "field mapping must not clobber base_url"
+        );
+
+        // Re-saving settings (e.g. re-running onboarding) must not silently
+        // drop a previously configured field mapping.
+        save_settings("https://y.atlassian.net", "me@example.com", "DS").unwrap();
+        let kv = read_kv();
+        assert_eq!(
+            kv.get("acceptance_criteria_field").map(String::as_str),
+            Some("customfield_10001")
+        );
+
+        // Clearing the mapping removes the key entirely.
+        save_field_mapping(None).unwrap();
+        assert_eq!(read_kv().get("acceptance_criteria_field"), None);
 
         // Token is written to its own file with 0600 perms on unix.
         let tpath = save_token("secret-token").unwrap();
