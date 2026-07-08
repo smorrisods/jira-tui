@@ -8,14 +8,6 @@ A developer-first, keyboard-driven **Jira terminal UI** written in Rust
 (`ratatui` + `crossterm`) — fast, legible, ADF-native, mouse-friendly, and with a
 little bit of soul (there's an animated about panel and a mascot named Jax).
 
-It's the third act of a small trilogy:
-
-1. **`jira-tasks`** — the proof-of-concept that showed LLMs can automate Jira
-   through a code-reviewable Markdown → ADF pipeline.
-2. **`jira-ds-skill`** — that pipeline packaged as a versioned agent skill.
-3. **`jira-tui`** — this: a human-facing, at-a-glance way to browse and (soon)
-   update your work without opening the browser.
-
 ## Highlights
 
 - **Guided onboarding.** First launch greets you with a welcome screen (and Jax)
@@ -188,9 +180,9 @@ Inside an issue (`Detail`):
   **preview**; press `y` to apply (REST in live mode) or `esc` to cancel —
   nothing is sent to Jira until you confirm.
 
-The Markdown ↔ ADF conversion follows the same mapping rules as the
-`jira-ds-skill` pipeline (headings, bullet/ordered/task lists, code blocks, and
-inline `code`/**bold**/*italic*/links), so the round trip stays ADF-native.
+The Markdown ↔ ADF conversion supports the common formatting elements
+(headings, bullet/ordered/task lists, code blocks, and inline
+`code`/**bold**/*italic*/links), so the round trip stays ADF-native.
 
 ## Mouse & clipboard
 

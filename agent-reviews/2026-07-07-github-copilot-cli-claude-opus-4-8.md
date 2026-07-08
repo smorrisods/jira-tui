@@ -55,7 +55,7 @@ whenever credentials or the network are missing, so the UI is always explorable.
 - Milestone 2: quick transitions and assign-to-me, each with a preview/confirm
   step (keep the "preview before mutate" rule).
 - Milestone 2/3: the Markdown round-trip edit — open an issue as a draft in
-  `$EDITOR`, compile to ADF with the `jira-ds-skill` tooling, preview, then PUT.
+  `$EDITOR`, compile to ADF, preview, then PUT.
 - Move blocking HTTP off the render thread (a worker thread + channel) so live
   fetches don't freeze the UI.
 - Add golden-ADF fixtures generated from the Python compiler as Rust snapshot
