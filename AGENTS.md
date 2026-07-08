@@ -89,6 +89,10 @@ personality — it does not need to be strictly utilitarian.
   Use `skip-changelog` for changes that shouldn't appear in release notes.
 - **Readiness:** open PRs ready for review by default; only mark a PR draft
   when explicitly asked or when there's a clearly communicated blocker.
+- **Merging:** use a real merge commit (`gh pr merge --merge`), not squash or
+  rebase — the individual per-commit history (feature/fix/docs split across
+  meaningful, reviewable commits) is deliberate and should survive onto
+  `main` intact, not get flattened into one commit.
 - **Force-pushing** an already-open PR branch (e.g. after a rebase) requires
   explicit user confirmation first — history rewrites on shared branches are
   disruptive.
