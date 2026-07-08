@@ -42,6 +42,20 @@ normalise_arch() {
 }
 
 # Find the newest clap_mangen-generated man directory next to the built release binary.
+# Modification time of $1, in epoch seconds. BSD `stat` (macOS) and GNU
+# `stat` (Linux) use incompatible flags for the same thing (`-f FORMAT` on
+# BSD vs `-c FORMAT` on GNU) -- and critically, GNU's `-f` means something
+# else entirely ("show filesystem status"), so a naive try-then-fallback
+# doesn't fail cleanly on Linux and silently mixes garbage output into the
+# result. Branch on the actual OS instead.
+dir_mtime() {
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		stat -f '%m' "$1"
+	else
+		stat -c '%Y' "$1"
+	fi
+}
+
 discover_man_dir() {
 	local binary_path="$1"
 	local release_dir
@@ -49,11 +63,10 @@ discover_man_dir() {
 
 	# Cargo can leave multiple build-script outputs behind, so prefer the
 	# newest generated man dir. `find -printf` is GNU-only (unavailable on
-	# macOS's BSD find), so get each candidate's mtime via `stat` instead,
-	# trying BSD's `-f %m` first and falling back to GNU's `-c %Y`.
+	# macOS's BSD find), so get each candidate's mtime via `dir_mtime` instead.
 	local dir mtime
 	find "${release_dir}/build" -type d -path '*/out/man' 2>/dev/null | while IFS= read -r dir; do
-		mtime="$(stat -f '%m' "${dir}" 2>/dev/null || stat -c '%Y' "${dir}" 2>/dev/null)"
+		mtime="$(dir_mtime "${dir}")"
 		printf '%s %s\n' "${mtime}" "${dir}"
 	done | sort -rn | head -n 1 | cut -d' ' -f2-
 }

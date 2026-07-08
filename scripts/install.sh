@@ -141,17 +141,38 @@ download() {
 	fi
 }
 
+# Whether `sudo` is needed to write into `$1` — walks up to the nearest
+# existing ancestor directory to test writability, so a not-yet-created
+# custom --prefix under a writable parent doesn't trigger an unnecessary
+# sudo prompt.
+need_sudo_for() {
+	check_path="$1"
+	while [ ! -e "${check_path}" ]; do
+		check_path="$(dirname "${check_path}")"
+	done
+	if [ -w "${check_path}" ] || [ "$(id -u)" -eq 0 ]; then
+		echo ""
+	else
+		echo "sudo"
+	fi
+}
+
 uninstall() {
 	jax_banner
 	info "Removing jira-tui from ${PREFIX}..."
 
+	uninstall_sudo="$(need_sudo_for "${PREFIX}")"
+	if [ -n "${uninstall_sudo}" ]; then
+		warn "${PREFIX} isn't writable by the current user — will use sudo to uninstall."
+	fi
+
 	removed=false
 	if [ -f "${PREFIX}/bin/${BINARY_NAME}" ]; then
-		rm -f "${PREFIX}/bin/${BINARY_NAME}"
+		${uninstall_sudo} rm -f "${PREFIX}/bin/${BINARY_NAME}"
 		removed=true
 	fi
 	if [ -f "${PREFIX}/share/man/man1/${BINARY_NAME}.1.gz" ]; then
-		rm -f "${PREFIX}/share/man/man1/${BINARY_NAME}.1.gz"
+		${uninstall_sudo} rm -f "${PREFIX}/share/man/man1/${BINARY_NAME}.1.gz"
 		removed=true
 	fi
 
@@ -210,9 +231,8 @@ info "Extracting..."
 mkdir -p "${TMP_DIR}/extracted"
 tar -xzf "${TMP_DIR}/${ASSET}" -C "${TMP_DIR}/extracted"
 
-NEED_SUDO=""
-if [ ! -w "${PREFIX}" ] && [ "$(id -u)" -ne 0 ]; then
-	NEED_SUDO="sudo"
+NEED_SUDO="$(need_sudo_for "${PREFIX}")"
+if [ -n "${NEED_SUDO}" ]; then
 	warn "${PREFIX} isn't writable by the current user — will use sudo to install."
 fi
 
