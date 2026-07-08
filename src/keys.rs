@@ -204,11 +204,11 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
 
 fn handle_welcome_key(app: &mut App, key: KeyEvent) {
     use app::WelcomePhase;
-    match app.welcome_phase {
+    match app.onboarding.welcome_phase {
         WelcomePhase::Intro => match key.code {
             KeyCode::Char('s') => {
-                app.welcome_phase = WelcomePhase::Setup;
-                app.setup_msg.clear();
+                app.onboarding.welcome_phase = WelcomePhase::Setup;
+                app.onboarding.setup_msg.clear();
             }
             KeyCode::Char('d') | KeyCode::Enter => app.finish_onboarding(),
             KeyCode::Char('w') => app.write_config_from_welcome(),
@@ -218,8 +218,8 @@ fn handle_welcome_key(app: &mut App, key: KeyEvent) {
         },
         WelcomePhase::Setup => match key.code {
             KeyCode::Esc => {
-                app.welcome_phase = WelcomePhase::Intro;
-                app.setup_msg.clear();
+                app.onboarding.welcome_phase = WelcomePhase::Intro;
+                app.onboarding.setup_msg.clear();
             }
             KeyCode::Enter => app.submit_credentials(),
             KeyCode::Tab | KeyCode::Down => app.focus_next(),
@@ -266,9 +266,9 @@ fn scroll_at(app: &mut App, x: u16, y: u16, delta: isize) {
 }
 
 fn toggle_mouse(app: &mut App) {
-    app.mouse_enabled = !app.mouse_enabled;
-    app.selecting = false;
-    if app.mouse_enabled {
+    app.mouse.enabled = !app.mouse.enabled;
+    app.mouse.selecting = false;
+    if app.mouse.enabled {
         let _ = execute!(std::io::stdout(), EnableMouseCapture);
         app.status = "mouse mode on · click to open · drag to copy · shift-drag = native".into();
     } else {

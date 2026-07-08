@@ -183,7 +183,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         Span::styled("  ·  ", Style::default().fg(MUTED)),
         Span::styled(app.source.label(), Style::default().fg(MUTED)),
         Span::styled(
-            if app.mouse_enabled {
+            if app.mouse.enabled {
                 "  🖱 mouse"
             } else {
                 ""
@@ -221,7 +221,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     use crate::app::Screen;
     let keys = match app.screen {
-        Screen::Welcome => match app.welcome_phase {
+        Screen::Welcome => match app.onboarding.welcome_phase {
             crate::app::WelcomePhase::Intro => {
                 "s set up live · d demo · w write config · ? help · q quit"
             }

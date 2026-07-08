@@ -31,15 +31,16 @@ mod tests;
 
 pub use board::BoardSelection;
 pub use edit::EditorState;
-pub use field_mapping::FieldMappingOutcome;
-pub use mouse::ListFocus;
-pub use onboarding::{Field, WelcomePhase};
-pub use search::SearchRow;
+pub use field_mapping::{FieldMappingOutcome, FieldMappingState};
+pub use mouse::{ListFocus, MouseState};
+pub use onboarding::{Field, OnboardingState, WelcomePhase};
+pub use search::{SearchRow, SearchState};
 pub use sort_filter::SortKey;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Screen {
     Welcome,
+    #[default]
     Home,
     List,
     Detail,
@@ -78,11 +79,7 @@ pub struct App {
     pub detail_cache: HashMap<String, IssueDetail>,
 
     // Search / go-to-issue.
-    pub search_query: String,
-    pub search_rows: Vec<SearchRow>,
-    pub search_selected: usize,
-    /// Screen to return to when Search is cancelled.
-    pub search_return_to: Screen,
+    pub search: SearchState,
 
     // Swimlane board.
     pub board_sel: BoardSelection,
@@ -99,12 +96,7 @@ pub struct App {
     pub flash_until: u64,
 
     // Mouse mode + drag selection.
-    pub mouse_enabled: bool,
-    pub selecting: bool,
-    pub sel_start_y: u16,
-    pub sel_end_y: u16,
-    /// Row range (inclusive, screen coords) whose text should be copied.
-    pub pending_copy: Option<(u16, u16)>,
+    pub mouse: MouseState,
 
     // Draw geometry recorded during render, for mapping mouse coordinates.
     pub list_area: Cell<Rect>,
@@ -117,12 +109,7 @@ pub struct App {
     pub board_area: Cell<Rect>,
 
     // Onboarding welcome + credential setup.
-    pub welcome_phase: WelcomePhase,
-    pub field_site: String,
-    pub field_email: String,
-    pub field_token: String,
-    pub focus: Field,
-    pub setup_msg: String,
+    pub onboarding: OnboardingState,
 
     // Transition picker + round-trip edit.
     pub picker_open: bool,
@@ -132,15 +119,7 @@ pub struct App {
     pub request_edit: bool,
 
     // Field-mapping discovery (custom field IDs are instance-specific).
-    /// Discovered custom fields as (id, name), sorted by name, with a
-    /// leading `("", "— none —")` sentinel so mappings can be cleared.
-    pub field_catalog: Vec<(String, String)>,
-    pub field_query: String,
-    pub field_selected: usize,
-    /// The field ID currently mapped in `config.toml`, if any — read fresh
-    /// each time the screen opens so re-editing shows (and pre-selects)
-    /// what's already configured, rather than starting blank.
-    pub field_current_mapping: Option<String>,
+    pub field_mapping: FieldMappingState,
 }
 
 impl App {
@@ -173,40 +152,28 @@ impl App {
             quick_view_scroll: 0,
             list_focus: ListFocus::List,
             detail_cache: HashMap::new(),
-            search_query: String::new(),
-            search_rows: Vec::new(),
-            search_selected: 0,
-            search_return_to: Screen::Home,
+            search: SearchState::default(),
             board_sel: BoardSelection::default(),
             board_scroll: 0,
             show_jax: false,
             editor: EditorState::default(),
             flash_msg: String::new(),
             flash_until: 0,
-            mouse_enabled: settings.mouse,
-            selecting: false,
-            sel_start_y: 0,
-            sel_end_y: 0,
-            pending_copy: None,
+            mouse: MouseState {
+                enabled: settings.mouse,
+                ..MouseState::default()
+            },
             list_area: Cell::new(Rect::default()),
             list_start: Cell::new(0),
             detail_area: Cell::new(Rect::default()),
             quick_view_area: Cell::new(Rect::default()),
             board_area: Cell::new(Rect::default()),
-            welcome_phase: WelcomePhase::Intro,
-            field_site: String::new(),
-            field_email: String::new(),
-            field_token: String::new(),
-            focus: Field::Site,
-            setup_msg: String::new(),
+            onboarding: OnboardingState::default(),
             picker_open: false,
             picker_index: 0,
             pending_edit: None,
             request_edit: false,
-            field_catalog: Vec::new(),
-            field_query: String::new(),
-            field_selected: 0,
-            field_current_mapping: None,
+            field_mapping: FieldMappingState::default(),
         };
         app.recompute_view();
 

@@ -51,34 +51,34 @@ fn drag_sets_a_pending_copy_range() {
     app.mouse_drag(8);
     assert_eq!(app.selection_range(), Some((5, 8)));
     app.mouse_up(8);
-    assert_eq!(app.pending_copy, Some((5, 8)));
-    assert!(!app.selecting);
+    assert_eq!(app.mouse.pending_copy, Some((5, 8)));
+    assert!(!app.mouse.selecting);
     assert_eq!(app.screen, Screen::Home, "a drag must not open detail");
 }
 
 #[test]
 fn credential_form_edits_focused_field() {
     let mut app = demo_app();
-    app.focus = Field::Email;
+    app.onboarding.focus = Field::Email;
     app.input_char('a');
     app.input_char('b');
-    assert_eq!(app.field_email, "ab");
+    assert_eq!(app.onboarding.field_email, "ab");
     app.input_backspace();
-    assert_eq!(app.field_email, "a");
+    assert_eq!(app.onboarding.field_email, "a");
     app.focus_next();
-    assert_eq!(app.focus, Field::Token);
+    assert_eq!(app.onboarding.focus, Field::Token);
     app.focus_prev();
-    assert_eq!(app.focus, Field::Email);
+    assert_eq!(app.onboarding.focus, Field::Email);
 }
 
 #[test]
 fn submit_with_empty_fields_reports_and_does_not_panic() {
     let mut app = demo_app();
-    app.field_site.clear();
-    app.field_email.clear();
-    app.field_token.clear();
+    app.onboarding.field_site.clear();
+    app.onboarding.field_email.clear();
+    app.onboarding.field_token.clear();
     app.submit_credentials();
-    assert!(!app.setup_msg.is_empty());
+    assert!(!app.onboarding.setup_msg.is_empty());
 }
 
 #[test]
@@ -260,7 +260,7 @@ fn search_finds_matches_by_key_and_summary() {
     for c in "accordion".chars() {
         app.search_input_char(c);
     }
-    assert!(app.search_rows.iter().any(|r| matches!(
+    assert!(app.search.rows.iter().any(|r| matches!(
         r,
         SearchRow::Match(idx) if app.all_issues[*idx].summary.to_lowercase().contains("accordion")
     )));
@@ -269,13 +269,13 @@ fn search_finds_matches_by_key_and_summary() {
 #[test]
 fn search_key_candidate_detects_issue_keys_only() {
     let mut app = demo_app();
-    app.search_query = "DS-2603".to_string();
+    app.search.query = "DS-2603".to_string();
     assert_eq!(app.search_key_candidate(), Some("DS-2603".to_string()));
-    app.search_query = "ds-2603".to_string();
+    app.search.query = "ds-2603".to_string();
     assert_eq!(app.search_key_candidate(), Some("DS-2603".to_string()));
-    app.search_query = "accordion".to_string();
+    app.search.query = "accordion".to_string();
     assert_eq!(app.search_key_candidate(), None);
-    app.search_query = "DS-".to_string();
+    app.search.query = "DS-".to_string();
     assert_eq!(app.search_key_candidate(), None);
 }
 
@@ -287,8 +287,8 @@ fn confirm_search_goto_opens_issue_directly_even_if_unfiltered() {
         app.search_input_char(c);
     }
     // The Goto row should be first.
-    assert!(matches!(app.search_rows.first(), Some(SearchRow::Goto(k)) if k == "DS-2603"));
-    app.search_selected = 0;
+    assert!(matches!(app.search.rows.first(), Some(SearchRow::Goto(k)) if k == "DS-2603"));
+    app.search.selected = 0;
     app.confirm_search();
     assert_eq!(app.screen, Screen::Detail);
     assert_eq!(app.detail.as_ref().unwrap().key, "DS-2603");
@@ -304,11 +304,12 @@ fn confirm_search_match_opens_that_issue() {
     }
     // Find the Match row for our target and select it.
     let pos = app
-        .search_rows
+        .search
+        .rows
         .iter()
         .position(|r| matches!(r, SearchRow::Match(idx) if app.all_issues[*idx].key == target_key))
         .unwrap();
-    app.search_selected = pos;
+    app.search.selected = pos;
     app.confirm_search();
     assert_eq!(app.detail.as_ref().unwrap().key, target_key);
 }

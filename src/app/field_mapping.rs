@@ -24,6 +24,20 @@ fn index_of_mapping(catalog: &[(String, String)], mapped: Option<&str>) -> usize
     }
 }
 
+/// Field discovery/mapping screen state.
+#[derive(Clone, Debug, Default)]
+pub struct FieldMappingState {
+    /// Discovered custom fields as (id, name), sorted by name, with a
+    /// leading `("", "— none —")` sentinel so mappings can be cleared.
+    pub catalog: Vec<(String, String)>,
+    pub query: String,
+    pub selected: usize,
+    /// The field ID currently mapped in `config.toml`, if any — read fresh
+    /// each time the screen opens so re-editing shows (and pre-selects)
+    /// what's already configured, rather than starting blank.
+    pub current_mapping: Option<String>,
+}
+
 /// Outcome of trying to open the field-mapping screen, so callers (like the
 /// onboarding handoff) can react precisely instead of inferring what
 /// happened from `self.screen`.
@@ -66,19 +80,19 @@ impl App {
                     FieldMappingOutcome::NothingToMap
                 }
                 Ok(fields) => {
-                    self.field_catalog =
+                    self.field_mapping.catalog =
                         std::iter::once((NONE_SENTINEL.0.to_string(), NONE_SENTINEL.1.to_string()))
                             .chain(fields.into_iter().map(|f| (f.id, f.name)))
                             .collect();
-                    self.field_query.clear();
-                    self.field_current_mapping = cfg.acceptance_criteria_field.clone();
+                    self.field_mapping.query.clear();
+                    self.field_mapping.current_mapping = cfg.acceptance_criteria_field.clone();
                     // Pre-select whatever's already mapped so re-opening the
                     // screen to edit a mapping shows (and defaults to
                     // keeping) the current choice, rather than resetting to
                     // "none".
-                    self.field_selected = index_of_mapping(
-                        &self.field_catalog,
-                        self.field_current_mapping.as_deref(),
+                    self.field_mapping.selected = index_of_mapping(
+                        &self.field_mapping.catalog,
+                        self.field_mapping.current_mapping.as_deref(),
                     );
                     self.screen = Screen::FieldMapping;
                     FieldMappingOutcome::Opened
@@ -102,21 +116,22 @@ impl App {
     }
 
     pub fn field_mapping_input_char(&mut self, c: char) {
-        self.field_query.push(c);
-        self.field_selected = 0;
+        self.field_mapping.query.push(c);
+        self.field_mapping.selected = 0;
     }
 
     pub fn field_mapping_backspace(&mut self) {
-        self.field_query.pop();
-        self.field_selected = 0;
+        self.field_mapping.query.pop();
+        self.field_mapping.selected = 0;
     }
 
     /// Fields matching the current search query (case-insensitive substring
     /// match against the field name or ID). The "none" sentinel only shows
     /// while the query is empty, so searching narrows to real fields.
     pub fn filtered_field_catalog(&self) -> Vec<&(String, String)> {
-        let q = self.field_query.trim().to_lowercase();
-        self.field_catalog
+        let q = self.field_mapping.query.trim().to_lowercase();
+        self.field_mapping
+            .catalog
             .iter()
             .filter(|(id, name)| {
                 if q.is_empty() {
@@ -133,11 +148,11 @@ impl App {
     pub fn field_mapping_move(&mut self, delta: isize) {
         let len = self.filtered_field_catalog().len();
         if len == 0 {
-            self.field_selected = 0;
+            self.field_mapping.selected = 0;
             return;
         }
-        let new = self.field_selected as isize + delta;
-        self.field_selected = new.clamp(0, len as isize - 1) as usize;
+        let new = self.field_mapping.selected as isize + delta;
+        self.field_mapping.selected = new.clamp(0, len as isize - 1) as usize;
     }
 
     /// Map the selected field as the acceptance-criteria custom field (or
@@ -146,7 +161,7 @@ impl App {
     pub fn confirm_field_mapping(&mut self) {
         let selection = self
             .filtered_field_catalog()
-            .get(self.field_selected)
+            .get(self.field_mapping.selected)
             .map(|f| (f.0.clone(), f.1.clone()));
         let Some((id, name)) = selection else {
             self.screen = Screen::Home;
@@ -162,12 +177,12 @@ impl App {
         match saved {
             Ok(_) if id.is_empty() => {
                 std::env::remove_var("JIRA_ACCEPTANCE_CRITERIA_FIELD");
-                self.field_current_mapping = None;
+                self.field_mapping.current_mapping = None;
                 self.status = "Cleared the acceptance criteria field mapping.".into();
             }
             Ok(_) => {
                 std::env::set_var("JIRA_ACCEPTANCE_CRITERIA_FIELD", &id);
-                self.field_current_mapping = Some(id.clone());
+                self.field_mapping.current_mapping = Some(id.clone());
                 self.status = format!("Mapped Acceptance Criteria → {name} ({id})");
                 self.flash(format!("✓ mapped {name}"));
             }
@@ -190,38 +205,38 @@ mod tests {
     #[test]
     fn filters_by_name_or_id_case_insensitively() {
         let mut app = demo_app();
-        app.field_catalog = vec![
+        app.field_mapping.catalog = vec![
             (String::new(), "— none —".into()),
             ("customfield_10001".into(), "Acceptance Criteria".into()),
             ("customfield_10002".into(), "Story Points".into()),
         ];
 
-        app.field_query = "accept".into();
+        app.field_mapping.query = "accept".into();
         let filtered = app.filtered_field_catalog();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].1, "Acceptance Criteria");
 
-        app.field_query = "10002".into();
+        app.field_mapping.query = "10002".into();
         let filtered = app.filtered_field_catalog();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].1, "Story Points");
 
-        app.field_query.clear();
+        app.field_mapping.query.clear();
         assert_eq!(app.filtered_field_catalog().len(), 3);
     }
 
     #[test]
     fn move_clamps_to_filtered_bounds() {
         let mut app = demo_app();
-        app.field_catalog = vec![
+        app.field_mapping.catalog = vec![
             (String::new(), "— none —".into()),
             ("customfield_10001".into(), "Acceptance Criteria".into()),
         ];
-        app.field_selected = 0;
+        app.field_mapping.selected = 0;
         app.field_mapping_move(-5);
-        assert_eq!(app.field_selected, 0);
+        assert_eq!(app.field_mapping.selected, 0);
         app.field_mapping_move(5);
-        assert_eq!(app.field_selected, 1);
+        assert_eq!(app.field_mapping.selected, 1);
     }
 
     #[test]

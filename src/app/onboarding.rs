@@ -6,17 +6,30 @@ use crate::domain::Source;
 
 use super::{App, Screen};
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum WelcomePhase {
+    #[default]
     Intro,
     Setup,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Field {
+    #[default]
     Site,
     Email,
     Token,
+}
+
+/// Onboarding welcome screen + credential setup form state.
+#[derive(Clone, Debug, Default)]
+pub struct OnboardingState {
+    pub welcome_phase: WelcomePhase,
+    pub field_site: String,
+    pub field_email: String,
+    pub field_token: String,
+    pub focus: Field,
+    pub setup_msg: String,
 }
 
 impl App {
@@ -42,10 +55,10 @@ impl App {
     }
 
     fn focused_field_mut(&mut self) -> &mut String {
-        match self.focus {
-            Field::Site => &mut self.field_site,
-            Field::Email => &mut self.field_email,
-            Field::Token => &mut self.field_token,
+        match self.onboarding.focus {
+            Field::Site => &mut self.onboarding.field_site,
+            Field::Email => &mut self.onboarding.field_email,
+            Field::Token => &mut self.onboarding.field_token,
         }
     }
 
@@ -58,7 +71,7 @@ impl App {
     }
 
     pub fn focus_next(&mut self) {
-        self.focus = match self.focus {
+        self.onboarding.focus = match self.onboarding.focus {
             Field::Site => Field::Email,
             Field::Email => Field::Token,
             Field::Token => Field::Site,
@@ -66,7 +79,7 @@ impl App {
     }
 
     pub fn focus_prev(&mut self) {
-        self.focus = match self.focus {
+        self.onboarding.focus = match self.onboarding.focus {
             Field::Site => Field::Token,
             Field::Email => Field::Site,
             Field::Token => Field::Email,
@@ -76,21 +89,26 @@ impl App {
     /// Validate, verify against Jira, and persist the entered credentials.
     /// On success, switches to live data and finishes onboarding.
     pub fn submit_credentials(&mut self) {
-        let site = self.field_site.trim().trim_end_matches('/').to_string();
-        let email = self.field_email.trim().to_string();
-        let token = self.field_token.trim().to_string();
+        let site = self
+            .onboarding
+            .field_site
+            .trim()
+            .trim_end_matches('/')
+            .to_string();
+        let email = self.onboarding.field_email.trim().to_string();
+        let token = self.onboarding.field_token.trim().to_string();
         if site.is_empty() || email.is_empty() || token.is_empty() {
-            self.setup_msg = "Please fill site, email, and token.".into();
+            self.onboarding.setup_msg = "Please fill site, email, and token.".into();
             return;
         }
 
         // Persist first so the standard config path picks them up.
         if let Err(e) = config::save_token(&token) {
-            self.setup_msg = format!("Could not save token: {e}");
+            self.onboarding.setup_msg = format!("Could not save token: {e}");
             return;
         }
         if let Err(e) = config::save_settings(&site, &email, "") {
-            self.setup_msg = format!("Could not save settings: {e}");
+            self.onboarding.setup_msg = format!("Could not save settings: {e}");
             return;
         }
         std::env::set_var("JIRA_BASE_URL", &site);
@@ -99,7 +117,7 @@ impl App {
 
         #[cfg(feature = "live")]
         {
-            self.setup_msg = "Verifying…".into();
+            self.onboarding.setup_msg = "Verifying…".into();
             let (issues, source, status) = super::load_issues(false);
             match source {
                 Source::Live { .. } => {
@@ -132,14 +150,14 @@ impl App {
                     }
                 }
                 _ => {
-                    self.setup_msg =
+                    self.onboarding.setup_msg =
                         "Saved, but Jira did not accept those credentials. Check and retry, or press Esc to continue in demo mode.".into();
                 }
             }
         }
         #[cfg(not(feature = "live"))]
         {
-            self.setup_msg =
+            self.onboarding.setup_msg =
                 "Saved. This build has no live support; rebuild with the `live` feature.".into();
         }
     }

@@ -71,7 +71,7 @@ fn about_screen_shows_animated_banner() {
 fn welcome_intro_shows_jax_and_choices() {
     let mut app = demo_app();
     app.screen = Screen::Welcome;
-    app.welcome_phase = WelcomePhase::Intro;
+    app.onboarding.welcome_phase = WelcomePhase::Intro;
     let text = render(&app);
     assert!(text.contains("Jax"), "welcome should introduce Jax");
     assert!(
@@ -84,8 +84,8 @@ fn welcome_intro_shows_jax_and_choices() {
 fn welcome_setup_shows_credential_fields() {
     let mut app = demo_app();
     app.screen = Screen::Welcome;
-    app.welcome_phase = WelcomePhase::Setup;
-    app.field_token = "supersecret".to_string();
+    app.onboarding.welcome_phase = WelcomePhase::Setup;
+    app.onboarding.field_token = "supersecret".to_string();
     let text = render(&app);
     assert!(text.contains("site"));
     assert!(text.contains("email"));

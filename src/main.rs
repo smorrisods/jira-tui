@@ -44,7 +44,7 @@ fn main() -> Result<()> {
     let mut app = App::new(force_demo);
     if force_onboard {
         app.screen = Screen::Welcome;
-        app.welcome_phase = app::WelcomePhase::Intro;
+        app.onboarding.welcome_phase = app::WelcomePhase::Intro;
     }
     if start_about {
         app.screen = Screen::About;
@@ -52,7 +52,7 @@ fn main() -> Result<()> {
 
     let mut terminal = setup_terminal()?;
     install_panic_hook();
-    if app.mouse_enabled {
+    if app.mouse.enabled {
         let _ = execute!(io::stdout(), EnableMouseCapture);
     }
     let result = run(&mut terminal, &mut app);
@@ -75,7 +75,7 @@ fn run(terminal: &mut Term, app: &mut App) -> Result<()> {
         }
 
         // Fulfil a drag-select copy using the frame we just rendered.
-        if let Some((y0, y1)) = app.pending_copy.take() {
+        if let Some((y0, y1)) = app.mouse.pending_copy.take() {
             let text = editor_launch::read_rows(terminal, y0, y1);
             let n = text.lines().filter(|l| !l.trim().is_empty()).count();
             let _ = jira_tui::infra::osc52_copy(&text);

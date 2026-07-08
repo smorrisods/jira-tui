@@ -12,6 +12,17 @@ pub enum ListFocus {
     QuickView,
 }
 
+/// Mouse mode toggle + drag-selection state.
+#[derive(Clone, Debug, Default)]
+pub struct MouseState {
+    pub enabled: bool,
+    pub selecting: bool,
+    pub sel_start_y: u16,
+    pub sel_end_y: u16,
+    /// Row range (inclusive, screen coords) whose text should be copied.
+    pub pending_copy: Option<(u16, u16)>,
+}
+
 impl App {
     /// Whether the given screen coordinate falls within a recorded panel area.
     fn point_in(area: ratatui::layout::Rect, x: u16, y: u16) -> bool {
@@ -59,42 +70,42 @@ impl App {
                 self.selected = idx;
             }
         }
-        self.selecting = true;
-        self.sel_start_y = y;
-        self.sel_end_y = y;
+        self.mouse.selecting = true;
+        self.mouse.sel_start_y = y;
+        self.mouse.sel_end_y = y;
     }
 
     pub fn mouse_drag(&mut self, y: u16) {
-        if self.selecting {
-            self.sel_end_y = y;
+        if self.mouse.selecting {
+            self.mouse.sel_end_y = y;
         }
     }
 
     pub fn mouse_up(&mut self, y: u16) {
-        if !self.selecting {
+        if !self.mouse.selecting {
             return;
         }
-        self.selecting = false;
-        self.sel_end_y = y;
-        if self.sel_start_y == self.sel_end_y {
+        self.mouse.selecting = false;
+        self.mouse.sel_end_y = y;
+        if self.mouse.sel_start_y == self.mouse.sel_end_y {
             // A click, not a drag: open the issue under the cursor.
             if matches!(self.screen, Screen::Home | Screen::List) && self.list_index_at(y).is_some()
             {
                 self.open_detail();
             }
         } else {
-            let a = self.sel_start_y.min(self.sel_end_y);
-            let b = self.sel_start_y.max(self.sel_end_y);
-            self.pending_copy = Some((a, b));
+            let a = self.mouse.sel_start_y.min(self.mouse.sel_end_y);
+            let b = self.mouse.sel_start_y.max(self.mouse.sel_end_y);
+            self.mouse.pending_copy = Some((a, b));
         }
     }
 
     /// The inclusive row range currently being drag-selected, for highlighting.
     pub fn selection_range(&self) -> Option<(u16, u16)> {
-        self.selecting.then(|| {
+        self.mouse.selecting.then(|| {
             (
-                self.sel_start_y.min(self.sel_end_y),
-                self.sel_start_y.max(self.sel_end_y),
+                self.mouse.sel_start_y.min(self.mouse.sel_end_y),
+                self.mouse.sel_start_y.max(self.mouse.sel_end_y),
             )
         })
     }

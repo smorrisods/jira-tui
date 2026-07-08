@@ -49,7 +49,7 @@ pub(crate) fn draw_welcome(f: &mut Frame, app: &App, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    match app.welcome_phase {
+    match app.onboarding.welcome_phase {
         WelcomePhase::Intro => draw_welcome_intro(f, app, inner),
         WelcomePhase::Setup => draw_welcome_setup(f, app, inner),
     }
@@ -173,30 +173,30 @@ fn draw_welcome_setup(f: &mut Frame, app: &App, area: Rect) {
 
     lines.push(field(
         "site",
-        app.field_site.clone(),
-        app.focus == Field::Site,
+        app.onboarding.field_site.clone(),
+        app.onboarding.focus == Field::Site,
         false,
     ));
     lines.push(Line::from(""));
     lines.push(field(
         "email",
-        app.field_email.clone(),
-        app.focus == Field::Email,
+        app.onboarding.field_email.clone(),
+        app.onboarding.focus == Field::Email,
         false,
     ));
     lines.push(Line::from(""));
     lines.push(field(
         "token",
-        app.field_token.clone(),
-        app.focus == Field::Token,
+        app.onboarding.field_token.clone(),
+        app.onboarding.focus == Field::Token,
         true,
     ));
     lines.push(Line::from(""));
 
-    if !app.setup_msg.is_empty() {
+    if !app.onboarding.setup_msg.is_empty() {
         lines.push(
             Line::from(Span::styled(
-                app.setup_msg.clone(),
+                app.onboarding.setup_msg.clone(),
                 Style::default().fg(WARN),
             ))
             .alignment(Alignment::Center),

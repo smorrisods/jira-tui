@@ -11,33 +11,43 @@ pub enum SearchRow {
     Match(usize),
 }
 
+/// The Search / go-to-issue screen's state.
+#[derive(Clone, Debug, Default)]
+pub struct SearchState {
+    pub query: String,
+    pub rows: Vec<SearchRow>,
+    pub selected: usize,
+    /// Screen to return to when Search is cancelled.
+    pub return_to: Screen,
+}
+
 impl App {
     /// Open the Search screen, remembering where to return on cancel.
     pub fn open_search(&mut self) {
-        self.search_return_to = self.screen;
-        self.search_query.clear();
+        self.search.return_to = self.screen;
+        self.search.query.clear();
         self.recompute_search();
         self.screen = Screen::Search;
     }
 
     pub fn close_search(&mut self) {
-        self.screen = self.search_return_to;
+        self.screen = self.search.return_to;
     }
 
     pub fn search_input_char(&mut self, c: char) {
-        self.search_query.push(c);
+        self.search.query.push(c);
         self.recompute_search();
     }
 
     pub fn search_backspace(&mut self) {
-        self.search_query.pop();
+        self.search.query.pop();
         self.recompute_search();
     }
 
     /// If the query looks like an issue key (`LETTERS-DIGITS`), return it
     /// normalised to uppercase — this powers the "go to issue" shortcut.
     pub fn search_key_candidate(&self) -> Option<String> {
-        let q = self.search_query.trim();
+        let q = self.search.query.trim();
         if q.is_empty() {
             return None;
         }
@@ -58,7 +68,7 @@ impl App {
         if let Some(key) = self.search_key_candidate() {
             rows.push(SearchRow::Goto(key));
         }
-        let q = self.search_query.trim().to_lowercase();
+        let q = self.search.query.trim().to_lowercase();
         for (idx, issue) in self.all_issues.iter().enumerate() {
             if q.is_empty()
                 || issue.key.to_lowercase().contains(&q)
@@ -67,24 +77,24 @@ impl App {
                 rows.push(SearchRow::Match(idx));
             }
         }
-        self.search_rows = rows;
-        self.search_selected = 0;
+        self.search.rows = rows;
+        self.search.selected = 0;
     }
 
     pub fn search_move(&mut self, delta: isize) {
-        if self.search_rows.is_empty() {
+        if self.search.rows.is_empty() {
             return;
         }
-        let len = self.search_rows.len() as isize;
-        let mut idx = self.search_selected as isize + delta;
+        let len = self.search.rows.len() as isize;
+        let mut idx = self.search.selected as isize + delta;
         idx = idx.clamp(0, len - 1);
-        self.search_selected = idx as usize;
+        self.search.selected = idx as usize;
     }
 
     /// Open whatever is highlighted in the Search screen: a direct "go to
     /// issue" jump, or the selected match from the work list.
     pub fn confirm_search(&mut self) {
-        let Some(row) = self.search_rows.get(self.search_selected).cloned() else {
+        let Some(row) = self.search.rows.get(self.search.selected).cloned() else {
             return;
         };
         match row {

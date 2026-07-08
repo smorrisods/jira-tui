@@ -27,7 +27,10 @@ pub(crate) fn draw_field_mapping(f: &mut Frame, app: &App, area: Rect) {
                 "› ",
                 Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
             ),
-            Span::styled(app.field_query.clone(), Style::default().fg(Color::White)),
+            Span::styled(
+                app.field_mapping.query.clone(),
+                Style::default().fg(Color::White),
+            ),
             Span::styled("▏", Style::default().fg(ACCENT)),
         ])),
         input_inner,
@@ -35,9 +38,10 @@ pub(crate) fn draw_field_mapping(f: &mut Frame, app: &App, area: Rect) {
 
     // Field list — the title names whatever's currently mapped, so
     // re-opening this screen to change a mapping shows what you're editing.
-    let current_label = match &app.field_current_mapping {
+    let current_label = match &app.field_mapping.current_mapping {
         Some(id) => app
-            .field_catalog
+            .field_mapping
+            .catalog
             .iter()
             .find(|(fid, _)| fid == id)
             .map(|(_, name)| format!("{name} ({id})"))
@@ -63,8 +67,8 @@ pub(crate) fn draw_field_mapping(f: &mut Frame, app: &App, area: Rect) {
 
     let mut lines: Vec<Line> = Vec::new();
     for (i, (id, name)) in filtered.iter().enumerate() {
-        let selected = i == app.field_selected;
-        let is_current = match &app.field_current_mapping {
+        let selected = i == app.field_mapping.selected;
+        let is_current = match &app.field_mapping.current_mapping {
             Some(mapped) => mapped.as_str() == id.as_str(),
             None => id.is_empty(),
         };

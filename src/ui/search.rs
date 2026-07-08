@@ -27,7 +27,7 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
                 "› ",
                 Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
             ),
-            Span::styled(app.search_query.clone(), Style::default().fg(Color::White)),
+            Span::styled(app.search.query.clone(), Style::default().fg(Color::White)),
             Span::styled("▏", Style::default().fg(ACCENT)),
         ])),
         input_inner,
@@ -38,7 +38,7 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
     let inner = results_block.inner(rows[1]);
     f.render_widget(results_block, rows[1]);
 
-    if app.search_rows.is_empty() {
+    if app.search.rows.is_empty() {
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 "No matches. Type an issue key like DS-123 to jump to it directly.",
@@ -50,8 +50,8 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
     }
 
     let mut lines: Vec<Line> = Vec::new();
-    for (i, row) in app.search_rows.iter().enumerate() {
-        let selected = i == app.search_selected;
+    for (i, row) in app.search.rows.iter().enumerate() {
+        let selected = i == app.search.selected;
         let cursor = if selected { "▌" } else { " " };
         let cursor_style = if selected {
             Style::default().fg(ACCENT2)

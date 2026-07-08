@@ -49,7 +49,7 @@ pub(crate) fn edit_in_editor(terminal: &mut Term, app: &mut App) -> Result<()> {
     std::fs::write(&path, &markdown)?;
 
     // Leave the alternate screen and hand the terminal to the editor.
-    if app.mouse_enabled {
+    if app.mouse.enabled {
         let _ = execute!(io::stdout(), DisableMouseCapture);
     }
     disable_raw_mode()?;
@@ -69,7 +69,7 @@ pub(crate) fn edit_in_editor(terminal: &mut Term, app: &mut App) -> Result<()> {
     // Resume the TUI.
     enable_raw_mode()?;
     execute!(terminal.backend_mut(), EnterAlternateScreen)?;
-    if app.mouse_enabled {
+    if app.mouse.enabled {
         let _ = execute!(io::stdout(), EnableMouseCapture);
     }
     terminal.clear()?;
