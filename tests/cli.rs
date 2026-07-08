@@ -11,7 +11,8 @@ fn version_flag_prints_version() {
     let out = bin().arg("--version").output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("jira-tui v"));
+    assert!(stdout.contains("jira-tui"));
+    assert!(stdout.contains(env!("CARGO_PKG_VERSION")));
 }
 
 #[test]
@@ -19,7 +20,7 @@ fn help_flag_documents_key_features() {
     let out = bin().arg("--help").output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("USAGE"));
+    assert!(stdout.contains("Usage:"));
     assert!(stdout.contains("--demo"));
     assert!(stdout.contains("--onboard"));
     assert!(stdout.contains("MOUSE"));

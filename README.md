@@ -332,7 +332,8 @@ src/
     search.rs        search screen state + query matching
     board.rs         swimlane board selection + navigation
     transitions.rs   status transition picker
-    edit.rs          round-trip Markdown edit (begin/commit/apply)
+    edit.rs          round-trip Markdown edit + new-comment compose (begin/commit/apply)
+    comments.rs      jump-to-comments / step-between-comments scroll navigation
     onboarding.rs    welcome flow + credential form
     mouse.rs         list focus + click/drag selection
     detail.rs        issue detail loading
@@ -352,10 +353,16 @@ src/
     about.rs         animated about screen
     help.rs          help overlay
   lib.rs           library surface (so tests can drive the real code)
-  main.rs          thin binary: CLI args, terminal lifecycle, run loop
+  render.rs        shared issue-detail-to-Lines rendering (used by app for scroll
+                   offsets and by ui for actual drawing)
+  main.rs          thin binary: CLI parsing (via cli.rs), terminal lifecycle, run loop
+  cli.rs           clap `Cli` definition — single source of truth shared with
+                   build.rs (which generates the man page from it) so --help and
+                   the man page can never drift apart (binary-only module)
   keys.rs          keyboard + mouse event handling (binary-only module)
   editor_launch.rs external $EDITOR suspend/resume (binary-only module)
   bin/jira_mcp.rs  thin `jira-mcp` binary entry point (feature: mcp)
+build.rs    generates jira-tui.1 (man page) from src/cli.rs via clap_mangen
 tests/      cli.rs (process) + render.rs (headless TestBackend)
 docs/       product + technical design specs (SPEC, IMPLEMENTATION, …)
 ```
