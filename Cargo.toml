@@ -28,6 +28,7 @@ ureq = { version = "2", features = ["json", "tls"], optional = true }
 rmcp = { version = "2", features = ["server", "transport-io", "schemars"], optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std"], optional = true }
 schemars = { version = "1", optional = true }
+toml_edit = "0.25.12"
 
 [[bin]]
 name = "jira-tui"
