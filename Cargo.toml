@@ -43,3 +43,6 @@ required-features = ["mcp"]
 opt-level = 2
 lto = "thin"
 strip = true
+
+[dev-dependencies]
+mockito = "1.7.2"
