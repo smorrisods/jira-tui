@@ -94,7 +94,7 @@ fn read_token_file() -> Option<String> {
 #[cfg(feature = "live")]
 pub use live::{
     add_comment, apply_transition, create_issue, fetch_detail, fetch_my_work, fetch_transitions,
-    search_issues, update_description, update_summary, whoami,
+    list_fields, search_issues, update_description, update_summary, whoami, FieldInfo,
 };
 
 #[cfg(feature = "live")]
@@ -336,6 +336,42 @@ mod live {
             &format!("/rest/api/3/issue/{key}/comment"),
             serde_json::json!({ "body": body }),
         )
+    }
+
+    /// A Jira field's ID and human-readable name, as returned by
+    /// `GET /rest/api/3/field`.
+    #[derive(Clone, Debug)]
+    pub struct FieldInfo {
+        pub id: String,
+        pub name: String,
+    }
+
+    /// List the site's custom fields (id + name), sorted by name. Used by
+    /// the field-mapping screen to let you find, e.g., "Acceptance Criteria"
+    /// without knowing its instance-specific `customfield_NNNNN` ID up front.
+    pub fn list_fields(cfg: &Config) -> Result<Vec<FieldInfo>> {
+        let value = get(cfg, "/rest/api/3/field")?;
+        let arr = value
+            .as_array()
+            .cloned()
+            .ok_or_else(|| anyhow!("unexpected /field response shape"))?;
+
+        let mut fields: Vec<FieldInfo> = arr
+            .into_iter()
+            .filter_map(|f| {
+                let id = f.get("id")?.as_str()?.to_string();
+                // Built-in fields (summary, status, ...) are already handled
+                // by name; only custom fields have instance-specific IDs
+                // worth mapping here.
+                if !id.starts_with("customfield_") {
+                    return None;
+                }
+                let name = f.get("name")?.as_str()?.to_string();
+                Some(FieldInfo { id, name })
+            })
+            .collect();
+        fields.sort_by_key(|a| a.name.to_lowercase());
+        Ok(fields)
     }
 
     pub fn fetch_detail(cfg: &Config, key: &str) -> Result<IssueDetail> {

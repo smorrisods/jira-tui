@@ -89,7 +89,7 @@ impl App {
             self.setup_msg = format!("Could not save token: {e}");
             return;
         }
-        if let Err(e) = config::save_settings(&site, &email, "DS") {
+        if let Err(e) = config::save_settings(&site, &email, "") {
             self.setup_msg = format!("Could not save settings: {e}");
             return;
         }
@@ -108,7 +108,16 @@ impl App {
                     self.status = status;
                     self.recompute_view();
                     config::mark_onboarded();
-                    self.screen = Screen::Home;
+                    // Offer to map "Acceptance Criteria" (or another custom
+                    // field) now, while we're already talking to Jira. Falls
+                    // straight through to Home if there's nothing to map,
+                    // preserving the "connected" status message above.
+                    let connected_status = self.status.clone();
+                    self.open_field_mapping();
+                    if self.screen != Screen::FieldMapping {
+                        self.screen = Screen::Home;
+                        self.status = connected_status;
+                    }
                 }
                 _ => {
                     self.setup_msg =

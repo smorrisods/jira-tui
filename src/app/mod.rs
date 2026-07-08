@@ -18,6 +18,7 @@ use crate::git::GitContext;
 mod board;
 mod detail;
 mod edit;
+mod field_mapping;
 mod mouse;
 mod onboarding;
 mod quick_view;
@@ -46,6 +47,7 @@ pub enum Screen {
     Search,
     Board,
     About,
+    FieldMapping,
 }
 
 pub struct App {
@@ -127,6 +129,13 @@ pub struct App {
     pub pending_edit: Option<serde_json::Value>,
     /// Set by a key handler to ask the run loop to launch `$EDITOR`.
     pub request_edit: bool,
+
+    // Field-mapping discovery (custom field IDs are instance-specific).
+    /// Discovered custom fields as (id, name), sorted by name, with a
+    /// leading `("", "— none —")` sentinel so mappings can be cleared.
+    pub field_catalog: Vec<(String, String)>,
+    pub field_query: String,
+    pub field_selected: usize,
 }
 
 impl App {
@@ -189,6 +198,9 @@ impl App {
             picker_index: 0,
             pending_edit: None,
             request_edit: false,
+            field_catalog: Vec::new(),
+            field_query: String::new(),
+            field_selected: 0,
         };
         app.recompute_view();
 

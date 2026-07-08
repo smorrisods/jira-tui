@@ -99,6 +99,21 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // The field-mapping screen: type to search custom fields, pick one to
+    // map "Acceptance Criteria" to (or the leading "none" entry to clear it).
+    if app.screen == Screen::FieldMapping {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => app.close_field_mapping(),
+            KeyCode::Enter => app.confirm_field_mapping(),
+            KeyCode::Up => app.field_mapping_move(-1),
+            KeyCode::Down => app.field_mapping_move(1),
+            KeyCode::Backspace => app.field_mapping_backspace(),
+            KeyCode::Char(c) => app.field_mapping_input_char(c),
+            _ => {}
+        }
+        return;
+    }
+
     // The swimlane board has its own 2D navigation (card / column / lane).
     if app.screen == Screen::Board {
         match key.code {
@@ -158,6 +173,9 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             if !app.quick_view {
                 app.list_focus = app::ListFocus::List;
             }
+        }
+        KeyCode::Char('F') if matches!(app.screen, Screen::Home | Screen::List) => {
+            app.open_field_mapping()
         }
 
         KeyCode::Char('l') if app.screen != Screen::Detail => app.screen = Screen::List,
@@ -292,7 +310,12 @@ fn nav(app: &mut App, delta: isize) {
                 app.move_selection(delta);
             }
         }
-        Screen::About | Screen::Welcome | Screen::Edit | Screen::Search | Screen::Board => {}
+        Screen::About
+        | Screen::Welcome
+        | Screen::Edit
+        | Screen::Search
+        | Screen::Board
+        | Screen::FieldMapping => {}
     }
 }
 
@@ -301,6 +324,7 @@ fn back_or_quit(app: &mut App) {
         Screen::Home | Screen::Welcome => app.should_quit = true,
         Screen::Preview | Screen::Edit => app.cancel_edit(),
         Screen::Search => app.close_search(),
+        Screen::FieldMapping => app.close_field_mapping(),
         Screen::List | Screen::Detail | Screen::About | Screen::Board => app.screen = Screen::Home,
     }
 }
