@@ -186,6 +186,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             app.begin_tui_edit();
         }
         KeyCode::Char('E') if app.screen == Screen::Detail && app.detail.is_some() => {
+            app.begin_external_edit();
             app.request_edit = true;
         }
 
@@ -201,25 +202,25 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             app.begin_comment();
         }
         KeyCode::Char(']')
-            if matches!(app.screen, Screen::Detail | Screen::Preview)
+            if app.screen == Screen::Detail
                 || (matches!(app.screen, Screen::Home | Screen::List) && app.quick_view) =>
         {
             app.jump_to_comments();
         }
         KeyCode::Char('[')
-            if matches!(app.screen, Screen::Detail | Screen::Preview)
+            if app.screen == Screen::Detail
                 || (matches!(app.screen, Screen::Home | Screen::List) && app.quick_view) =>
         {
             app.jump_to_top();
         }
         KeyCode::Char('n')
-            if matches!(app.screen, Screen::Detail | Screen::Preview)
+            if app.screen == Screen::Detail
                 || (matches!(app.screen, Screen::Home | Screen::List) && app.quick_view) =>
         {
             app.next_comment();
         }
         KeyCode::Char('p')
-            if matches!(app.screen, Screen::Detail | Screen::Preview)
+            if app.screen == Screen::Detail
                 || (matches!(app.screen, Screen::Home | Screen::List) && app.quick_view) =>
         {
             app.prev_comment();

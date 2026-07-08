@@ -85,16 +85,6 @@ pub fn issue_detail_lines(detail: &IssueDetail) -> IssueLines {
             Style::default().fg(MUTED),
         )));
     }
-    if !detail.comments.is_empty() {
-        lines.push(Line::from(Span::styled(
-            format!(
-                "💬 {} comment{}",
-                detail.comments.len(),
-                if detail.comments.len() == 1 { "" } else { "s" }
-            ),
-            Style::default().fg(MUTED),
-        )));
-    }
     for link in &detail.links {
         lines.push(Line::from(vec![
             Span::styled(format!("{} ", link.relation), Style::default().fg(DANGER)),

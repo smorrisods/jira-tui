@@ -130,11 +130,27 @@ impl App {
     pub fn begin_tui_edit(&mut self) {
         if let Some(md) = self.description_markdown() {
             self.editor = EditorState::from_text(&md);
-            self.edit_target = EditTarget::Description;
-            self.edit_key = self.detail.as_ref().map(|d| d.key.clone());
-            self.edit_return_screen = Screen::Detail;
+            self.begin_description_edit_target();
             self.screen = Screen::Edit;
         }
+    }
+
+    /// Prime the edit-target state for a description edit without touching
+    /// `self.editor` or `self.screen` — used both by `begin_tui_edit` (the
+    /// in-TUI editor) and the external `$EDITOR` round-trip (`E`), which
+    /// calls `finish_edit` directly once the editor process exits.
+    pub fn begin_description_edit_target(&mut self) {
+        self.edit_target = EditTarget::Description;
+        self.edit_key = self.detail.as_ref().map(|d| d.key.clone());
+        self.edit_return_screen = Screen::Detail;
+    }
+
+    /// Prime the edit-target state for the external `$EDITOR` round-trip.
+    /// Must run before `request_edit` is set, since `finish_edit` (called
+    /// once the editor exits) doesn't know what it's editing on its own —
+    /// only `begin_tui_edit`/`begin_comment` normally set that up.
+    pub fn begin_external_edit(&mut self) {
+        self.begin_description_edit_target();
     }
 
     /// Open the built-in editor to compose a brand-new comment. Works from
@@ -187,7 +203,20 @@ impl App {
 
     pub fn cancel_edit(&mut self) {
         self.pending_edit = None;
-        self.screen = self.edit_return_screen;
+        let return_screen = self.edit_return_screen;
+        self.reset_edit_target();
+        self.screen = return_screen;
+    }
+
+    /// Clear the edit-target state at the end of a compose session (apply or
+    /// cancel) so it can never leak into an unrelated later edit — most
+    /// importantly the external `$EDITOR` round-trip, which doesn't call
+    /// `begin_tui_edit`/`begin_comment` and so can't re-prime a fresh target
+    /// itself.
+    fn reset_edit_target(&mut self) {
+        self.edit_target = EditTarget::default();
+        self.edit_key = None;
+        self.edit_return_screen = Screen::Detail;
     }
 
     /// Apply the previewed edit — either the description update or a new
@@ -201,6 +230,7 @@ impl App {
 
     fn apply_description_edit(&mut self) {
         let return_screen = self.edit_return_screen;
+        self.reset_edit_target();
         let Some(adf) = self.pending_edit.take() else {
             self.screen = return_screen;
             return;
@@ -237,11 +267,13 @@ impl App {
     /// quick-view cache.
     fn apply_comment(&mut self) {
         let return_screen = self.edit_return_screen;
-        let Some(adf) = self.pending_edit.take() else {
+        let Some(key) = self.edit_key.take() else {
+            self.reset_edit_target();
             self.screen = return_screen;
             return;
         };
-        let Some(key) = self.edit_key.take() else {
+        self.reset_edit_target();
+        let Some(adf) = self.pending_edit.take() else {
             self.screen = return_screen;
             return;
         };

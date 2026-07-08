@@ -68,14 +68,14 @@ fn detail_screen_shows_comment_indicator_and_jumps_to_comments() {
     let comment_count = app.detail.as_ref().unwrap().comments.len();
     assert!(comment_count > 0, "demo detail should have canned comments");
 
+    // The comments section header (with its count) lives below the fold
+    // until you scroll or jump to it.
+    app.jump_to_comments();
     let text = render(&app);
     assert!(
         text.contains("💬") && text.contains(&comment_count.to_string()),
-        "detail should show a comment-count indicator"
+        "jumping to the comments section should show a comment-count header"
     );
-
-    app.jump_to_comments();
-    let text = render(&app);
     let first_author = app.detail.as_ref().unwrap().comments[0].author.clone();
     assert!(
         text.contains(&first_author),

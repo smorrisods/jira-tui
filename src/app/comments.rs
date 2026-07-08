@@ -8,25 +8,25 @@ use super::{App, Screen};
 
 impl App {
     /// The detail currently shown for comment purposes: the open issue on
-    /// the Detail/Preview screens, or the quick-view panel's cached detail
-    /// everywhere else (Home/List).
+    /// the Detail screen, or the quick-view panel's cached detail everywhere
+    /// else (Home/List).
     fn active_comment_detail(&self) -> Option<&IssueDetail> {
         match self.screen {
-            Screen::Detail | Screen::Preview => self.detail.as_ref(),
+            Screen::Detail => self.detail.as_ref(),
             _ => self.quick_view_detail(),
         }
     }
 
     fn current_scroll(&self) -> u16 {
         match self.screen {
-            Screen::Detail | Screen::Preview => self.detail_scroll,
+            Screen::Detail => self.detail_scroll,
             _ => self.quick_view_scroll,
         }
     }
 
     fn set_scroll(&mut self, value: u16) {
         match self.screen {
-            Screen::Detail | Screen::Preview => self.detail_scroll = value,
+            Screen::Detail => self.detail_scroll = value,
             _ => self.quick_view_scroll = value,
         }
     }
