@@ -109,14 +109,26 @@ impl App {
                     self.recompute_view();
                     config::mark_onboarded();
                     // Offer to map "Acceptance Criteria" (or another custom
-                    // field) now, while we're already talking to Jira. Falls
-                    // straight through to Home if there's nothing to map,
-                    // preserving the "connected" status message above.
+                    // field) now, while we're already talking to Jira.
                     let connected_status = self.status.clone();
-                    self.open_field_mapping();
-                    if self.screen != Screen::FieldMapping {
-                        self.screen = Screen::Home;
-                        self.status = connected_status;
+                    match self.open_field_mapping() {
+                        super::FieldMappingOutcome::Opened => {}
+                        super::FieldMappingOutcome::NothingToMap
+                        | super::FieldMappingOutcome::NotAvailable => {
+                            self.screen = Screen::Home;
+                            self.status = connected_status;
+                        }
+                        super::FieldMappingOutcome::Failed(_) => {
+                            // A transient failure (network blip, etc.) here
+                            // shouldn't block finishing onboarding — but it's
+                            // easy to forget the field-mapping screen exists
+                            // at all if it silently never appears, so leave a
+                            // toast pointing at `F` rather than just the raw
+                            // error.
+                            self.screen = Screen::Home;
+                            self.status = connected_status;
+                            self.flash("Couldn't look up custom fields — press F to try again");
+                        }
                     }
                 }
                 _ => {

@@ -24,11 +24,28 @@ fn index_of_mapping(catalog: &[(String, String)], mapped: Option<&str>) -> usize
     }
 }
 
+/// Outcome of trying to open the field-mapping screen, so callers (like the
+/// onboarding handoff) can react precisely instead of inferring what
+/// happened from `self.screen`.
+#[derive(Debug, PartialEq, Eq)]
+pub enum FieldMappingOutcome {
+    /// The screen opened; the catalog was fetched successfully.
+    Opened,
+    /// Live mode isn't active, or credentials aren't configured.
+    NotAvailable,
+    /// Fetched successfully, but the site has no custom fields to map.
+    NothingToMap,
+    /// The fetch itself failed (network, auth, etc.) — worth retrying later.
+    Failed(String),
+}
+
 impl App {
     /// Open the field-mapping screen, fetching the site's custom fields.
-    /// Only meaningful in live mode; otherwise leaves a status message and
-    /// the screen unchanged.
-    pub fn open_field_mapping(&mut self) {
+    /// Also sets `self.status` on every non-`Opened` outcome, so a direct
+    /// keybinding invocation (`F`) still surfaces a message even though
+    /// callers that need to branch on the outcome can match the return
+    /// value instead of re-deriving it from `self.screen`.
+    pub fn open_field_mapping(&mut self) -> FieldMappingOutcome {
         #[cfg(feature = "live")]
         {
             use crate::domain::Source;
@@ -37,15 +54,16 @@ impl App {
             if !matches!(self.source, Source::Live { .. }) {
                 self.status =
                     "Field mapping needs live credentials — set them up first (--onboard).".into();
-                return;
+                return FieldMappingOutcome::NotAvailable;
             }
             let Some(cfg) = jira::Config::load() else {
                 self.status = "No live credentials configured.".into();
-                return;
+                return FieldMappingOutcome::NotAvailable;
             };
             match jira::list_fields(&cfg) {
                 Ok(fields) if fields.is_empty() => {
                     self.status = "No custom fields found on this Jira site.".into();
+                    FieldMappingOutcome::NothingToMap
                 }
                 Ok(fields) => {
                     self.field_catalog =
@@ -63,15 +81,19 @@ impl App {
                         self.field_current_mapping.as_deref(),
                     );
                     self.screen = Screen::FieldMapping;
+                    FieldMappingOutcome::Opened
                 }
                 Err(e) => {
-                    self.status = format!("Could not fetch fields: {e}");
+                    let msg = e.to_string();
+                    self.status = format!("Could not fetch fields: {msg}");
+                    FieldMappingOutcome::Failed(msg)
                 }
             }
         }
         #[cfg(not(feature = "live"))]
         {
             self.status = "This build has no live support; rebuild with the `live` feature.".into();
+            FieldMappingOutcome::NotAvailable
         }
     }
 
@@ -223,5 +245,20 @@ mod tests {
         // A mapping that no longer exists on the site (e.g. the field was
         // deleted) falls back to "none" rather than panicking or drifting.
         assert_eq!(index_of_mapping(&catalog, Some("customfield_99999")), 0);
+    }
+
+    #[test]
+    fn opening_without_live_credentials_reports_not_available() {
+        // Demo mode (or any non-live source) must never crash or silently
+        // swallow the attempt — callers like onboarding rely on getting a
+        // precise outcome back rather than having to infer it from the
+        // screen, so a failed handoff can still leave a clear, actionable
+        // status/flash message.
+        let mut app = demo_app();
+        let before = app.screen;
+        let outcome = app.open_field_mapping();
+        assert_eq!(outcome, FieldMappingOutcome::NotAvailable);
+        assert_eq!(app.screen, before, "must not navigate away on failure");
+        assert!(!app.status.is_empty());
     }
 }

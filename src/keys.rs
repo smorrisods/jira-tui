@@ -175,7 +175,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Char('F') if matches!(app.screen, Screen::Home | Screen::List) => {
-            app.open_field_mapping()
+            app.open_field_mapping();
         }
 
         KeyCode::Char('l') if app.screen != Screen::Detail => app.screen = Screen::List,

@@ -73,7 +73,8 @@ impl Settings {
 
 const DEFAULT_CONFIG: &str = r#"# jira-tui configuration
 # Non-secret settings only. Keep your API token in the JIRA_API_TOKEN
-# environment variable or a token.txt file, never in this file.
+# environment variable or a token file (see token_file below), never in
+# this file.
 
 # Jira site and account (used in live mode).
 # base_url = "https://your-org.atlassian.net"
@@ -83,7 +84,13 @@ const DEFAULT_CONFIG: &str = r#"# jira-tui configuration
 # Optional: custom field ID for "Acceptance Criteria" on your Jira site
 # (Settings -> Issues -> Custom fields; every site assigns its own numeric
 # ID). Leave commented out to skip fetching acceptance criteria entirely.
+# You can also find and set this from within jira-tui — press `F`.
 # acceptance_criteria_field = "customfield_10001"
+
+# Optional: path to a file containing just your API token, if you'd rather
+# not use the JIRA_API_TOKEN env var or the default
+# ~/.config/jira-tui/token file.
+# token_file = "/path/to/your/token"
 
 # UI preferences.
 # Start with mouse mode on (click-to-open, wheel scroll, drag-to-copy).
@@ -145,14 +152,15 @@ pub fn save_token(token: &str) -> Result<PathBuf> {
 }
 
 /// Write the non-secret settings to `config.toml`, preserving the mouse pref
-/// and any existing acceptance-criteria field mapping.
+/// and any existing acceptance-criteria field mapping / token file path.
 pub fn save_settings(base_url: &str, email: &str, project: &str) -> Result<PathBuf> {
-    let acceptance_criteria_field = read_kv().get("acceptance_criteria_field").cloned();
+    let kv = read_kv();
     write_config_toml(
         base_url,
         email,
         project,
-        acceptance_criteria_field.as_deref(),
+        kv.get("acceptance_criteria_field").map(String::as_str),
+        kv.get("token_file").map(String::as_str),
     )
 }
 
@@ -163,7 +171,13 @@ pub fn save_field_mapping(acceptance_criteria_field: Option<&str>) -> Result<Pat
     let base_url = kv.get("base_url").cloned().unwrap_or_default();
     let email = kv.get("email").cloned().unwrap_or_default();
     let project = kv.get("project").cloned().unwrap_or_default();
-    write_config_toml(&base_url, &email, &project, acceptance_criteria_field)
+    write_config_toml(
+        &base_url,
+        &email,
+        &project,
+        acceptance_criteria_field,
+        kv.get("token_file").map(String::as_str),
+    )
 }
 
 fn write_config_toml(
@@ -171,6 +185,7 @@ fn write_config_toml(
     email: &str,
     project: &str,
     acceptance_criteria_field: Option<&str>,
+    token_file: Option<&str>,
 ) -> Result<PathBuf> {
     let dir = config_dir().context("could not resolve a config directory")?;
     std::fs::create_dir_all(&dir).context("creating config directory")?;
@@ -181,6 +196,10 @@ fn write_config_toml(
         }
         _ => String::new(),
     };
+    let token_file_line = match token_file {
+        Some(path) if !path.trim().is_empty() => format!("token_file = \"{path}\"\n"),
+        _ => String::new(),
+    };
     let content = format!(
         "# jira-tui configuration\n\
 # Non-secret settings only. The API token lives in the sibling `token` file.\n\
@@ -189,6 +208,7 @@ base_url = \"{base_url}\"\n\
 email = \"{email}\"\n\
 project = \"{project}\"\n\
 {acceptance_criteria_line}\
+{token_file_line}\
 \n\
 # Start with mouse mode on (click-to-open, wheel scroll, drag-to-copy).\n\
 # Hold Shift while dragging to use your terminal's native selection instead.\n\
