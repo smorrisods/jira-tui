@@ -393,3 +393,295 @@ fn url_encode(s: &str) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_config(base_url: String) -> Config {
+        Config {
+            base_url,
+            email: "me@example.com".into(),
+            token: "secret-token".into(),
+            project: "PROJ".into(),
+            acceptance_criteria_field: None,
+        }
+    }
+
+    #[test]
+    fn whoami_returns_display_name() {
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("GET", "/rest/api/3/myself")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"displayName": "Ada Lovelace"}"#)
+            .create();
+
+        let cfg = test_config(server.url());
+        let name = whoami(&cfg).unwrap();
+
+        mock.assert();
+        assert_eq!(name, "Ada Lovelace");
+    }
+
+    #[test]
+    fn whoami_surfaces_http_errors() {
+        let mut server = mockito::Server::new();
+        server
+            .mock("GET", "/rest/api/3/myself")
+            .with_status(401)
+            .create();
+
+        let cfg = test_config(server.url());
+        assert!(whoami(&cfg).is_err());
+    }
+
+    #[test]
+    fn fetch_my_work_sends_the_expected_jql_and_parses_issues() {
+        let mut server = mockito::Server::new();
+        let expected_path = "/rest/api/3/search/jql?jql=assignee%20%3D%20currentUser%28%29%20AND%20statusCategory%20%21%3D%20Done%20ORDER%20BY%20updated%20DESC&maxResults=50&fields=summary,status,issuetype,priority,assignee,updated,issuelinks,parent";
+        let mock = server
+            .mock("GET", expected_path)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "issues": [
+                        {
+                            "key": "DS-1",
+                            "fields": {
+                                "summary": "Fix the thing",
+                                "issuetype": {"name": "Bug"},
+                                "status": {"name": "In Progress"},
+                                "priority": {"name": "Highest"},
+                                "assignee": {"displayName": "Ada Lovelace"},
+                                "updated": "2024-01-02T03:04:05.000+0000",
+                                "parent": {"key": "DS-0"},
+                                "issuelinks": [
+                                    {
+                                        "type": {"inward": "is blocked by"},
+                                        "inwardIssue": {"key": "DS-9"}
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }"#,
+            )
+            .create();
+
+        let cfg = test_config(server.url());
+        let issues = fetch_my_work(&cfg).unwrap();
+
+        mock.assert();
+        assert_eq!(issues.len(), 1);
+        let issue = &issues[0];
+        assert_eq!(issue.key, "DS-1");
+        assert_eq!(issue.summary, "Fix the thing");
+        assert_eq!(issue.issue_type, "Bug");
+        assert_eq!(issue.status, "In Progress");
+        assert_eq!(issue.priority, Priority::Highest);
+        assert_eq!(issue.assignee.as_deref(), Some("Ada Lovelace"));
+        assert_eq!(issue.updated, "2024-01-02");
+        assert_eq!(issue.epic.as_deref(), Some("DS-0"));
+        assert!(
+            issue.blocked,
+            "an inward 'is blocked by' link must set blocked"
+        );
+    }
+
+    #[test]
+    fn search_issues_errors_when_response_has_no_issues_array() {
+        let mut server = mockito::Server::new();
+        server
+            .mock("GET", mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"unexpected": true}"#)
+            .create();
+
+        let cfg = test_config(server.url());
+        assert!(search_issues(&cfg, "any jql").is_err());
+    }
+
+    #[test]
+    fn list_fields_filters_to_custom_fields_and_sorts_by_name() {
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("GET", "/rest/api/3/field")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"[
+                    {"id": "summary", "name": "Summary"},
+                    {"id": "customfield_10002", "name": "Story Points"},
+                    {"id": "customfield_10001", "name": "Acceptance Criteria"}
+                ]"#,
+            )
+            .create();
+
+        let cfg = test_config(server.url());
+        let fields = list_fields(&cfg).unwrap();
+
+        mock.assert();
+        // Built-in fields (no `customfield_` prefix) are excluded, and the
+        // rest are sorted by name, not by id or response order.
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].name, "Acceptance Criteria");
+        assert_eq!(fields[0].id, "customfield_10001");
+        assert_eq!(fields[1].name, "Story Points");
+    }
+
+    #[test]
+    fn fetch_detail_includes_the_configured_acceptance_criteria_field() {
+        let mut server = mockito::Server::new();
+        let issue_mock = server
+            .mock(
+                "GET",
+                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,parent,issuelinks,description,customfield_10001",
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "fields": {
+                        "summary": "Fix the thing",
+                        "issuetype": {"name": "Bug"},
+                        "status": {"name": "In Progress"},
+                        "priority": {"name": "Low"},
+                        "customfield_10001": {"type": "doc", "content": []}
+                    }
+                }"#,
+            )
+            .create();
+        // fetch_detail also fetches transitions; a 404 here just means the
+        // detail still comes back with an empty transitions list.
+        server
+            .mock("GET", "/rest/api/3/issue/DS-1/transitions")
+            .with_status(404)
+            .create();
+
+        let mut cfg = test_config(server.url());
+        cfg.acceptance_criteria_field = Some("customfield_10001".into());
+
+        let detail = fetch_detail(&cfg, "DS-1").unwrap();
+
+        issue_mock.assert();
+        assert_eq!(detail.summary, "Fix the thing");
+        assert!(detail.acceptance_criteria.is_some());
+        assert!(detail.transitions.is_empty());
+    }
+
+    #[test]
+    fn fetch_detail_omits_acceptance_criteria_when_not_configured() {
+        let mut server = mockito::Server::new();
+        // No acceptance_criteria_field configured, so the request must not
+        // ask for any customfield_* — this mock only matches that exact
+        // fields list (no trailing custom field).
+        let issue_mock = server
+            .mock(
+                "GET",
+                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,parent,issuelinks,description",
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"fields": {"summary": "No AC here"}}"#)
+            .create();
+        server
+            .mock("GET", "/rest/api/3/issue/DS-1/transitions")
+            .with_status(404)
+            .create();
+
+        let cfg = test_config(server.url());
+        let detail = fetch_detail(&cfg, "DS-1").unwrap();
+
+        issue_mock.assert();
+        assert_eq!(detail.acceptance_criteria, None);
+    }
+
+    #[test]
+    fn apply_transition_sends_the_transition_id() {
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("POST", "/rest/api/3/issue/DS-1/transitions")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "transition": { "id": "31" }
+            })))
+            .with_status(204)
+            .create();
+
+        let cfg = test_config(server.url());
+        apply_transition(&cfg, "DS-1", "31").unwrap();
+
+        mock.assert();
+    }
+
+    #[test]
+    fn create_issue_sends_project_summary_type_and_returns_key() {
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("POST", "/rest/api/3/issue")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "fields": {
+                    "project": { "key": "PROJ" },
+                    "summary": "New issue",
+                    "issuetype": { "name": "Task" }
+                }
+            })))
+            .with_status(201)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"key": "PROJ-42"}"#)
+            .create();
+
+        let cfg = test_config(server.url());
+        let key = create_issue(&cfg, "New issue", "Task", None).unwrap();
+
+        mock.assert();
+        assert_eq!(key, "PROJ-42");
+    }
+
+    #[test]
+    fn add_comment_sends_the_adf_body() {
+        let mut server = mockito::Server::new();
+        let body = serde_json::json!({"type": "doc", "content": []});
+        let mock = server
+            .mock("POST", "/rest/api/3/issue/DS-1/comment")
+            .match_body(mockito::Matcher::Json(serde_json::json!({ "body": body })))
+            .with_status(201)
+            .create();
+
+        let cfg = test_config(server.url());
+        add_comment(&cfg, "DS-1", &body).unwrap();
+
+        mock.assert();
+    }
+
+    #[test]
+    fn update_summary_and_description_send_expected_bodies() {
+        let mut server = mockito::Server::new();
+        let summary_mock = server
+            .mock("PUT", "/rest/api/3/issue/DS-1")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "fields": { "summary": "New summary" }
+            })))
+            .with_status(204)
+            .create();
+
+        let cfg = test_config(server.url());
+        update_summary(&cfg, "DS-1", "New summary").unwrap();
+        summary_mock.assert();
+
+        server.reset();
+        let desc = serde_json::json!({"type": "doc", "content": []});
+        let desc_mock = server
+            .mock("PUT", "/rest/api/3/issue/DS-1")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "fields": { "description": desc }
+            })))
+            .with_status(204)
+            .create();
+        update_description(&cfg, "DS-1", &desc).unwrap();
+        desc_mock.assert();
+    }
+}
