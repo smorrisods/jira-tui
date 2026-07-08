@@ -1,9 +1,9 @@
 //! Jira configuration and (optional) live REST client.
 //!
-//! Reads credentials from the environment or a `token.txt` file, and an
-//! optional `~/.config/jira-tui/config.toml` for non-secret settings. When
-//! `live` is disabled or credentials are missing, the app falls back to demo
-//! data — the TUI is always explorable.
+//! Reads credentials from the environment or a token file, and an optional
+//! `~/.config/jira-tui/config.toml` for non-secret settings. When `live` is
+//! disabled or credentials are missing, the app falls back to demo data —
+//! the TUI is always explorable.
 
 #[cfg(feature = "live")]
 #[allow(dead_code)]
@@ -75,11 +75,18 @@ impl Config {
 #[cfg(feature = "live")]
 fn read_token_file() -> Option<String> {
     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    // An explicit override (env var or config.toml) takes priority over the
+    // defaults below, so you can keep the token anywhere you like.
+    let custom = std::env::var("JIRA_TOKEN_FILE")
+        .ok()
+        .or_else(|| crate::config::read_kv().get("token_file").cloned());
+    if let Some(path) = custom {
+        candidates.push(std::path::PathBuf::from(path));
+    }
     if let Some(p) = crate::config::token_file_path() {
         candidates.push(p);
     }
     candidates.push(std::path::PathBuf::from("token.txt"));
-    candidates.push(std::path::PathBuf::from("../jira-tasks/token.txt"));
     for candidate in candidates {
         if let Ok(s) = std::fs::read_to_string(&candidate) {
             let t = s.trim().to_string();

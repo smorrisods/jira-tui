@@ -31,6 +31,7 @@ mod tests;
 
 pub use board::BoardSelection;
 pub use edit::EditorState;
+pub use field_mapping::FieldMappingOutcome;
 pub use mouse::ListFocus;
 pub use onboarding::{Field, WelcomePhase};
 pub use search::SearchRow;
