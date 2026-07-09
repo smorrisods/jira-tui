@@ -29,6 +29,7 @@ mod list;
 mod preview;
 mod search;
 mod transition_picker;
+mod view_picker;
 mod welcome;
 
 use about::draw_about;
@@ -43,6 +44,7 @@ use list::{draw_list, draw_quick_view};
 use preview::draw_preview;
 use search::draw_search;
 use transition_picker::draw_transition_picker;
+use view_picker::draw_view_picker;
 use welcome::draw_welcome;
 
 // ── Theme ────────────────────────────────────────────────────────────────────
@@ -111,6 +113,10 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     if app.picker_open {
         draw_transition_picker(f, app, f.area());
+    }
+
+    if app.view_picker_open {
+        draw_view_picker(f, app, f.area());
     }
 
     // Highlight the active drag selection by inverting the covered rows.
@@ -183,6 +189,14 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         Span::styled("  ·  ", Style::default().fg(MUTED)),
         Span::styled(app.source.label(), Style::default().fg(MUTED)),
         Span::styled(
+            if app.current_view != crate::domain::ViewKind::MyWork {
+                format!("  ·  viewing: {}", app.current_view.label())
+            } else {
+                String::new()
+            },
+            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
             if app.mouse.enabled {
                 "  🖱 mouse"
             } else {
@@ -243,15 +257,15 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         Screen::Search => "type to filter · ↑/↓ move · ⏎ open · esc cancel".into(),
         Screen::FieldMapping => "type to search fields · ↑/↓ move · ⏎ map · esc cancel".into(),
         Screen::Board => {
-            "↑/↓ card · ←/→ column · pgup/pgdn lane · ⏎ open · / search · esc/q back".into()
+            "↑/↓ card · ←/→ column · pgup/pgdn lane · ⏎ open · / search · V switch view · esc/q back".into()
         }
         Screen::About => "esc/← back · ? help · q quit".into(),
         Screen::Home | Screen::List if app.quick_view => {
             "↑/↓ move · →/⏎ open · tab focus quick view · c comment · ]/[ comments/top · \
-             n/p next/prev comment · b board · / search · ? help · q quit"
+             n/p next/prev comment · b board · / search · V switch view · ? help · q quit"
                 .into()
         }
-        _ => "↑/↓ move · →/⏎ open · s sort · f filter · v quick · b board · / search · ? help · q quit".into(),
+        _ => "↑/↓ move · →/⏎ open · s sort · f filter · v quick · b board · / search · V switch view · ? help · q quit".into(),
     };
     let keys = keys.as_str();
     let block = Block::default()

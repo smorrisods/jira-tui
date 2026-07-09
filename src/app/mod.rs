@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use ratatui::layout::Rect;
 
 use crate::config::{self, Settings};
-use crate::domain::{demo_issues, IssueDetail, IssueSummary, Source};
+use crate::domain::{demo_issues, IssueDetail, IssueSummary, Source, ViewKind};
 use crate::git::GitContext;
 
 mod board;
@@ -26,6 +26,7 @@ mod quick_view;
 mod search;
 mod sort_filter;
 mod transitions;
+mod view_switch;
 
 #[cfg(test)]
 mod tests;
@@ -132,6 +133,15 @@ pub struct App {
 
     // Field-mapping discovery (custom field IDs are instance-specific).
     pub field_mapping: FieldMappingState,
+
+    // View switcher: My Work / All Project Issues / a teammate's work.
+    /// Which JQL-backed view `all_issues` currently holds.
+    pub current_view: ViewKind,
+    pub view_picker_open: bool,
+    pub view_picker_index: usize,
+    /// Computed when the picker opens: My Work, All Project Issues, then one
+    /// entry per teammate seen in the currently loaded issues.
+    pub view_picker_options: Vec<ViewKind>,
 }
 
 impl App {
@@ -189,6 +199,10 @@ impl App {
             edit_key: None,
             edit_return_screen: Screen::Detail,
             field_mapping: FieldMappingState::default(),
+            current_view: ViewKind::default(),
+            view_picker_open: false,
+            view_picker_index: 0,
+            view_picker_options: Vec::new(),
         };
         app.recompute_view();
 
@@ -261,7 +275,8 @@ impl App {
 
     pub fn refresh(&mut self) {
         let force_demo = matches!(self.source, Source::Demo);
-        let (issues, source, status) = load_issues(force_demo);
+        let kind = self.current_view.clone();
+        let (issues, source, status) = load_issues_for(&kind, force_demo);
         self.all_issues = issues;
         self.source = source;
         self.status = format!("↻ {status}");
@@ -285,45 +300,72 @@ fn open_cache_for_site(cfg: &crate::jira::Config) -> Option<(crate::cache::Cache
     Some((cache, site_id))
 }
 
+/// The issues to show offline for a given view. `MyWork`/`AllProject` both
+/// show the full baked-in demo set (the demo dataset stands in for "the
+/// whole project" — there's no offline notion of a distinct "my" subset);
+/// `Teammate` filters it down to that teammate's assigned issues, so the
+/// view picker is meaningfully explorable with zero credentials.
+fn demo_view_for(view: &ViewKind) -> Vec<IssueSummary> {
+    match view {
+        ViewKind::MyWork | ViewKind::AllProject => demo_issues(),
+        ViewKind::Teammate(name) => demo_issues()
+            .into_iter()
+            .filter(|i| i.assignee.as_deref() == Some(name.as_str()))
+            .collect(),
+    }
+}
+
 fn load_issues(force_demo: bool) -> (Vec<IssueSummary>, Source, String) {
+    load_issues_for(&ViewKind::MyWork, force_demo)
+}
+
+/// Fetch (or fall back to demo/cached data for) whichever view is active.
+/// `MyWork` is the only view with a durable on-disk cache entry for now
+/// (see `ViewKind::cache_kind`); `AllProject`/`Teammate` are session-only.
+fn load_issues_for(view: &ViewKind, force_demo: bool) -> (Vec<IssueSummary>, Source, String) {
     if !force_demo {
         #[cfg(feature = "live")]
         {
             if let Some(cfg) = crate::jira::Config::load() {
                 let user = crate::jira::whoami(&cfg).unwrap_or_else(|_| "me".into());
                 let mut cache = open_cache_for_site(&cfg);
-                match crate::jira::fetch_my_work(&cfg) {
+                let jql = crate::jira::jql_for(view, &cfg.project);
+                match crate::jira::search_issues(&cfg, &jql) {
                     Ok(issues) if !issues.is_empty() => {
                         let host = cfg.site_host();
                         let n = issues.len();
-                        if let Some((cache, site_id)) = &mut cache {
-                            let _ = cache.save_view(
-                                *site_id,
-                                "my_work",
-                                "My Work",
-                                crate::jira::MY_WORK_JQL,
-                                &issues,
-                            );
+                        if let (Some(kind), Some((cache, site_id))) =
+                            (view.cache_kind(), &mut cache)
+                        {
+                            let _ = cache.save_view(*site_id, kind, &view.label(), &jql, &issues);
                         }
-                        return (
-                            issues,
-                            Source::Live { site: host, user },
-                            format!("Loaded {n} issues from Jira"),
-                        );
+                        // search_issues caps at 50 results (no paging yet —
+                        // see the pagination risk noted in issue #7); flag
+                        // when we may be showing a truncated list.
+                        let status = if n >= 50 {
+                            format!(
+                                "Loaded {n} issues from Jira (showing first {n}; more may exist)"
+                            )
+                        } else {
+                            format!("Loaded {n} issues from Jira")
+                        };
+                        return (issues, Source::Live { site: host, user }, status);
                     }
                     Ok(_) => {
                         return (
-                            demo_issues(),
+                            demo_view_for(view),
                             Source::Demo,
-                            "No live issues found — showing sample data".into(),
+                            format!("No issues found for {} — showing sample data", view.label()),
                         );
                     }
                     Err(e) => {
                         // Prefer the last cached list over sample data offline.
-                        let cached = cache
-                            .as_ref()
-                            .and_then(|(cache, site_id)| cache.load_view(*site_id, "my_work").ok())
-                            .flatten();
+                        let cached = view.cache_kind().and_then(|kind| {
+                            cache
+                                .as_ref()
+                                .and_then(|(cache, site_id)| cache.load_view(*site_id, kind).ok())
+                                .flatten()
+                        });
                         if let Some(cached) = cached {
                             let n = cached.len();
                             return (
@@ -333,7 +375,7 @@ fn load_issues(force_demo: bool) -> (Vec<IssueSummary>, Source, String) {
                             );
                         }
                         return (
-                            demo_issues(),
+                            demo_view_for(view),
                             Source::Demo,
                             format!("Jira unreachable ({e}) — showing sample data"),
                         );
@@ -343,7 +385,7 @@ fn load_issues(force_demo: bool) -> (Vec<IssueSummary>, Source, String) {
         }
     }
     (
-        demo_issues(),
+        demo_view_for(view),
         Source::Demo,
         "Offline demo — set JIRA_EMAIL + token for live mode".into(),
     )

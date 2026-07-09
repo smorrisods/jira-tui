@@ -189,6 +189,24 @@ The `my work` panel supports quick triage:
 - **`/`** — open **search / go to issue** (see below).
 - **`→` / `⏎`** — open the selected issue; **`esc` / `←` / `⌫`** — go back.
 
+## Switching views
+
+Press **`V`** from Home, the full list, or the swimlane board to switch which
+issues you're looking at:
+
+- **My Work** — the default: your own assigned, not-yet-done issues.
+- **All Project Issues** — everything in `JIRA_PROJECT`, most recently updated
+  first.
+- **A teammate's work** — one entry per assignee already visible in your
+  currently loaded issues (no extra API call needed to populate the list),
+  filtered the same way as My Work.
+
+Use **`↑`/`↓`** to move, **`⏎`** to switch, **`esc`** to cancel. The header
+shows `viewing: <name>` whenever you're on anything other than My Work. Only
+My Work is written to the on-disk cache today — All Project Issues and
+teammate views are session-only and re-fetch each time you switch to them or
+press **`r`** to refresh.
+
 ## Search & go to issue
 
 Press **`/`** from Home, the full list, or an open issue to search:
@@ -292,6 +310,7 @@ copies its browse URL.
 | `v` | toggle quick-view panel |
 | `Tab` | focus list ↔ quick view (enables arrow-key scroll) |
 | `b` | swimlane board (Kanban-style, grouped by epic) |
+| `V` | switch view (My Work / All Project Issues / a teammate's work) |
 | `g` | go home |
 | `l` | full list |
 | `t` | change status (in an issue) |

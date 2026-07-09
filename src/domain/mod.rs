@@ -133,6 +133,42 @@ impl Source {
     }
 }
 
+/// Which issue list is currently loaded into `App.all_issues` — "my work" is
+/// the long-standing default; `AllProject` and `Teammate` are alternate JQL
+/// queries through the same generic `search_issues` primitive, switched via
+/// the view picker (`V`).
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub enum ViewKind {
+    #[default]
+    MyWork,
+    AllProject,
+    /// A teammate's assigned work, matched by Jira display name (see the
+    /// caveat in issue #6: fragile against renames/duplicate names, but
+    /// avoids an extra `accountId` lookup for v1).
+    Teammate(String),
+}
+
+impl ViewKind {
+    /// Short label shown in the header/status when this view is active.
+    pub fn label(&self) -> String {
+        match self {
+            ViewKind::MyWork => "My Work".into(),
+            ViewKind::AllProject => "All Project Issues".into(),
+            ViewKind::Teammate(name) => format!("{name}'s Work"),
+        }
+    }
+
+    /// The cache `kind` this view persists under, or `None` if it's
+    /// session-only for v1 (see the caching open question in issues #6/#7 —
+    /// only "my work" gets a durable on-disk cache entry for now).
+    pub fn cache_kind(&self) -> Option<&'static str> {
+        match self {
+            ViewKind::MyWork => Some("my_work"),
+            ViewKind::AllProject | ViewKind::Teammate(_) => None,
+        }
+    }
+}
+
 /// Baked-in sample issues so the TUI is fully explorable with zero network.
 /// Flavoured after the real DS design-system project this toolkit grew from.
 pub fn demo_issues() -> Vec<IssueSummary> {
@@ -224,6 +260,30 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             blocked: false,
             updated: "2w ago".into(),
             epic: Some("DS-2600".into()),
+        },
+        // A couple of teammate-assigned issues so the teammate-view switcher
+        // (see the "switch view" feature) has something to show offline.
+        IssueSummary {
+            key: "DS-2631".into(),
+            summary: "Audit focus order across the multi-step form wizard".into(),
+            issue_type: "Develop".into(),
+            status: "In Progress".into(),
+            priority: Priority::Medium,
+            assignee: Some("priya.nair".into()),
+            blocked: false,
+            updated: "4h ago".into(),
+            epic: Some("DS-2600".into()),
+        },
+        IssueSummary {
+            key: "DS-2640".into(),
+            summary: "Investigate flaky visual-regression snapshots on CI".into(),
+            issue_type: "Bug".into(),
+            status: "To Do".into(),
+            priority: Priority::Medium,
+            assignee: Some("alex.chen".into()),
+            blocked: false,
+            updated: "9h ago".into(),
+            epic: None,
         },
     ]
 }

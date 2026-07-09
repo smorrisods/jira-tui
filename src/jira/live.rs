@@ -184,6 +184,22 @@ pub fn fetch_my_work(cfg: &Config) -> Result<Vec<IssueSummary>> {
     search_issues(cfg, MY_WORK_JQL)
 }
 
+/// Build the JQL for a given view. `project` is the Jira project key
+/// (`Config.project`, already used for issue creation).
+pub fn jql_for(view: &crate::domain::ViewKind, project: &str) -> String {
+    use crate::domain::ViewKind;
+    match view {
+        ViewKind::MyWork => MY_WORK_JQL.to_string(),
+        ViewKind::AllProject => format!("project = \"{project}\" ORDER BY updated DESC"),
+        ViewKind::Teammate(name) => {
+            // Escape embedded quotes so a display name containing `"` can't
+            // break out of the JQL string literal.
+            let escaped = name.replace('"', "\\\"");
+            format!("assignee = \"{escaped}\" AND statusCategory != Done ORDER BY updated DESC")
+        }
+    }
+}
+
 /// Run an arbitrary JQL query and return matching issue summaries.
 /// Used both for "my work" (a fixed JQL) and the MCP server's free-form
 /// search tool.
@@ -494,6 +510,32 @@ mod tests {
 
         let cfg = test_config(server.url());
         assert!(whoami(&cfg).is_err());
+    }
+
+    #[test]
+    fn jql_for_builds_the_expected_query_per_view() {
+        use crate::domain::ViewKind;
+
+        assert_eq!(jql_for(&ViewKind::MyWork, "PROJ"), MY_WORK_JQL);
+        assert_eq!(
+            jql_for(&ViewKind::AllProject, "PROJ"),
+            "project = \"PROJ\" ORDER BY updated DESC"
+        );
+        assert_eq!(
+            jql_for(&ViewKind::Teammate("Ada Lovelace".into()), "PROJ"),
+            "assignee = \"Ada Lovelace\" AND statusCategory != Done ORDER BY updated DESC"
+        );
+    }
+
+    #[test]
+    fn jql_for_teammate_escapes_embedded_quotes() {
+        use crate::domain::ViewKind;
+
+        let jql = jql_for(&ViewKind::Teammate("Robert \"Bob\" Smith".into()), "PROJ");
+        assert_eq!(
+            jql,
+            "assignee = \"Robert \\\"Bob\\\" Smith\" AND statusCategory != Done ORDER BY updated DESC"
+        );
     }
 
     #[test]
