@@ -87,6 +87,12 @@ impl App {
     /// Validate, verify against Jira, and persist the entered credentials.
     /// On success, switches to live data and finishes onboarding.
     pub fn submit_credentials(&mut self) {
+        #[cfg(feature = "live")]
+        if self.onboarding_pending {
+            self.onboarding.setup_msg = "Already verifying…".into();
+            return;
+        }
+
         let site = self
             .onboarding
             .field_site
@@ -115,10 +121,6 @@ impl App {
 
         #[cfg(feature = "live")]
         {
-            if self.onboarding_pending {
-                self.onboarding.setup_msg = "Already verifying…".into();
-                return;
-            }
             self.onboarding_generation += 1;
             let generation = self.onboarding_generation;
             self.onboarding_pending = true;

@@ -1266,3 +1266,40 @@ async fn submit_credentials_refuses_to_resubmit_while_verifying() {
     app.apply_event(event);
     assert!(!app.onboarding_pending);
 }
+
+/// Regression test: a resubmission while a verification is already in
+/// flight must be refused *before* any persistence happens, so it can't
+/// silently overwrite the on-disk token/settings or the `JIRA_*` env vars
+/// out from under the first, still-pending attempt.
+#[cfg(feature = "live")]
+#[tokio::test]
+async fn submit_credentials_does_not_repersist_while_verifying() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = onboarding_app();
+    app.onboarding.field_site = "http://127.0.0.1:1".into();
+    app.onboarding.field_email = "first@example.com".into();
+    app.onboarding.field_token = "first-token".into();
+
+    app.submit_credentials();
+    assert!(app.onboarding_pending);
+
+    // Edit the fields to different credentials and resubmit while the
+    // first attempt is still resolving.
+    app.onboarding.field_email = "second@example.com".into();
+    app.onboarding.field_token = "second-token".into();
+    app.submit_credentials();
+
+    assert_eq!(
+        std::env::var("JIRA_EMAIL").as_deref(),
+        Ok("first@example.com"),
+        "a refused resubmission must not overwrite the env vars set by the in-flight attempt"
+    );
+    assert_eq!(
+        std::env::var("JIRA_API_TOKEN").as_deref(),
+        Ok("first-token")
+    );
+
+    let event = next_event(&mut app).await;
+    app.apply_event(event);
+    assert!(!app.onboarding_pending);
+}
