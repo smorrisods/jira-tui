@@ -320,8 +320,9 @@ fn load_issues(force_demo: bool) -> (Vec<IssueSummary>, Source, String) {
 }
 
 /// Fetch (or fall back to demo/cached data for) whichever view is active.
-/// `MyWork` is the only view with a durable on-disk cache entry for now
-/// (see `ViewKind::cache_kind`); `AllProject`/`Teammate` are session-only.
+/// Every view (My Work, All Project Issues, a teammate's work) gets its own
+/// durable on-disk SQLite cache entry (`ViewKind::cache_kind`), so switching
+/// views doesn't always re-hit the API and still has an offline fallback.
 fn load_issues_for(view: &ViewKind, force_demo: bool) -> (Vec<IssueSummary>, Source, String) {
     if !force_demo {
         #[cfg(feature = "live")]
@@ -330,14 +331,13 @@ fn load_issues_for(view: &ViewKind, force_demo: bool) -> (Vec<IssueSummary>, Sou
                 let user = crate::jira::whoami(&cfg).unwrap_or_else(|_| "me".into());
                 let mut cache = open_cache_for_site(&cfg);
                 let jql = crate::jira::jql_for(view, &cfg.project);
+                let kind = view.cache_kind();
                 match crate::jira::search_issues(&cfg, &jql) {
                     Ok(issues) if !issues.is_empty() => {
                         let host = cfg.site_host();
                         let n = issues.len();
-                        if let (Some(kind), Some((cache, site_id))) =
-                            (view.cache_kind(), &mut cache)
-                        {
-                            let _ = cache.save_view(*site_id, kind, &view.label(), &jql, &issues);
+                        if let Some((cache, site_id)) = &mut cache {
+                            let _ = cache.save_view(*site_id, &kind, &view.label(), &jql, &issues);
                         }
                         // search_issues now pages until Jira reports
                         // `isLast`, but still stops at SEARCH_RESULTS_CAP so
@@ -359,12 +359,10 @@ fn load_issues_for(view: &ViewKind, force_demo: bool) -> (Vec<IssueSummary>, Sou
                     }
                     Err(e) => {
                         // Prefer the last cached list over sample data offline.
-                        let cached = view.cache_kind().and_then(|kind| {
-                            cache
-                                .as_ref()
-                                .and_then(|(cache, site_id)| cache.load_view(*site_id, kind).ok())
-                                .flatten()
-                        });
+                        let cached = cache
+                            .as_ref()
+                            .and_then(|(cache, site_id)| cache.load_view(*site_id, &kind).ok())
+                            .flatten();
                         if let Some(cached) = cached {
                             let n = cached.len();
                             return (

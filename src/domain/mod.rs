@@ -158,13 +158,18 @@ impl ViewKind {
         }
     }
 
-    /// The cache `kind` this view persists under, or `None` if it's
-    /// session-only for v1 (see the caching open question in issues #6/#7 —
-    /// only "my work" gets a durable on-disk cache entry for now).
-    pub fn cache_kind(&self) -> Option<&'static str> {
+    /// The cache `kind` this view persists under (used as the SQLite
+    /// `views.kind` column). Every view gets a durable on-disk cache entry;
+    /// each teammate gets their own `kind` (`teammate:<name>`) so switching
+    /// between teammates doesn't clobber or shadow another teammate's last
+    /// cached fetch — `Cache::load_view` picks the most recently fetched
+    /// view *for a given kind*, so a shared "teammate" kind would otherwise
+    /// return whichever teammate happened to be fetched most recently.
+    pub fn cache_kind(&self) -> String {
         match self {
-            ViewKind::MyWork => Some("my_work"),
-            ViewKind::AllProject | ViewKind::Teammate(_) => None,
+            ViewKind::MyWork => "my_work".to_string(),
+            ViewKind::AllProject => "all_project".to_string(),
+            ViewKind::Teammate(name) => format!("teammate:{name}"),
         }
     }
 }
@@ -556,5 +561,22 @@ mod tests {
         let back: Vec<IssueSummary> = serde_json::from_str(&json).unwrap();
         assert_eq!(back.len(), issues.len());
         assert_eq!(back[0].key, issues[0].key);
+    }
+
+    #[test]
+    fn view_kind_cache_kinds_are_distinct_per_view_including_each_teammate() {
+        // Every view gets its own durable cache entry now — in particular,
+        // each teammate must get a distinct `kind` so switching between
+        // teammates doesn't clobber or shadow another teammate's last
+        // cached fetch (`Cache::load_view` picks the most recent row for a
+        // given `kind`, regardless of which JQL produced it).
+        assert_eq!(ViewKind::MyWork.cache_kind(), "my_work");
+        assert_eq!(ViewKind::AllProject.cache_kind(), "all_project");
+
+        let amy = ViewKind::Teammate("Amy".into()).cache_kind();
+        let bob = ViewKind::Teammate("Bob".into()).cache_kind();
+        assert_ne!(amy, bob);
+        assert_ne!(amy, ViewKind::MyWork.cache_kind());
+        assert_ne!(amy, ViewKind::AllProject.cache_kind());
     }
 }
