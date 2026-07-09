@@ -1192,3 +1192,77 @@ async fn onboarding_field_mapping_falls_back_to_home_with_the_connected_status_o
         "onboarding overwrites the field-mapping status with the connected status on failure"
     );
 }
+
+/// A demo app with `XDG_CONFIG_HOME`/`JIRA_*` isolated the same way
+/// `non_demo_app` is, but without pre-setting `Source` — `submit_credentials`
+/// decides everything itself (it writes fresh credentials, then dispatches
+/// a verification fetch). Only meaningful under the `live` feature:
+/// `submit_credentials`'s dispatch is itself compiled out (in favour of a
+/// distinct "this build has no live support" message) when `live` is off,
+/// unlike detail/transition/edit/field_mapping's dispatch, which is always
+/// compiled and just checks `Source::Live` at runtime.
+#[cfg(feature = "live")]
+fn onboarding_app() -> App {
+    non_demo_app()
+}
+
+#[cfg(feature = "live")]
+#[tokio::test]
+async fn submit_credentials_against_an_unreachable_site_dispatches_and_reports_rejection() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = onboarding_app();
+    // Port 1 is never a listening service, so this fails fast with a
+    // connection error rather than hanging on a real network round-trip or
+    // a slow DNS lookup for a bogus hostname.
+    app.onboarding.field_site = "http://127.0.0.1:1".into();
+    app.onboarding.field_email = "me@example.com".into();
+    app.onboarding.field_token = "not-a-real-token".into();
+
+    app.submit_credentials();
+    assert!(app.loading);
+    assert!(app.onboarding_pending);
+    assert_eq!(app.onboarding.setup_msg, "Verifying…");
+
+    let event = next_event(&mut app).await;
+    app.apply_event(event);
+    assert!(!app.loading);
+    assert!(!app.onboarding_pending);
+    assert!(
+        app.onboarding.setup_msg.contains("did not accept"),
+        "a rejected/unreachable site should report the credentials as not accepted, got: {}",
+        app.onboarding.setup_msg
+    );
+    assert!(
+        !matches!(app.source, crate::domain::Source::Live { .. }),
+        "an unreachable/rejected site must not switch to Source::Live"
+    );
+}
+
+#[cfg(feature = "live")]
+#[tokio::test]
+async fn submit_credentials_refuses_to_resubmit_while_verifying() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = onboarding_app();
+    app.onboarding.field_site = "http://127.0.0.1:1".into();
+    app.onboarding.field_email = "me@example.com".into();
+    app.onboarding.field_token = "not-a-real-token".into();
+
+    app.submit_credentials();
+    assert!(app.onboarding_pending);
+    let generation = app.onboarding_generation;
+
+    // A second submission (e.g. a double Enter press) while the first is
+    // still resolving must be refused rather than dispatching a duplicate
+    // verification fetch under a bumped generation, which would silently
+    // drop the first attempt's result.
+    app.submit_credentials();
+    assert_eq!(
+        app.onboarding_generation, generation,
+        "must not dispatch a second verification while one is already in flight"
+    );
+    assert_eq!(app.onboarding.setup_msg, "Already verifying…");
+
+    let event = next_event(&mut app).await;
+    app.apply_event(event);
+    assert!(!app.onboarding_pending);
+}

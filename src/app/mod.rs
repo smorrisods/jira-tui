@@ -190,6 +190,11 @@ pub struct App {
     /// already resolving.
     pub(crate) field_mapping_pending: bool,
     pub(crate) field_mapping_generation: u64,
+    /// Whether onboarding's credential-verification fetch is currently in
+    /// flight — guards against re-submitting the setup form (e.g. a double
+    /// Enter press) while one is already resolving.
+    pub(crate) onboarding_pending: bool,
+    pub(crate) onboarding_generation: u64,
 }
 
 impl App {
@@ -264,6 +269,8 @@ impl App {
             edit_generation: 0,
             field_mapping_pending: false,
             field_mapping_generation: 0,
+            onboarding_pending: false,
+            onboarding_generation: 0,
         };
         app.recompute_view();
 
