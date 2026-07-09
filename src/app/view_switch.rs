@@ -76,17 +76,27 @@ impl App {
         self.switch_view(kind);
     }
 
-    /// Load `view` and swap it in as the active issue list.
+    /// Load `view` and swap it in as the active issue list. Demo/cache-only
+    /// sessions resolve inline; a genuine live fetch dispatches onto the
+    /// runtime instead (see `async_ops::dispatch_switch_view`).
     pub fn switch_view(&mut self, view: ViewKind) {
         let force_demo = matches!(self.source, Source::Demo);
-        let (issues, source, status) = load_issues_for(&view, force_demo);
-        self.all_issues = issues;
-        self.source = source;
-        let label = view.label();
-        self.current_view = view;
-        self.status = format!("↻ {status}");
-        self.selected = 0;
-        self.recompute_view();
-        self.flash(format!("viewing: {label}"));
+        if force_demo {
+            let (issues, source, status) = load_issues_for(&view, force_demo);
+            self.all_issues = issues;
+            self.source = source;
+            let label = view.label();
+            self.current_view = view;
+            self.status = format!("↻ {status}");
+            self.selected = 0;
+            self.recompute_view();
+            self.flash(format!("viewing: {label}"));
+            return;
+        }
+        let generation = self.bump_generation();
+        self.loading = true;
+        self.status = format!("↻ loading {}…", view.label());
+        let tx = self.events_tx.clone();
+        super::async_ops::dispatch_switch_view(tx, generation, view, force_demo);
     }
 }

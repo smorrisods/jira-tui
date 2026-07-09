@@ -15,6 +15,7 @@ use crate::config::{self, Settings};
 use crate::domain::{demo_issues, IssueDetail, IssueSummary, Source, ViewKind};
 use crate::git::GitContext;
 
+mod async_ops;
 mod board;
 mod comments;
 mod detail;
@@ -31,6 +32,7 @@ mod view_switch;
 #[cfg(test)]
 mod tests;
 
+pub use async_ops::AppEvent;
 pub use board::BoardSelection;
 pub use edit::{EditTarget, EditorState};
 pub use field_mapping::{FieldMappingOutcome, FieldMappingState};
@@ -142,6 +144,20 @@ pub struct App {
     /// Computed when the picker opens: My Work, All Project Issues, then one
     /// entry per teammate seen in the currently loaded issues.
     pub view_picker_options: Vec<ViewKind>,
+
+    // Async data loading (refresh / switch_view against live Jira). See
+    // `async_ops` — demo/cache-only sessions still resolve synchronously
+    // (there's nothing worth showing a spinner for), only a real fetch
+    // dispatches onto the runtime.
+    /// Whether a refresh/view-switch fetch is currently in flight.
+    pub loading: bool,
+    /// Bumped on every dispatched fetch; a completed fetch whose generation
+    /// no longer matches the current one has been superseded by a newer
+    /// request and is discarded instead of clobbering fresher state.
+    pub(crate) generation: u64,
+    pub(crate) events_tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
+    /// Drained by the run loop each iteration and applied via `apply_event`.
+    pub events_rx: tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
 }
 
 impl App {
@@ -149,6 +165,7 @@ impl App {
         let git = GitContext::detect();
         let (issues, source, status) = load_issues(force_demo);
         let settings = Settings::load();
+        let (events_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
 
         let mut app = App {
             all_issues: issues.clone(),
@@ -203,6 +220,10 @@ impl App {
             view_picker_open: false,
             view_picker_index: 0,
             view_picker_options: Vec::new(),
+            loading: false,
+            generation: 0,
+            events_tx,
+            events_rx,
         };
         app.recompute_view();
 
@@ -273,14 +294,26 @@ impl App {
         self.all_issues.iter().filter(|i| i.blocked).collect()
     }
 
+    /// Reload the current view. Demo/cache-only sessions resolve inline
+    /// (there's no network round-trip worth a spinner for); a genuine live
+    /// fetch dispatches onto the runtime instead of blocking the render
+    /// thread — see `async_ops::dispatch_load`.
     pub fn refresh(&mut self) {
         let force_demo = matches!(self.source, Source::Demo);
         let kind = self.current_view.clone();
-        let (issues, source, status) = load_issues_for(&kind, force_demo);
-        self.all_issues = issues;
-        self.source = source;
-        self.status = format!("↻ {status}");
-        self.recompute_view();
+        if force_demo {
+            let (issues, source, status) = load_issues_for(&kind, force_demo);
+            self.all_issues = issues;
+            self.source = source;
+            self.status = format!("↻ {status}");
+            self.recompute_view();
+            return;
+        }
+        let generation = self.bump_generation();
+        self.loading = true;
+        self.status = format!("↻ loading {}…", kind.label());
+        let tx = self.events_tx.clone();
+        async_ops::dispatch_refresh(tx, generation, kind, force_demo);
     }
 }
 

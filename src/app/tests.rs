@@ -740,3 +740,108 @@ fn refresh_preserves_the_current_view() {
         .iter()
         .all(|i| i.assignee.as_deref() == Some("alex.chen")));
 }
+
+/// Drain a completed fetch off `app.events_rx`, with a generous timeout —
+/// these tests have no real network to wait on, only `spawn_blocking`
+/// scheduling, so this should resolve almost immediately.
+async fn next_event(app: &mut App) -> AppEvent {
+    tokio::time::timeout(std::time::Duration::from_secs(5), app.events_rx.recv())
+        .await
+        .expect("fetch task did not complete in time")
+        .expect("events_tx dropped unexpectedly")
+}
+
+/// A non-demo session (no credentials configured) still exercises the real
+/// async dispatch path in `refresh`/`switch_view` — `load_issues_for` falls
+/// back to demo data internally, but the point here is the
+/// spawn/spawn_blocking/channel plumbing around it, not the fetched data.
+/// Points `XDG_CONFIG_HOME` at an empty temp dir and clears the `JIRA_*` env
+/// vars so `Config::load()` deterministically finds no credentials — this
+/// machine's real `~/.config/jira-tui/config.toml` (if any) must not leak
+/// in and trigger an actual network call. See `crate::test_support::lock_env_async`,
+/// held for the caller's whole test (including across the `.await` that
+/// drains the fetch) so a racing test can't change these back mid-flight.
+fn non_demo_app() -> App {
+    let base = std::env::temp_dir().join(format!(
+        "jira-tui-asynctest-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&base);
+    std::env::set_var("XDG_CONFIG_HOME", &base);
+    for var in [
+        "JIRA_BASE_URL",
+        "JIRA_EMAIL",
+        "JIRA_API_TOKEN",
+        "JIRA_TOKEN_FILE",
+    ] {
+        std::env::remove_var(var);
+    }
+    let mut app = demo_app();
+    app.source = crate::domain::Source::Cache { user: "me".into() };
+    app
+}
+
+#[tokio::test]
+async fn refresh_against_a_non_demo_source_dispatches_and_clears_loading() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = non_demo_app();
+    assert!(!app.loading);
+
+    app.refresh();
+    assert!(
+        app.loading,
+        "refresh should flip on the loading flag immediately"
+    );
+
+    let event = next_event(&mut app).await;
+    app.apply_event(event);
+    assert!(
+        !app.loading,
+        "applying the result should clear the loading flag"
+    );
+}
+
+#[tokio::test]
+async fn switch_view_against_a_non_demo_source_dispatches_and_updates_current_view() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = non_demo_app();
+
+    app.switch_view(ViewKind::AllProject);
+    assert!(app.loading);
+    // current_view/selected only update once the fetch resolves and is applied.
+    assert_eq!(app.current_view, ViewKind::MyWork);
+
+    let event = next_event(&mut app).await;
+    app.apply_event(event);
+    assert!(!app.loading);
+    assert_eq!(app.current_view, ViewKind::AllProject);
+}
+
+#[tokio::test]
+async fn a_superseded_fetch_result_is_dropped_instead_of_clobbering_newer_state() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = non_demo_app();
+
+    app.refresh();
+    let stale_generation = app.generation;
+    let stale_event = next_event(&mut app).await;
+
+    // A second refresh starts before the first result is applied, bumping
+    // the generation counter past the first request's.
+    app.refresh();
+    assert_ne!(app.generation, stale_generation);
+
+    app.apply_event(stale_event);
+    assert!(
+        app.loading,
+        "the stale result must not clear loading for the newer, still in-flight request"
+    );
+
+    let fresh_event = next_event(&mut app).await;
+    app.apply_event(fresh_event);
+    assert!(!app.loading);
+}
