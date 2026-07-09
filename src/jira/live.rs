@@ -202,23 +202,68 @@ pub fn jql_for(view: &crate::domain::ViewKind, project: &str) -> String {
     }
 }
 
-/// Run an arbitrary JQL query and return matching issue summaries.
-/// Used both for "my work" (a fixed JQL) and the MCP server's free-form
-/// search tool.
+/// Run an arbitrary JQL query and return matching issue summaries, paging
+/// through the enhanced JQL search endpoint's `nextPageToken` until Jira
+/// reports `isLast`, or until `SEARCH_RESULTS_CAP` is hit — whichever comes
+/// first. Used both for "my work"/the view switcher (a handful of fixed JQL
+/// variants) and the MCP server's free-form search tool.
+///
+/// A single page used to be the whole story (`maxResults=50`, no paging),
+/// which meant `AllProject`/large-project views silently truncated at the
+/// 50 most-recently-updated issues — including the teammate picker, which
+/// is seeded from whatever's currently loaded. `SEARCH_RESULTS_CAP` still
+/// bounds the total so a very large project can't page forever.
 pub fn search_issues(cfg: &Config, jql: &str) -> Result<Vec<IssueSummary>> {
-    let encoded = url_encode(jql);
-    // Enhanced JQL search endpoint (`/search/jql`); the classic `/search`
-    // endpoint has been sunset on Jira Cloud.
-    let path = format!(
-        "/rest/api/3/search/jql?jql={encoded}&maxResults=50&fields=summary,status,issuetype,priority,assignee,updated,issuelinks,parent"
-    );
-    let data = get(cfg, &path)?;
-    let issues = data
-        .get("issues")
-        .and_then(|i| i.as_array())
-        .ok_or_else(|| anyhow!("no issues array in response"))?;
-    Ok(issues.iter().map(summary_from).collect())
+    let mut all = Vec::new();
+    let mut next_page_token: Option<String> = None;
+
+    loop {
+        let encoded = url_encode(jql);
+        // Enhanced JQL search endpoint (`/search/jql`); the classic
+        // `/search` endpoint has been sunset on Jira Cloud.
+        let mut path = format!(
+            "/rest/api/3/search/jql?jql={encoded}&maxResults={SEARCH_PAGE_SIZE}&fields=summary,status,issuetype,priority,assignee,updated,issuelinks,parent"
+        );
+        if let Some(token) = &next_page_token {
+            path.push_str(&format!("&nextPageToken={}", url_encode(token)));
+        }
+
+        let data = get(cfg, &path)?;
+        let issues = data
+            .get("issues")
+            .and_then(|i| i.as_array())
+            .ok_or_else(|| anyhow!("no issues array in response"))?;
+        all.extend(issues.iter().map(summary_from));
+
+        // Missing `isLast` (e.g. an older mock/response) is treated as "this
+        // was the only page" rather than looping forever.
+        let is_last = data.get("isLast").and_then(|v| v.as_bool()).unwrap_or(true);
+        if is_last || all.len() >= SEARCH_RESULTS_CAP {
+            break;
+        }
+        let Some(token) = data
+            .get("nextPageToken")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+        else {
+            // Jira said there's more, but didn't give us a token to fetch
+            // it with — stop rather than loop on the same page forever.
+            break;
+        };
+        next_page_token = Some(token);
+    }
+
+    Ok(all)
 }
+
+/// Results per page for `search_issues`'s paging loop.
+const SEARCH_PAGE_SIZE: usize = 50;
+
+/// The most `search_issues` will ever return across every page, so a very
+/// large project can't page indefinitely. Exposed so callers (the view
+/// loader) can tell a genuinely truncated result apart from "that's
+/// everything".
+pub const SEARCH_RESULTS_CAP: usize = 500;
 
 /// Create a new issue and return its key. `description` is a full ADF
 /// document (build it with `crate::adf::compile` from Markdown).
@@ -626,6 +671,69 @@ mod tests {
 
         let cfg = test_config(server.url());
         assert!(search_issues(&cfg, "any jql").is_err());
+    }
+
+    #[test]
+    fn search_issues_pages_through_next_page_token_until_is_last() {
+        let mut server = mockito::Server::new();
+        let base_path = "/rest/api/3/search/jql?jql=any%20jql&maxResults=50&fields=summary,status,issuetype,priority,assignee,updated,issuelinks,parent";
+        // First page: no `nextPageToken` yet, isLast=false, hands back a
+        // token for the second page.
+        let first = server
+            .mock("GET", base_path)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"issues": [{"key": "DS-1"}], "isLast": false, "nextPageToken": "page-2"}"#,
+            )
+            .create();
+        // Second page: the token must be echoed back as a query param;
+        // isLast=true stops the loop.
+        let second_path = format!("{base_path}&nextPageToken=page-2");
+        let second = server
+            .mock("GET", second_path.as_str())
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"issues": [{"key": "DS-2"}], "isLast": true}"#)
+            .create();
+
+        let cfg = test_config(server.url());
+        let issues = search_issues(&cfg, "any jql").unwrap();
+
+        first.assert();
+        second.assert();
+        assert_eq!(
+            issues.iter().map(|i| i.key.as_str()).collect::<Vec<_>>(),
+            vec!["DS-1", "DS-2"],
+            "both pages' issues should be concatenated, in order"
+        );
+    }
+
+    #[test]
+    fn search_issues_stops_at_the_results_cap_even_if_jira_says_theres_more() {
+        let mut server = mockito::Server::new();
+        // Always claims there's more (isLast=false, same token forever) —
+        // the loop must still stop once SEARCH_RESULTS_CAP is reached,
+        // rather than paging indefinitely against a misbehaving server.
+        let page: String = (0..SEARCH_PAGE_SIZE)
+            .map(|i| format!(r#"{{"key": "DS-{i}"}}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+        let body =
+            format!(r#"{{"issues": [{page}], "isLast": false, "nextPageToken": "same-token"}}"#);
+        let mock = server
+            .mock("GET", mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body)
+            .expect(SEARCH_RESULTS_CAP / SEARCH_PAGE_SIZE)
+            .create();
+
+        let cfg = test_config(server.url());
+        let issues = search_issues(&cfg, "any jql").unwrap();
+
+        mock.assert();
+        assert_eq!(issues.len(), SEARCH_RESULTS_CAP);
     }
 
     #[test]

@@ -272,6 +272,34 @@ fn work_list_title_shows_sort_and_filter() {
 }
 
 #[test]
+fn work_list_title_reflects_the_active_view() {
+    use jira_tui::domain::ViewKind;
+
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.switch_view(ViewKind::AllProject);
+    let text = render(&app);
+    assert!(
+        text.contains("all project issues"),
+        "home list title should reflect the All Project Issues view, not stay stuck on 'my work'"
+    );
+
+    app.switch_view(ViewKind::Teammate("alex.chen".into()));
+    let text = render(&app);
+    assert!(
+        text.contains("alex.chen's work"),
+        "home list title should reflect the active teammate view"
+    );
+
+    app.screen = Screen::List;
+    let text = render(&app);
+    assert!(
+        text.contains("all alex.chen's work"),
+        "the full-screen List view should prefix a non-'all'-prefixed label with 'all'"
+    );
+}
+
+#[test]
 fn jax_companion_appears_when_toggled() {
     let mut app = demo_app();
     app.screen = Screen::Home;

@@ -15,7 +15,16 @@ use super::{
 };
 
 pub(crate) fn draw_list(f: &mut Frame, app: &App, area: Rect, full: bool) {
-    let base = if full { "all my work" } else { "my work" };
+    // Reflect whichever view is active (My Work / All Project Issues / a
+    // teammate's work) instead of a hardcoded "my work" — the full-screen
+    // List view additionally gets an "all" prefix, except when the view's
+    // own label already says "all" (avoids "all all project issues").
+    let label = app.current_view.label().to_lowercase();
+    let base = if full && !label.starts_with("all ") {
+        format!("all {label}")
+    } else {
+        label
+    };
     let mut title = format!("  {base} · {}", app.sort_label());
     if let Some(filter) = app.filter_label() {
         title.push_str(&format!(" · {filter}"));
