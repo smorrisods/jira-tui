@@ -118,7 +118,12 @@ jira-tui doesn't use `clap`'s subcommand model the way some other Liminal HQ CLI
 7. Binaries, packages, tarballs, and one `SHA256SUMS` file are attached.
 8. Release notes are generated from merged PRs (via `.github/release.yml` category labels); do a quick install smoke test (`scripts/install.sh`, or manual extraction) from the uploaded assets before considering the release final.
 
-Manual dispatch is also available (`workflow_dispatch`) so a tag can be rebuilt, or a draft release prepared before publication. When the manual `release_tag` input is left blank, the workflow derives `v<package version>` from `Cargo.toml` and validates the resolved tag before continuing.
+Manual dispatch is also available (`workflow_dispatch`) so a tag can be rebuilt, or a draft release
+prepared before publication. `release_tag` is a **required** input (e.g. `v0.1.0`) — it is never
+derived automatically, so a manual run always targets an explicit, deliberate tag. The workflow also
+refuses to attach new assets to a matching release that's already published (not a draft); it only
+ever reuses a release that is still in its own draft state, so a manual dispatch can never silently
+overwrite a real published release's assets.
 
 ## Version prep
 
