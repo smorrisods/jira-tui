@@ -65,12 +65,11 @@ async fn main() -> Result<()> {
     result
 }
 
-/// The async run loop. Input arrives over a `crossterm::EventStream` and the
-/// animation cadence over a `tokio::time::interval`, raced with
-/// `tokio::select!` so neither starves the other. Nothing here awaits a
-/// network/disk call yet — that lands in a later phase of the async
-/// migration (see the plan tracked against issue #16) — but the loop itself
-/// is now non-blocking top to bottom, ready to host it.
+/// The async run loop. Input arrives over a `crossterm::EventStream`, the
+/// animation cadence over a `tokio::time::interval`, and completed
+/// background fetches (a `refresh`/`switch_view` against live Jira; see
+/// `app::async_ops`) over `app.events_rx` — all three raced with
+/// `tokio::select!` so none of them starves the others.
 async fn run(terminal: &mut Term, app: &mut App) -> Result<()> {
     let mut events = EventStream::new();
     let mut ticker = tokio::time::interval(TICK);
@@ -100,6 +99,12 @@ async fn run(terminal: &mut Term, app: &mut App) -> Result<()> {
                 }
             }
             _ = ticker.tick() => {}
+            // A background refresh/switch_view fetch (see `app::async_ops`)
+            // completed; `app.events_tx` never drops (it's a field on
+            // `App`), so this branch just stays pending between fetches.
+            Some(ev) = app.events_rx.recv() => {
+                app.apply_event(ev);
+            }
         }
 
         // Fulfil a drag-select copy using the frame we just rendered.

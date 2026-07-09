@@ -7,16 +7,25 @@
 //! binary run concurrently on threads that share one process's environment,
 //! and two tests mutating the same env vars at once can race. This mutex
 //! serializes just that env-mutating section, regardless of test runner.
+//!
+//! It's a `tokio::sync::Mutex` rather than `std::sync::Mutex` so the async
+//! tests exercising `App::refresh`/`switch_view`'s dispatch-to-`spawn_blocking`
+//! path (which read these env vars from a background task, not just at the
+//! `await` call site) can hold the guard across an `.await` without
+//! `clippy::await_holding_lock` firing, while sync tests share the same lock
+//! via `lock_env`'s `blocking_lock`.
 
-use std::sync::{Mutex, MutexGuard};
+use tokio::sync::{Mutex, MutexGuard};
 
-static ENV_LOCK: Mutex<()> = Mutex::new(());
+static ENV_LOCK: Mutex<()> = Mutex::const_new(());
 
-/// Acquire the shared env-var lock for the duration of a test. If a
-/// previous test panicked while holding it, recover the guard rather than
-/// poisoning every subsequent test.
+/// Acquire the shared env-var lock from synchronous test code.
 pub(crate) fn lock_env() -> MutexGuard<'static, ()> {
-    ENV_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+    ENV_LOCK.blocking_lock()
+}
+
+/// Acquire the shared env-var lock from async test code — safe to hold
+/// across `.await`, unlike a `std::sync::Mutex` guard.
+pub(crate) async fn lock_env_async() -> MutexGuard<'static, ()> {
+    ENV_LOCK.lock().await
 }

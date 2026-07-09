@@ -286,12 +286,24 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     );
     f.render_widget(
         Paragraph::new(Line::from(Span::styled(
-            format!("{} ", app.status),
+            format!("{}{} ", loading_prefix(app), app.status),
             Style::default().fg(ACCENT),
         )))
         .alignment(Alignment::Right),
         cols[1],
     );
+}
+
+/// A braille spinner frame while a background fetch (`refresh`/
+/// `switch_view` against live Jira) is in flight, empty otherwise — see
+/// `app::async_ops`.
+fn loading_prefix(app: &App) -> String {
+    if !app.loading {
+        return String::new();
+    }
+    const FRAMES: [char; 8] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧'];
+    let frame = FRAMES[(app.tick as usize) % FRAMES.len()];
+    format!("{frame} ")
 }
 
 // ── Small helpers (visible to all child screen modules) ──────────────────────
