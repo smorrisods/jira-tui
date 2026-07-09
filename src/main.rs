@@ -7,13 +7,14 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
-use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind};
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use tokio_stream::StreamExt;
 
 use app::{App, Screen};
 use cli::Cli;
@@ -27,7 +28,8 @@ const TICK: Duration = Duration::from_millis(90);
 
 type Term = Terminal<CrosstermBackend<Stdout>>;
 
-fn main() -> Result<()> {
+#[tokio::main(flavor = "multi_thread")]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     if cli.init {
@@ -57,23 +59,39 @@ fn main() -> Result<()> {
     if app.mouse.enabled {
         let _ = execute!(io::stdout(), EnableMouseCapture);
     }
-    let result = run(&mut terminal, &mut app);
+    let result = run(&mut terminal, &mut app).await;
     let _ = execute!(io::stdout(), DisableMouseCapture);
     restore_terminal(&mut terminal)?;
     result
 }
 
-fn run(terminal: &mut Term, app: &mut App) -> Result<()> {
+/// The async run loop. Input arrives over a `crossterm::EventStream` and the
+/// animation cadence over a `tokio::time::interval`, raced with
+/// `tokio::select!` so neither starves the other. Nothing here awaits a
+/// network/disk call yet — that lands in a later phase of the async
+/// migration (see the plan tracked against issue #16) — but the loop itself
+/// is now non-blocking top to bottom, ready to host it.
+async fn run(terminal: &mut Term, app: &mut App) -> Result<()> {
+    let mut events = EventStream::new();
+    let mut ticker = tokio::time::interval(TICK);
+    // The first tick fires immediately; that's fine, it just draws once.
+
     loop {
         terminal.draw(|f| ui::draw(f, app))?;
 
-        // Poll for input, but wake on TICK so animations keep moving.
-        if event::poll(TICK)? {
-            match event::read()? {
-                Event::Key(key) if key.kind == KeyEventKind::Press => keys::handle_key(app, key),
-                Event::Mouse(me) => keys::handle_mouse(app, me),
-                _ => {}
+        tokio::select! {
+            maybe_event = events.next() => {
+                match maybe_event {
+                    Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => {
+                        keys::handle_key(app, key);
+                    }
+                    Some(Ok(Event::Mouse(me))) => keys::handle_mouse(app, me),
+                    Some(Ok(_)) => {}
+                    Some(Err(e)) => return Err(e.into()),
+                    None => return Ok(()),
+                }
             }
+            _ = ticker.tick() => {}
         }
 
         // Fulfil a drag-select copy using the frame we just rendered.
