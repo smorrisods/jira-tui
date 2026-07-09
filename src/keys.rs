@@ -204,8 +204,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             app.begin_tui_edit();
         }
         KeyCode::Char('E') if app.screen == Screen::Detail && app.detail.is_some() => {
-            app.begin_external_edit();
-            app.request_edit = true;
+            app.request_edit = app.begin_external_edit();
         }
 
         // Comments: add one (Detail or quick-view), jump to the comments

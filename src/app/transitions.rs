@@ -1,12 +1,15 @@
 //! The workflow transition picker: listing and applying status transitions.
 
-#[cfg(feature = "live")]
 use crate::domain::Source;
 
-use super::App;
+use super::{async_ops, App};
 
 impl App {
     pub fn open_transitions(&mut self) {
+        if self.transition_pending {
+            self.status = "a transition is already in progress".into();
+            return;
+        }
         if let Some(detail) = self.detail.as_ref() {
             if detail.transitions.is_empty() {
                 self.status = "no transitions available".into();
@@ -46,6 +49,10 @@ impl App {
     }
 
     /// Apply the highlighted transition (live if possible, always locally).
+    ///
+    /// Demo/cache sessions apply the local status update inline; a genuine
+    /// live session dispatches the transition off the render thread and
+    /// applies the update once it resolves — see `dispatch_transition`.
     pub fn confirm_transition(&mut self) {
         let Some(detail) = self.detail.as_ref() else {
             self.picker_open = false;
@@ -58,25 +65,24 @@ impl App {
         let key = detail.key.clone();
         self.picker_open = false;
 
-        #[cfg(feature = "live")]
-        {
-            if let Source::Live { .. } = self.source {
-                if let Some(cfg) = crate::jira::Config::load() {
-                    if let Err(e) = crate::jira::apply_transition(&cfg, &key, &t.id) {
-                        self.status = format!("transition failed: {e}");
-                        return;
-                    }
-                }
+        if !matches!(self.source, Source::Live { .. }) {
+            if let Some(d) = self.detail.as_mut() {
+                d.status = t.to.clone();
             }
+            if let Some(sum) = self.issues.iter_mut().find(|i| i.key == key) {
+                sum.status = t.to.clone();
+            }
+            self.status = format!("moved {key} → {}", t.to);
+            self.flash(format!("✓ moved to {}", t.to));
+            return;
         }
 
-        if let Some(d) = self.detail.as_mut() {
-            d.status = t.to.clone();
-        }
-        if let Some(sum) = self.issues.iter_mut().find(|i| i.key == key) {
-            sum.status = t.to.clone();
-        }
-        self.status = format!("moved {key} → {}", t.to);
-        self.flash(format!("✓ moved to {}", t.to));
+        self.transition_generation += 1;
+        let generation = self.transition_generation;
+        self.transition_pending = true;
+        self.loading = true;
+        self.status = format!("↻ moving {key} → {}…", t.to);
+        let tx = self.events_tx.clone();
+        async_ops::dispatch_transition(tx, generation, key, t.id.clone(), t.to.clone());
     }
 }

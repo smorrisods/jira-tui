@@ -1,7 +1,7 @@
 //! The inline quick-view panel: showing and lazily loading the selected
 //! issue's full detail without leaving the list.
 
-use crate::domain::IssueDetail;
+use crate::domain::{IssueDetail, Source};
 
 use super::App;
 
@@ -13,8 +13,9 @@ impl App {
     }
 
     /// Fetch and cache the selected issue's detail for the quick-view panel if
-    /// it isn't already cached. Cheap no-op once cached; call each frame while
-    /// quick view is open so panels populate without a full "open" action.
+    /// it isn't already cached. Cheap no-op once cached (or once a fetch for
+    /// this key is already in flight); call each frame while quick view is
+    /// open so panels populate without a full "open" action.
     pub fn ensure_quick_view_loaded(&mut self) {
         if !self.quick_view {
             return;
@@ -25,8 +26,12 @@ impl App {
         if self.detail_cache.contains_key(&key) {
             return;
         }
-        let detail = self.load_detail(&key);
-        self.detail_cache.insert(key, detail);
+        if !matches!(self.source, Source::Live { .. }) {
+            let detail = self.load_detail(&key);
+            self.detail_cache.insert(key, detail);
+            return;
+        }
+        self.dispatch_detail_fetch(key, false);
     }
 
     pub fn quick_view_scroll_by(&mut self, delta: isize) {
