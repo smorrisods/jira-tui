@@ -7,6 +7,9 @@
 //!
 //! Split into `config` (credentials/settings assembly) and `live` (the
 //! actual `ureq`-based REST client), both gated behind the `live` feature.
+//! `ureq` is a blocking client — the async run loop (`src/main.rs`) offloads
+//! every call here onto `tokio::task::spawn_blocking` rather than awaiting
+//! it directly.
 
 #[cfg(feature = "live")]
 mod config;
