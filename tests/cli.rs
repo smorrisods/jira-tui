@@ -23,6 +23,7 @@ fn help_flag_documents_key_features() {
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains("--demo"));
     assert!(stdout.contains("--onboard"));
+    assert!(stdout.contains("--no-cache"));
     assert!(stdout.contains("MOUSE"));
 }
 

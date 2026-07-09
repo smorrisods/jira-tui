@@ -46,4 +46,9 @@ pub struct Cli {
     /// Write a default config to ~/.config/jira-tui/config.toml, then exit
     #[arg(long)]
     pub init: bool,
+
+    /// Disable local issue caching for this run (equivalent to setting
+    /// JIRA_NO_CACHE, or cache_enabled = false in config.toml)
+    #[arg(long)]
+    pub no_cache: bool,
 }
