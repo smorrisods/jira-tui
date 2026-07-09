@@ -1,19 +1,18 @@
-//! Configuration, XDG paths, and the on-disk issue cache.
+//! Configuration and XDG paths.
 //!
 //! Non-secret settings live in `$XDG_CONFIG_HOME/jira-tui/config.toml`
 //! (falling back to `~/.config`), parsed and edited with `toml_edit` so a
 //! save from onboarding or the field-mapping screen never disturbs comments
-//! or settings a user added by hand. A small issue cache lives in
-//! `$XDG_CACHE_HOME/jira-tui` so the last live "my work" list can be shown
-//! instantly — and offline — until the next successful refresh.
+//! or settings a user added by hand. The issue cache itself lives in
+//! `crate::cache` (a small SQLite database under `$XDG_CACHE_HOME`); this
+//! module only knows the legacy `my-work.json` path, kept around long
+//! enough for a one-time import into the new cache.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use toml_edit::DocumentMut;
-
-use crate::domain::IssueSummary;
 
 /// `$XDG_CONFIG_HOME/jira-tui` (or `~/.config/jira-tui`).
 pub fn config_dir() -> Option<PathBuf> {
@@ -75,11 +74,32 @@ pub fn read_kv() -> HashMap<String, String> {
     map
 }
 
+/// Whether the local issue cache is enabled: `JIRA_NO_CACHE` (any truthy
+/// value) always wins and disables it, regardless of `config.toml`;
+/// otherwise falls back to the `cache_enabled` config key, defaulting to
+/// `true` when unset (caching is on by default).
+fn cache_enabled_from(kv: &HashMap<String, String>) -> bool {
+    if let Ok(v) = std::env::var("JIRA_NO_CACHE") {
+        if matches!(v.as_str(), "1" | "true" | "yes" | "on") {
+            return false;
+        }
+    }
+    kv.get("cache_enabled")
+        .map(|v| matches!(v.as_str(), "true" | "1" | "yes" | "on"))
+        .unwrap_or(true)
+}
+
 /// User-facing, non-secret settings.
 #[derive(Clone, Debug, Default)]
 pub struct Settings {
     /// Start with mouse mode enabled (click-to-open, wheel scroll, drag-copy).
     pub mouse: bool,
+    /// Cache live issue lists locally (`$XDG_CACHE_HOME/jira-tui/cache.db`)
+    /// for instant, offline starts. Defaults to `true` when unset — unlike
+    /// `mouse`, so `Settings::load()` (not `Settings::default()`) is the
+    /// correct way to get real defaults; `derive(Default)` alone would give
+    /// `false` here.
+    pub cache_enabled: bool,
 }
 
 impl Settings {
@@ -90,6 +110,7 @@ impl Settings {
                 .get("mouse")
                 .map(|v| matches!(v.as_str(), "true" | "1" | "yes" | "on"))
                 .unwrap_or(false),
+            cache_enabled: cache_enabled_from(&kv),
         }
     }
 }
@@ -119,6 +140,11 @@ const DEFAULT_CONFIG: &str = r#"# jira-tui configuration
 # Start with mouse mode on (click-to-open, wheel scroll, drag-to-copy).
 # Hold Shift while dragging to use your terminal's native selection instead.
 mouse = false
+
+# Cache live issue lists locally for instant, offline starts (default: on).
+# Set to false, or use --no-cache / JIRA_NO_CACHE, to keep no Jira content
+# on disk at all.
+# cache_enabled = true
 "#;
 
 /// Write a starter config file to the XDG config path. Never overwrites an
@@ -224,6 +250,18 @@ pub fn save_field_mapping(acceptance_criteria_field: Option<&str>) -> Result<Pat
     set_config_key("acceptance_criteria_field", acceptance_criteria_field)
 }
 
+/// Set whether the local issue cache is enabled, preserving the rest of
+/// `config.toml`. Written by the (future) onboarding cache-consent step;
+/// exposed now so the CLI/env-var override has a matching persisted setting
+/// to fall back to.
+#[cfg_attr(not(feature = "live"), allow(dead_code))]
+pub fn save_cache_enabled(enabled: bool) -> Result<PathBuf> {
+    set_config_key(
+        "cache_enabled",
+        Some(if enabled { "true" } else { "false" }),
+    )
+}
+
 /// Set (or clear) the token file path override, preserving the rest of
 /// `config.toml`.
 #[cfg_attr(not(feature = "live"), allow(dead_code))]
@@ -231,31 +269,12 @@ pub fn save_token_file_path(token_file: Option<&str>) -> Result<PathBuf> {
     set_config_key("token_file", token_file)
 }
 
-fn cache_file() -> Option<PathBuf> {
+/// Path to the legacy flat-JSON issue cache (`my-work.json`), superseded by
+/// `crate::cache`'s SQLite database. Kept only so the cache module can
+/// import it once on upgrade, then delete it — not used for anything else.
+#[cfg_attr(not(feature = "live"), allow(dead_code))]
+pub(crate) fn legacy_cache_file() -> Option<PathBuf> {
     cache_dir().map(|d| d.join("my-work.json"))
-}
-
-/// Persist the current "my work" list so it can be shown instantly next launch.
-#[cfg_attr(not(feature = "live"), allow(dead_code))]
-pub fn cache_issues(issues: &[IssueSummary]) {
-    if let Some(path) = cache_file() {
-        if let Ok(json) = serde_json::to_string(issues) {
-            let _ = std::fs::write(path, json);
-        }
-    }
-}
-
-/// Load the cached "my work" list, if any.
-#[cfg_attr(not(feature = "live"), allow(dead_code))]
-pub fn load_cached_issues() -> Option<Vec<IssueSummary>> {
-    let path = cache_file()?;
-    let content = std::fs::read_to_string(path).ok()?;
-    let issues: Vec<IssueSummary> = serde_json::from_str(&content).ok()?;
-    if issues.is_empty() {
-        None
-    } else {
-        Some(issues)
-    }
 }
 
 #[cfg(test)]
@@ -379,12 +398,6 @@ mod tests {
             assert_eq!(mode, 0o600);
         }
 
-        // Issue cache round-trips through the XDG cache dir.
-        let issues = crate::domain::demo_issues();
-        cache_issues(&issues);
-        let loaded = load_cached_issues().expect("cache should load");
-        assert_eq!(loaded.len(), issues.len());
-
         let _ = std::fs::remove_dir_all(&base);
         std::env::remove_var("XDG_CONFIG_HOME");
         std::env::remove_var("XDG_CACHE_HOME");
@@ -395,5 +408,34 @@ mod tests {
         for v in ["true", "1", "yes", "on"] {
             assert!(matches!(v, "true" | "1" | "yes" | "on"));
         }
+    }
+
+    #[test]
+    fn cache_enabled_defaults_true_and_respects_config_and_env_overrides() {
+        let _guard = crate::test_support::lock_env();
+        let base = std::env::temp_dir().join(format!("jira-tui-cache-flag-{}", std::process::id()));
+        let cfg = base.join("config");
+        let _ = std::fs::remove_dir_all(&base);
+        std::env::set_var("XDG_CONFIG_HOME", &cfg);
+        std::env::remove_var("JIRA_NO_CACHE");
+
+        // Unset in config.toml -> defaults to enabled.
+        assert!(Settings::load().cache_enabled);
+
+        // Explicitly disabled via config.toml.
+        save_cache_enabled(false).unwrap();
+        assert!(!Settings::load().cache_enabled);
+
+        // Re-enabling via config.toml.
+        save_cache_enabled(true).unwrap();
+        assert!(Settings::load().cache_enabled);
+
+        // JIRA_NO_CACHE overrides config.toml regardless of its value.
+        std::env::set_var("JIRA_NO_CACHE", "1");
+        assert!(!Settings::load().cache_enabled);
+
+        std::env::remove_var("JIRA_NO_CACHE");
+        std::env::remove_var("XDG_CONFIG_HOME");
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

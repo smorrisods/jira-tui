@@ -34,6 +34,15 @@ fn main() -> Result<()> {
         return init_config();
     }
 
+    if cli.no_cache {
+        // SAFETY: single-threaded at this point in startup, before any
+        // other code (including Settings::load(), called from App::new)
+        // reads env vars.
+        unsafe {
+            std::env::set_var("JIRA_NO_CACHE", "1");
+        }
+    }
+
     let mut app = App::new(cli.demo);
     if cli.onboard {
         app.screen = Screen::Welcome;

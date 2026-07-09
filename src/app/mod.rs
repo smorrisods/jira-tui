@@ -269,17 +269,42 @@ impl App {
     }
 }
 
+/// Open the on-disk cache for the current site, running the one-time
+/// legacy `my-work.json` import along the way — unless caching is
+/// disabled (`cache_enabled` setting / `--no-cache` / `JIRA_NO_CACHE`), or
+/// the cache can't be opened at all (treated the same as "no cache
+/// available", exactly like a missing/corrupt `my-work.json` always was).
+#[cfg(feature = "live")]
+fn open_cache_for_site(cfg: &crate::jira::Config) -> Option<(crate::cache::Cache, i64)> {
+    if !crate::config::Settings::load().cache_enabled {
+        return None;
+    }
+    let mut cache = crate::cache::Cache::open().ok()?;
+    let site_id = cache.site_id(&cfg.base_url).ok()?;
+    cache.migrate_legacy_json(site_id, crate::jira::MY_WORK_JQL);
+    Some((cache, site_id))
+}
+
 fn load_issues(force_demo: bool) -> (Vec<IssueSummary>, Source, String) {
     if !force_demo {
         #[cfg(feature = "live")]
         {
             if let Some(cfg) = crate::jira::Config::load() {
                 let user = crate::jira::whoami(&cfg).unwrap_or_else(|_| "me".into());
+                let mut cache = open_cache_for_site(&cfg);
                 match crate::jira::fetch_my_work(&cfg) {
                     Ok(issues) if !issues.is_empty() => {
                         let host = cfg.site_host();
                         let n = issues.len();
-                        crate::config::cache_issues(&issues);
+                        if let Some((cache, site_id)) = &mut cache {
+                            let _ = cache.save_view(
+                                *site_id,
+                                "my_work",
+                                "My Work",
+                                crate::jira::MY_WORK_JQL,
+                                &issues,
+                            );
+                        }
                         return (
                             issues,
                             Source::Live { site: host, user },
@@ -295,7 +320,11 @@ fn load_issues(force_demo: bool) -> (Vec<IssueSummary>, Source, String) {
                     }
                     Err(e) => {
                         // Prefer the last cached list over sample data offline.
-                        if let Some(cached) = crate::config::load_cached_issues() {
+                        let cached = cache
+                            .as_ref()
+                            .and_then(|(cache, site_id)| cache.load_view(*site_id, "my_work").ok())
+                            .flatten();
+                        if let Some(cached) = cached {
                             let n = cached.len();
                             return (
                                 cached,

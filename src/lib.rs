@@ -6,6 +6,8 @@
 
 pub mod adf;
 pub mod app;
+#[cfg(feature = "live")]
+pub mod cache;
 pub mod config;
 pub mod domain;
 pub mod git;

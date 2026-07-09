@@ -41,6 +41,7 @@ cargo run -- --demo    # force the offline sample data
 cargo run -- --about   # open straight to the animated about panel
 cargo run -- --onboard # re-run the welcome / live setup
 cargo run -- --init    # scaffold ~/.config/jira-tui/config.toml, then exit
+cargo run -- --no-cache # don't read/write the local issue cache this run
 ```
 
 Build a release binary:
@@ -313,7 +314,7 @@ copies its browse URL.
 | `$XDG_CONFIG_HOME/jira-tui/config.toml` | non-secret settings |
 | `$XDG_CONFIG_HOME/jira-tui/token` | API token, `0600` |
 | `$XDG_CONFIG_HOME/jira-tui/.onboarded` | first-run marker |
-| `$XDG_CACHE_HOME/jira-tui/my-work.json` | cached "my work" list |
+| `$XDG_CACHE_HOME/jira-tui/cache.db` | cached issue lists (SQLite; `--no-cache` to disable) |
 
 ## MCP server for agents
 
@@ -371,7 +372,9 @@ src/
   adf/             ADF <-> styled text and ADF <-> Markdown (render, to_markdown, compile)
   jira/            live REST client: read + transitions + description + comment writes (feature: live)
   git/             repo/branch detection + key parsing
-  config/          XDG config, settings, token, and issue cache
+  config/          XDG config, settings, token, onboarding marker
+  cache/           SQLite issue cache (feature: live): site-scoped, per-view (my work,
+                   future teammate/all-issues views), 0600 permissions
   infra/           clipboard (OSC 52)
   mcp/             Model Context Protocol server (feature: mcp): tools + ADF/Markdown
                    conversion + demo-data fallback, shared by src/bin/jira_mcp.rs

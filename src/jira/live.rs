@@ -174,11 +174,14 @@ fn summary_from(issue: &Value) -> IssueSummary {
     }
 }
 
+/// The fixed JQL behind "my work" — exposed as a constant (not just inline
+/// in `fetch_my_work`) so the cache layer can record exactly which query
+/// produced a cached view, without duplicating the string.
+pub const MY_WORK_JQL: &str =
+    "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC";
+
 pub fn fetch_my_work(cfg: &Config) -> Result<Vec<IssueSummary>> {
-    search_issues(
-        cfg,
-        "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC",
-    )
+    search_issues(cfg, MY_WORK_JQL)
 }
 
 /// Run an arbitrary JQL query and return matching issue summaries.
