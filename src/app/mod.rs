@@ -339,13 +339,12 @@ fn load_issues_for(view: &ViewKind, force_demo: bool) -> (Vec<IssueSummary>, Sou
                         {
                             let _ = cache.save_view(*site_id, kind, &view.label(), &jql, &issues);
                         }
-                        // search_issues caps at 50 results (no paging yet —
-                        // see the pagination risk noted in issue #7); flag
-                        // when we may be showing a truncated list.
-                        let status = if n >= 50 {
-                            format!(
-                                "Loaded {n} issues from Jira (showing first {n}; more may exist)"
-                            )
+                        // search_issues now pages until Jira reports
+                        // `isLast`, but still stops at SEARCH_RESULTS_CAP so
+                        // a very large project can't page forever — flag it
+                        // when that cap was actually hit.
+                        let status = if n >= crate::jira::SEARCH_RESULTS_CAP {
+                            format!("Loaded {n} issues from Jira (capped at {n}; more may exist)")
                         } else {
                             format!("Loaded {n} issues from Jira")
                         };

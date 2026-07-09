@@ -207,6 +207,13 @@ My Work is written to the on-disk cache today — All Project Issues and
 teammate views are session-only and re-fetch each time you switch to them or
 press **`r`** to refresh.
 
+Live queries page through up to 500 issues (10 pages of 50); if a project
+genuinely has more than that, the status bar says so
+("capped at 500; more may exist") rather than silently truncating. The
+teammate list is seeded from whatever's currently loaded, so a teammate
+whose only issues fall outside that window won't show up until you're
+viewing a page that includes one of their issues.
+
 ## Search & go to issue
 
 Press **`/`** from Home, the full list, or an open issue to search:

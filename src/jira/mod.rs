@@ -20,5 +20,5 @@ pub use config::Config;
 pub use live::{
     add_comment, apply_transition, create_issue, fetch_detail, fetch_my_work, fetch_transitions,
     jql_for, list_fields, search_issues, update_description, update_summary, whoami, FieldInfo,
-    MY_WORK_JQL,
+    MY_WORK_JQL, SEARCH_RESULTS_CAP,
 };
