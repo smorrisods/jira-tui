@@ -7,8 +7,8 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Release tag (must start with v). Leave blank to use the package version.
-        required: false
+        description: Release tag to build/publish (must start with v, e.g. v0.1.0). Required — never derived automatically, so you always know exactly which release a manual run targets.
+        required: true
         type: string
       release_draft:
         description: Create or keep this release as a draft
@@ -17,8 +17,8 @@ on:
         type: boolean
 
 concurrency:
-  # Group reruns for the same tag together, even when a manual dispatch derives the tag from Cargo.toml.
-  group: "release-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && (inputs.release_tag != '' && inputs.release_tag || github.ref_name) || github.ref_name }}"
+  # Group reruns for the same tag together.
+  group: "release-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}"
   cancel-in-progress: true
 
 permissions:
@@ -36,9 +36,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
-        with:
-          # Cargo.toml must be present when deriving a manual release tag from the package version.
-          ref: ${{ github.sha }}
 
       - name: Resolve release tag
         id: meta
@@ -47,16 +44,9 @@ jobs:
           set -euo pipefail
 
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            # release_tag is a required input — never silently derived from Cargo.toml, so a
+            # manual run can never coincidentally resolve to an already-published release tag.
             TAG="${{ inputs.release_tag }}"
-            # Manual runs can omit the tag and fall back to the checked-in package version.
-            if [[ -z "${TAG}" ]]; then
-              VERSION="$(./scripts/prepare-release-version.sh --current-version)"
-              if [[ -z "${VERSION}" ]]; then
-                echo "Failed to derive package version from Cargo.toml" >&2
-                exit 1
-              fi
-              TAG="v${VERSION}"
-            fi
           else
             TAG="${GITHUB_REF_NAME}"
           fi
@@ -115,6 +105,17 @@ jobs:
             RELEASE_ID="$(awk '{print $1}' <<< "${RELEASE_MATCH}")"
             EXISTING_DRAFT="$(awk '{print $2}' <<< "${RELEASE_MATCH}")"
 
+            # Fail closed on manual dispatch: never let a workflow_dispatch run silently attach
+            # new assets to a release that's already published. Reruns are only safe against a
+            # release that is still a draft (its own original state). Tag-push releases never
+            # pre-exist as non-draft, so this only ever bites manual runs.
+            if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${EXISTING_DRAFT}" != "true" ]]; then
+              echo "Refusing to reuse release '${TAG_NAME}' (id ${RELEASE_ID}): it is already published, not a draft." >&2
+              echo "A manual workflow_dispatch run must not silently overwrite a published release's assets." >&2
+              echo "If you really mean to rebuild this exact release, delete it first (or pick a different tag)." >&2
+              exit 1
+            fi
+
             if [[ "${EXISTING_DRAFT}" == "true" && "${RELEASE_DRAFT}" == "false" ]]; then
               gh api \
                 --method PATCH \
@@ -156,9 +157,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
-        with:
-          # Manual releases with an explicit tag must build that tagged ref, not the branch that launched the run.
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag != '' && needs.prepare-release.outputs.tag_name || github.sha }}
+        # No explicit ref: default (github.sha) always builds the exact commit that triggered the
+        # run. Draft releases don't get a real git tag until published, so a brand-new draft's
+        # tag_name may not exist as a checkout-able ref yet — building the triggering ref avoids
+        # depending on that.
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -254,9 +256,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
-        with:
-          # Manual releases with an explicit tag must build that tagged ref, not the branch that launched the run.
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag != '' && needs.prepare-release.outputs.tag_name || github.sha }}
+        # No explicit ref: default (github.sha) always builds the exact commit that triggered the
+        # run. Draft releases don't get a real git tag until published, so a brand-new draft's
+        # tag_name may not exist as a checkout-able ref yet — building the triggering ref avoids
+        # depending on that.
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
