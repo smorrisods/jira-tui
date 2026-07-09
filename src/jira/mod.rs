@@ -19,5 +19,5 @@ pub use config::Config;
 #[cfg(feature = "live")]
 pub use live::{
     add_comment, apply_transition, create_issue, fetch_detail, fetch_my_work, fetch_transitions,
-    list_fields, search_issues, update_description, update_summary, whoami, FieldInfo,
+    list_fields, search_issues, update_description, update_summary, whoami, FieldInfo, MY_WORK_JQL,
 };

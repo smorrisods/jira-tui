@@ -1,19 +1,18 @@
-//! Configuration, XDG paths, and the on-disk issue cache.
+//! Configuration and XDG paths.
 //!
 //! Non-secret settings live in `$XDG_CONFIG_HOME/jira-tui/config.toml`
 //! (falling back to `~/.config`), parsed and edited with `toml_edit` so a
 //! save from onboarding or the field-mapping screen never disturbs comments
-//! or settings a user added by hand. A small issue cache lives in
-//! `$XDG_CACHE_HOME/jira-tui` so the last live "my work" list can be shown
-//! instantly — and offline — until the next successful refresh.
+//! or settings a user added by hand. The issue cache itself lives in
+//! `crate::cache` (a small SQLite database under `$XDG_CACHE_HOME`); this
+//! module only knows the legacy `my-work.json` path, kept around long
+//! enough for a one-time import into the new cache.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use toml_edit::DocumentMut;
-
-use crate::domain::IssueSummary;
 
 /// `$XDG_CONFIG_HOME/jira-tui` (or `~/.config/jira-tui`).
 pub fn config_dir() -> Option<PathBuf> {
@@ -270,31 +269,12 @@ pub fn save_token_file_path(token_file: Option<&str>) -> Result<PathBuf> {
     set_config_key("token_file", token_file)
 }
 
-fn cache_file() -> Option<PathBuf> {
+/// Path to the legacy flat-JSON issue cache (`my-work.json`), superseded by
+/// `crate::cache`'s SQLite database. Kept only so the cache module can
+/// import it once on upgrade, then delete it — not used for anything else.
+#[cfg_attr(not(feature = "live"), allow(dead_code))]
+pub(crate) fn legacy_cache_file() -> Option<PathBuf> {
     cache_dir().map(|d| d.join("my-work.json"))
-}
-
-/// Persist the current "my work" list so it can be shown instantly next launch.
-#[cfg_attr(not(feature = "live"), allow(dead_code))]
-pub fn cache_issues(issues: &[IssueSummary]) {
-    if let Some(path) = cache_file() {
-        if let Ok(json) = serde_json::to_string(issues) {
-            let _ = std::fs::write(path, json);
-        }
-    }
-}
-
-/// Load the cached "my work" list, if any.
-#[cfg_attr(not(feature = "live"), allow(dead_code))]
-pub fn load_cached_issues() -> Option<Vec<IssueSummary>> {
-    let path = cache_file()?;
-    let content = std::fs::read_to_string(path).ok()?;
-    let issues: Vec<IssueSummary> = serde_json::from_str(&content).ok()?;
-    if issues.is_empty() {
-        None
-    } else {
-        Some(issues)
-    }
 }
 
 #[cfg(test)]
@@ -417,12 +397,6 @@ mod tests {
             let mode = std::fs::metadata(&tpath).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode, 0o600);
         }
-
-        // Issue cache round-trips through the XDG cache dir.
-        let issues = crate::domain::demo_issues();
-        cache_issues(&issues);
-        let loaded = load_cached_issues().expect("cache should load");
-        assert_eq!(loaded.len(), issues.len());
 
         let _ = std::fs::remove_dir_all(&base);
         std::env::remove_var("XDG_CONFIG_HOME");

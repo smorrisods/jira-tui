@@ -149,6 +149,34 @@ impl Cache {
         Ok(id)
     }
 
+    /// One-time migration from the legacy flat-JSON cache (`my-work.json`):
+    /// if it exists and this site has no cached `my_work` view yet, import
+    /// it as the initial one. Best-effort — any read/parse failure just
+    /// means we fall through to a fresh live fetch, exactly like a
+    /// corrupt/missing cache always has. Always removes the legacy file
+    /// afterwards (successful import or not) so this check only ever runs
+    /// once per upgrade.
+    pub fn migrate_legacy_json(&self, site_id: i64, jql: &str) {
+        let Some(legacy_path) = crate::config::legacy_cache_file() else {
+            return;
+        };
+        if !legacy_path.exists() {
+            return;
+        }
+        if !matches!(self.load_view(site_id, "my_work"), Ok(None)) {
+            // Either already migrated, or a live fetch already populated
+            // this site's cache — nothing left to import.
+            let _ = std::fs::remove_file(&legacy_path);
+            return;
+        }
+        if let Ok(content) = std::fs::read_to_string(&legacy_path) {
+            if let Ok(issues) = serde_json::from_str::<Vec<IssueSummary>>(&content) {
+                let _ = self.save_view(site_id, "my_work", "My Work", jql, &issues);
+            }
+        }
+        let _ = std::fs::remove_file(&legacy_path);
+    }
+
     /// Replace whatever is cached for `(site_id, kind)` with `issues`,
     /// upserting each issue's own row along the way. Overwrite semantics
     /// (not incremental merge) — matches the previous `my-work.json`
@@ -466,5 +494,105 @@ mod tests {
         let (cache, _dir) = open_temp();
         let site = cache.site_id("https://a.atlassian.net").unwrap();
         assert!(cache.load_view(site, "my_work").unwrap().is_none());
+    }
+
+    // Serialized against other tests that mutate the same process-global
+    // XDG_CACHE_HOME env var — see `crate::test_support::lock_env`.
+    #[test]
+    fn migrate_legacy_json_imports_once_then_deletes_file() {
+        let _guard = crate::test_support::lock_env();
+        let base = std::env::temp_dir().join(format!(
+            "jira-tui-legacy-migrate-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let xdg_cache = base.join("cache");
+        std::env::set_var("XDG_CACHE_HOME", &xdg_cache);
+
+        let legacy_dir = xdg_cache.join("jira-tui");
+        std::fs::create_dir_all(&legacy_dir).unwrap();
+        let legacy_path = legacy_dir.join("my-work.json");
+        std::fs::write(
+            &legacy_path,
+            serde_json::to_string(&sample_issues()).unwrap(),
+        )
+        .unwrap();
+
+        let (cache, _dir) = open_temp();
+        let site = cache.site_id("https://a.atlassian.net").unwrap();
+
+        cache.migrate_legacy_json(site, "assignee = currentUser()");
+
+        let loaded = cache.load_view(site, "my_work").unwrap().unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert!(
+            !legacy_path.exists(),
+            "legacy file should be removed after import"
+        );
+
+        // Running again must be a harmless no-op (file already gone).
+        cache.migrate_legacy_json(site, "assignee = currentUser()");
+        let loaded_again = cache.load_view(site, "my_work").unwrap().unwrap();
+        assert_eq!(loaded_again.len(), 2);
+
+        std::env::remove_var("XDG_CACHE_HOME");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn migrate_legacy_json_does_not_overwrite_a_freshly_cached_view() {
+        let _guard = crate::test_support::lock_env();
+        let base = std::env::temp_dir().join(format!(
+            "jira-tui-legacy-noop-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let xdg_cache = base.join("cache");
+        std::env::set_var("XDG_CACHE_HOME", &xdg_cache);
+
+        let legacy_dir = xdg_cache.join("jira-tui");
+        std::fs::create_dir_all(&legacy_dir).unwrap();
+        let legacy_path = legacy_dir.join("my-work.json");
+        std::fs::write(
+            &legacy_path,
+            serde_json::to_string(&sample_issues()).unwrap(),
+        )
+        .unwrap();
+
+        let (cache, _dir) = open_temp();
+        let site = cache.site_id("https://a.atlassian.net").unwrap();
+        let mut fresh = sample_issues();
+        fresh.truncate(1);
+        cache
+            .save_view(
+                site,
+                "my_work",
+                "My Work",
+                "assignee = currentUser()",
+                &fresh,
+            )
+            .unwrap();
+
+        cache.migrate_legacy_json(site, "assignee = currentUser()");
+
+        let loaded = cache.load_view(site, "my_work").unwrap().unwrap();
+        assert_eq!(
+            loaded.len(),
+            1,
+            "existing fresh data must not be overwritten by a legacy import"
+        );
+        assert!(
+            !legacy_path.exists(),
+            "legacy file should still be cleaned up even when not imported"
+        );
+
+        std::env::remove_var("XDG_CACHE_HOME");
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
