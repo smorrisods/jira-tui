@@ -1,8 +1,6 @@
 //! First-run onboarding: the welcome screen and the credential setup form.
 
 use crate::config;
-#[cfg(feature = "live")]
-use crate::domain::Source;
 
 use super::{App, Screen};
 
@@ -89,6 +87,12 @@ impl App {
     /// Validate, verify against Jira, and persist the entered credentials.
     /// On success, switches to live data and finishes onboarding.
     pub fn submit_credentials(&mut self) {
+        #[cfg(feature = "live")]
+        if self.onboarding_pending {
+            self.onboarding.setup_msg = "Already verifying…".into();
+            return;
+        }
+
         let site = self
             .onboarding
             .field_site
@@ -117,35 +121,13 @@ impl App {
 
         #[cfg(feature = "live")]
         {
+            self.onboarding_generation += 1;
+            let generation = self.onboarding_generation;
+            self.onboarding_pending = true;
+            self.loading = true;
             self.onboarding.setup_msg = "Verifying…".into();
-            let (issues, source, status) = super::load_issues(false);
-            match source {
-                Source::Live { .. } => {
-                    self.all_issues = issues;
-                    self.source = source;
-                    self.status = status;
-                    self.recompute_view();
-                    config::mark_onboarded();
-                    // Offer to map "Acceptance Criteria" (or another custom
-                    // field) now, while we're already talking to Jira. The
-                    // lookup itself resolves asynchronously; the fallback to
-                    // `Screen::Home` with the "connected" status on
-                    // anything other than success happens once it lands
-                    // (see `FieldMappingOrigin::Onboarding` in
-                    // `AppEvent::FieldsLoaded`'s handler).
-                    let connected_status = self.status.clone();
-                    if self.open_field_mapping_for_onboarding(connected_status.clone())
-                        == super::FieldMappingOutcome::NotAvailable
-                    {
-                        self.screen = Screen::Home;
-                        self.status = connected_status;
-                    }
-                }
-                _ => {
-                    self.onboarding.setup_msg =
-                        "Saved, but Jira did not accept those credentials. Check and retry, or press Esc to continue in demo mode.".into();
-                }
-            }
+            let tx = self.events_tx.clone();
+            super::async_ops::dispatch_verify_credentials(tx, generation);
         }
         #[cfg(not(feature = "live"))]
         {

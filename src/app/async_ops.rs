@@ -12,7 +12,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::domain::{Comment, IssueDetail, IssueSummary, Source, ViewKind};
 
-use super::{load_issues_for, App, Screen};
+use super::{load_issues, load_issues_for, App, Screen};
 
 /// Sent back from a spawned fetch once it completes. Carries the
 /// `generation` it was dispatched under so a fetch that's been superseded
@@ -81,6 +81,16 @@ pub enum AppEvent {
         generation: u64,
         origin: super::field_mapping::FieldMappingOrigin,
         result: FieldsFetchResult,
+    },
+    /// Onboarding's credential-verification fetch resolved. Whether the
+    /// credentials were actually accepted is decided at apply-time from
+    /// `source` (a genuine `Source::Live` means success), exactly like the
+    /// synchronous `submit_credentials` this replaces used to check.
+    CredentialsVerified {
+        generation: u64,
+        issues: Vec<IssueSummary>,
+        source: Source,
+        status: String,
     },
 }
 
@@ -304,6 +314,42 @@ impl App {
                             self.status = status;
                             self.flash("Couldn't look up custom fields — press F to try again");
                         }
+                    }
+                }
+            }
+            AppEvent::CredentialsVerified {
+                generation,
+                issues,
+                source,
+                status,
+            } => {
+                if generation != self.onboarding_generation {
+                    return;
+                }
+                self.loading = false;
+                self.onboarding_pending = false;
+                match source {
+                    Source::Live { .. } => {
+                        self.all_issues = issues;
+                        self.source = source;
+                        self.status = status;
+                        self.recompute_view();
+                        crate::config::mark_onboarded();
+                        // Offer to map "Acceptance Criteria" (or another
+                        // custom field) now, while we're already talking to
+                        // Jira. That lookup dispatches its own async fetch —
+                        // see `FieldMappingOrigin::Onboarding`.
+                        let connected_status = self.status.clone();
+                        if self.open_field_mapping_for_onboarding(connected_status.clone())
+                            == super::FieldMappingOutcome::NotAvailable
+                        {
+                            self.screen = Screen::Home;
+                            self.status = connected_status;
+                        }
+                    }
+                    _ => {
+                        self.onboarding.setup_msg =
+                                "Saved, but Jira did not accept those credentials. Check and retry, or press Esc to continue in demo mode.".into();
                     }
                 }
             }
@@ -589,4 +635,32 @@ fn list_fields_blocking() -> FieldsFetchResult {
     }
     #[cfg(not(feature = "live"))]
     Err("This build has no live support; rebuild with the `live` feature.".into())
+}
+
+/// Spawn onboarding's credential-verification fetch off the render thread,
+/// sending the result back as `AppEvent::CredentialsVerified`. Reuses
+/// `load_issues` (the same `ViewKind::MyWork` fetch behind a plain
+/// `refresh`), since verifying fresh credentials is just loading My Work
+/// with whatever was just saved to the environment/config. Only called from
+/// `onboarding.rs`'s live-gated `submit_credentials`, so it's dead code in
+/// a no-live build.
+#[cfg_attr(not(feature = "live"), allow(dead_code))]
+pub(crate) fn dispatch_verify_credentials(tx: UnboundedSender<AppEvent>, generation: u64) {
+    tokio::spawn(async move {
+        let (issues, source, status) = tokio::task::spawn_blocking(|| load_issues(false))
+            .await
+            .unwrap_or_else(|_| {
+                (
+                    Vec::new(),
+                    Source::Demo,
+                    "internal error: fetch task panicked".into(),
+                )
+            });
+        let _ = tx.send(AppEvent::CredentialsVerified {
+            generation,
+            issues,
+            source,
+            status,
+        });
+    });
 }
