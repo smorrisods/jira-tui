@@ -664,3 +664,79 @@ fn next_and_prev_comment_step_through_and_clamp() {
     app.prev_comment();
     assert_eq!(app.detail_scroll, positions[0]);
 }
+
+#[test]
+fn open_view_picker_lists_my_work_all_project_and_teammates() {
+    let mut app = demo_app();
+    app.open_view_picker();
+    assert!(app.view_picker_open);
+    assert_eq!(app.view_picker_options[0], ViewKind::MyWork);
+    assert_eq!(app.view_picker_options[1], ViewKind::AllProject);
+    // Teammates distinct from the demo "current user" should show up,
+    // deduped and sorted; the demo current user itself must not appear as a
+    // redundant pseudo-teammate (it's already covered by "My Work").
+    let teammates: Vec<&ViewKind> = app.view_picker_options[2..].iter().collect();
+    assert!(teammates.contains(&&ViewKind::Teammate("priya.nair".into())));
+    assert!(teammates.contains(&&ViewKind::Teammate("alex.chen".into())));
+    assert!(!teammates.contains(&&ViewKind::Teammate(
+        crate::domain::DEMO_CURRENT_USER.into()
+    )));
+}
+
+#[test]
+fn view_picker_move_clamps_to_bounds() {
+    let mut app = demo_app();
+    app.open_view_picker();
+    let len = app.view_picker_options.len();
+    app.view_picker_move(-10);
+    assert_eq!(app.view_picker_index, 0);
+    app.view_picker_move(1000);
+    assert_eq!(app.view_picker_index, len - 1);
+}
+
+#[test]
+fn confirm_view_switch_to_teammate_filters_by_assignee() {
+    let mut app = demo_app();
+    app.open_view_picker();
+    let idx = app
+        .view_picker_options
+        .iter()
+        .position(|v| *v == ViewKind::Teammate("priya.nair".into()))
+        .expect("priya.nair should be a demo teammate");
+    app.view_picker_index = idx;
+    app.confirm_view_switch();
+
+    assert!(!app.view_picker_open);
+    assert_eq!(app.current_view, ViewKind::Teammate("priya.nair".into()));
+    assert!(!app.all_issues.is_empty());
+    assert!(app
+        .all_issues
+        .iter()
+        .all(|i| i.assignee.as_deref() == Some("priya.nair")));
+}
+
+#[test]
+fn switch_view_to_all_project_then_back_to_my_work_round_trips() {
+    let mut app = demo_app();
+    let my_work_count = app.all_issues.len();
+
+    app.switch_view(ViewKind::AllProject);
+    assert_eq!(app.current_view, ViewKind::AllProject);
+    assert!(!app.all_issues.is_empty());
+
+    app.switch_view(ViewKind::MyWork);
+    assert_eq!(app.current_view, ViewKind::MyWork);
+    assert_eq!(app.all_issues.len(), my_work_count);
+}
+
+#[test]
+fn refresh_preserves_the_current_view() {
+    let mut app = demo_app();
+    app.switch_view(ViewKind::Teammate("alex.chen".into()));
+    app.refresh();
+    assert_eq!(app.current_view, ViewKind::Teammate("alex.chen".into()));
+    assert!(app
+        .all_issues
+        .iter()
+        .all(|i| i.assignee.as_deref() == Some("alex.chen")));
+}

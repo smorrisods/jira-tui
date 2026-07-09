@@ -184,6 +184,24 @@ pub fn fetch_my_work(cfg: &Config) -> Result<Vec<IssueSummary>> {
     search_issues(cfg, MY_WORK_JQL)
 }
 
+/// Build the JQL for a given view. `project` is the Jira project key
+/// (`Config.project`, already used for issue creation).
+pub fn jql_for(view: &crate::domain::ViewKind, project: &str) -> String {
+    use crate::domain::ViewKind;
+    match view {
+        ViewKind::MyWork => MY_WORK_JQL.to_string(),
+        ViewKind::AllProject => format!("project = \"{project}\" ORDER BY updated DESC"),
+        ViewKind::Teammate(name) => {
+            // Escape backslashes *before* quotes — a JQL string literal
+            // uses `\` as its escape character, so a name ending in `\`
+            // would otherwise absorb the closing quote as an escaped
+            // character instead of terminating the string.
+            let escaped = name.replace('\\', "\\\\").replace('"', "\\\"");
+            format!("assignee = \"{escaped}\" AND statusCategory != Done ORDER BY updated DESC")
+        }
+    }
+}
+
 /// Run an arbitrary JQL query and return matching issue summaries.
 /// Used both for "my work" (a fixed JQL) and the MCP server's free-form
 /// search tool.
@@ -494,6 +512,52 @@ mod tests {
 
         let cfg = test_config(server.url());
         assert!(whoami(&cfg).is_err());
+    }
+
+    #[test]
+    fn jql_for_builds_the_expected_query_per_view() {
+        use crate::domain::ViewKind;
+
+        assert_eq!(jql_for(&ViewKind::MyWork, "PROJ"), MY_WORK_JQL);
+        assert_eq!(
+            jql_for(&ViewKind::AllProject, "PROJ"),
+            "project = \"PROJ\" ORDER BY updated DESC"
+        );
+        assert_eq!(
+            jql_for(&ViewKind::Teammate("Ada Lovelace".into()), "PROJ"),
+            "assignee = \"Ada Lovelace\" AND statusCategory != Done ORDER BY updated DESC"
+        );
+    }
+
+    #[test]
+    fn jql_for_teammate_escapes_embedded_quotes() {
+        use crate::domain::ViewKind;
+
+        let jql = jql_for(&ViewKind::Teammate("Robert \"Bob\" Smith".into()), "PROJ");
+        assert_eq!(
+            jql,
+            "assignee = \"Robert \\\"Bob\\\" Smith\" AND statusCategory != Done ORDER BY updated DESC"
+        );
+    }
+
+    #[test]
+    fn jql_for_teammate_escapes_backslashes_before_quotes() {
+        use crate::domain::ViewKind;
+
+        // A trailing backslash must be escaped to `\\` *before* the closing
+        // quote is appended, or the parser reads `\"` as an escaped quote
+        // rather than the string's terminator.
+        let jql = jql_for(&ViewKind::Teammate("Robert\\".into()), "PROJ");
+        assert_eq!(
+            jql,
+            "assignee = \"Robert\\\\\" AND statusCategory != Done ORDER BY updated DESC"
+        );
+
+        let jql = jql_for(&ViewKind::Teammate("Back\\slash \"Quote\"".into()), "PROJ");
+        assert_eq!(
+            jql,
+            "assignee = \"Back\\\\slash \\\"Quote\\\"\" AND statusCategory != Done ORDER BY updated DESC"
+        );
     }
 
     #[test]

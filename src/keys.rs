@@ -45,6 +45,20 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Modal: the view switcher (My Work / All Project Issues / a teammate).
+    if app.view_picker_open {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => app.view_picker_move(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.view_picker_move(1),
+            KeyCode::Enter => app.confirm_view_switch(),
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left | KeyCode::Backspace => {
+                app.close_view_picker()
+            }
+            _ => {}
+        }
+        return;
+    }
+
     // The edit preview is a confirm screen.
     if app.screen == Screen::Preview {
         match key.code {
@@ -125,6 +139,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             KeyCode::PageDown => app.board_move_lane(1),
             KeyCode::Enter => app.board_open(),
             KeyCode::Char('/') => app.open_search(),
+            KeyCode::Char('V') => app.open_view_picker(),
             KeyCode::Char('?') => app.show_help = true,
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => back_or_quit(app),
             _ => {}
@@ -176,6 +191,9 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char('F') if matches!(app.screen, Screen::Home | Screen::List) => {
             app.open_field_mapping();
+        }
+        KeyCode::Char('V') if matches!(app.screen, Screen::Home | Screen::List) => {
+            app.open_view_picker();
         }
 
         KeyCode::Char('l') if app.screen != Screen::Detail => app.screen = Screen::List,

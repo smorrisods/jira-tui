@@ -156,6 +156,40 @@ fn transition_picker_lists_targets() {
 }
 
 #[test]
+fn view_picker_lists_my_work_all_project_and_teammates() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.open_view_picker();
+    let text = render(&app);
+    assert!(text.contains("switch view"), "picker should show a title");
+    assert!(text.contains("My Work"), "picker should list My Work");
+    assert!(
+        text.contains("current"),
+        "the active view should be marked current"
+    );
+    assert!(
+        text.contains("All Project Issues"),
+        "picker should list the all-project view"
+    );
+    assert!(
+        text.contains("priya.nair"),
+        "picker should list demo teammates seeded from loaded assignees"
+    );
+}
+
+#[test]
+fn switching_to_a_teammate_view_shows_in_the_header() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.switch_view(jira_tui::domain::ViewKind::Teammate("alex.chen".into()));
+    let text = render(&app);
+    assert!(
+        text.contains("viewing: alex.chen's Work"),
+        "header should indicate the active non-default view"
+    );
+}
+
+#[test]
 fn preview_screen_renders_pending_edit() {
     let mut app = demo_app();
     app.selected = 0;

@@ -36,6 +36,7 @@ pub(crate) fn draw_help_overlay(f: &mut Frame, area: Rect) {
         ("] / [", "jump to comments section / back to top"),
         ("n / p", "next / previous comment"),
         ("F", "map a custom field (e.g. Acceptance Criteria)"),
+        ("V", "switch view (My Work / All Project Issues / teammate)"),
         ("a", "about panel"),
         ("m", "toggle mouse mode"),
         ("J", "toggle Jax companion 🦦"),
