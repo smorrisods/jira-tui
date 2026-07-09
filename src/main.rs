@@ -74,6 +74,14 @@ async fn main() -> Result<()> {
 async fn run(terminal: &mut Term, app: &mut App) -> Result<()> {
     let mut events = EventStream::new();
     let mut ticker = tokio::time::interval(TICK);
+    // `Burst` (tokio's default) replays every tick missed during a stall
+    // back-to-back once polling resumes — e.g. after the genuinely
+    // blocking `$EDITOR` handoff in `editor_launch::edit_in_editor`, which
+    // freezes this whole task for the editor's lifetime. `Delay` instead
+    // just pushes the next tick out by one `TICK`, matching the old
+    // `event::poll(TICK)` loop's behaviour and avoiding a redraw/animation
+    // burst right after the editor closes.
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     // The first tick fires immediately; that's fine, it just draws once.
 
     loop {
