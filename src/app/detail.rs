@@ -62,17 +62,24 @@ impl App {
     /// Dispatch a full-detail fetch off the render thread, deduplicating
     /// against an already-in-flight fetch for the same key (the quick-view
     /// panel calls this every tick via `ensure_quick_view_loaded`, so it
-    /// must be safe to call repeatedly without piling up requests).
+    /// must be safe to call repeatedly without piling up requests). If a
+    /// cache-only quick-view load for this key is already in flight and an
+    /// explicit "open" comes in before it resolves, the pending request's
+    /// navigate intent is escalated in place rather than dropped or
+    /// double-dispatched.
     pub(crate) fn dispatch_detail_fetch(&mut self, key: String, navigate: bool) {
-        if self.detail_pending.as_deref() == Some(key.as_str()) {
-            return;
+        if let Some((pending_key, pending_navigate)) = self.detail_pending.as_mut() {
+            if pending_key == &key {
+                *pending_navigate = *pending_navigate || navigate;
+                return;
+            }
         }
         self.detail_generation += 1;
         let generation = self.detail_generation;
-        self.detail_pending = Some(key.clone());
+        self.detail_pending = Some((key.clone(), navigate));
         self.loading = true;
         self.status = format!("↻ loading {key}…");
         let tx = self.events_tx.clone();
-        async_ops::dispatch_detail_fetch(tx, generation, key, navigate);
+        async_ops::dispatch_detail_fetch(tx, generation, key);
     }
 }

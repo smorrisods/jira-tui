@@ -34,13 +34,16 @@ pub enum AppEvent {
     },
     /// A full-detail fetch resolved. `navigate` distinguishes an explicit
     /// "open" (jump to `Screen::Detail` once loaded) from the quick-view
-    /// panel's lazy background load (cache only, stay put).
+    /// panel's lazy background load (cache only, stay put). Whether to
+    /// navigate is decided at apply-time from `App::detail_pending` rather
+    /// than carried on the event itself, so a fetch dispatched as a
+    /// cache-only quick-view load that later gets "upgraded" by an explicit
+    /// open (before the first one resolves) still navigates once it lands.
     DetailLoaded {
         generation: u64,
         key: String,
         detail: Box<IssueDetail>,
         status: Option<String>,
-        navigate: bool,
     },
     /// A workflow transition resolved (or failed) against live Jira.
     TransitionApplied {
@@ -123,13 +126,20 @@ impl App {
                 key,
                 detail,
                 status,
-                navigate,
             } => {
                 if generation != self.detail_generation {
                     return;
                 }
                 self.loading = false;
-                self.detail_pending = None;
+                // The escalated navigate intent lives on `detail_pending`,
+                // not the event — a fetch dispatched as a cache-only
+                // quick-view load can be "upgraded" by an explicit open
+                // before it resolves (see `dispatch_detail_fetch`).
+                let navigate = self
+                    .detail_pending
+                    .take()
+                    .map(|(_, navigate)| navigate)
+                    .unwrap_or(false);
                 if let Some(status) = status {
                     self.status = status;
                 }
@@ -153,6 +163,7 @@ impl App {
                     return;
                 }
                 self.loading = false;
+                self.transition_pending = false;
                 if let Some(e) = error {
                     self.status = format!("transition failed: {e}");
                     return;
@@ -179,6 +190,7 @@ impl App {
                     return;
                 }
                 self.loading = false;
+                self.edit_pending = false;
                 self.screen = return_screen;
                 if let Some(e) = error {
                     self.status = format!("update failed: {e}");
@@ -202,6 +214,7 @@ impl App {
                     return;
                 }
                 self.loading = false;
+                self.edit_pending = false;
                 self.screen = return_screen;
                 let comment = match result {
                     Ok(c) => c,
@@ -283,12 +296,7 @@ async fn load(view: ViewKind, force_demo: bool) -> (Vec<IssueSummary>, Source, S
 /// as `AppEvent::DetailLoaded`. Only dispatched when `App::load_detail`
 /// would otherwise make a real live-network call (see `detail.rs`) — demo
 /// and cache sessions resolve inline.
-pub(crate) fn dispatch_detail_fetch(
-    tx: UnboundedSender<AppEvent>,
-    generation: u64,
-    key: String,
-    navigate: bool,
-) {
+pub(crate) fn dispatch_detail_fetch(tx: UnboundedSender<AppEvent>, generation: u64, key: String) {
     tokio::spawn(async move {
         let key_for_result = key.clone();
         let (detail, status) = tokio::task::spawn_blocking(move || fetch_detail_blocking(&key))
@@ -304,7 +312,6 @@ pub(crate) fn dispatch_detail_fetch(
             key: key_for_result,
             detail: Box::new(detail),
             status,
-            navigate,
         });
     });
 }

@@ -128,6 +128,10 @@ impl EditorState {
 impl App {
     /// Open the built-in editor preloaded with the description Markdown.
     pub fn begin_tui_edit(&mut self) {
+        if self.edit_pending {
+            self.status = "an update is still in progress".into();
+            return;
+        }
         if let Some(md) = self.description_markdown() {
             self.editor = EditorState::from_text(&md);
             self.begin_description_edit_target();
@@ -148,15 +152,28 @@ impl App {
     /// Prime the edit-target state for the external `$EDITOR` round-trip.
     /// Must run before `request_edit` is set, since `finish_edit` (called
     /// once the editor exits) doesn't know what it's editing on its own —
-    /// only `begin_tui_edit`/`begin_comment` normally set that up.
-    pub fn begin_external_edit(&mut self) {
+    /// only `begin_tui_edit`/`begin_comment` normally set that up. Guarding
+    /// here (rather than only in `begin_tui_edit`/`begin_comment`) keeps the
+    /// `E` round-trip from starting a second edit while a previous one is
+    /// still resolving against live Jira; callers should check the return
+    /// value before setting `request_edit`.
+    pub fn begin_external_edit(&mut self) -> bool {
+        if self.edit_pending {
+            self.status = "an update is still in progress".into();
+            return false;
+        }
         self.begin_description_edit_target();
+        true
     }
 
     /// Open the built-in editor to compose a brand-new comment. Works from
     /// both the full detail screen and the quick-view panel (List/Home),
     /// returning to whichever screen it was opened from.
     pub fn begin_comment(&mut self) {
+        if self.edit_pending {
+            self.status = "an update is still in progress".into();
+            return;
+        }
         let Some(key) = self.comment_target_key() else {
             self.status = "no issue selected".into();
             return;
@@ -256,6 +273,7 @@ impl App {
 
         self.edit_generation += 1;
         let generation = self.edit_generation;
+        self.edit_pending = true;
         self.loading = true;
         self.status = format!("↻ updating {key}…");
         let tx = self.events_tx.clone();
@@ -304,6 +322,7 @@ impl App {
 
         self.edit_generation += 1;
         let generation = self.edit_generation;
+        self.edit_pending = true;
         self.loading = true;
         self.status = format!("↻ adding comment to {key}…");
         let local_author = self.current_user_display();

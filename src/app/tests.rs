@@ -999,3 +999,114 @@ async fn apply_comment_against_a_live_source_dispatches_and_appends_on_completio
     assert_eq!(app.screen, Screen::Detail);
     assert_eq!(app.detail.as_ref().unwrap().comments.len(), before + 1);
 }
+
+/// Regression test for a code-review finding on PR #20: a cache-only
+/// quick-view load already in flight for a key must be "upgraded" to
+/// navigate once an explicit open comes in for the same key, rather than
+/// the open being silently swallowed by the in-flight dedup check.
+#[tokio::test]
+async fn an_explicit_open_escalates_an_in_flight_quick_view_load_to_navigate() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.quick_view = true;
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+
+    // The quick-view panel's per-tick poll dispatches a cache-only load.
+    app.ensure_quick_view_loaded();
+    assert!(app.loading);
+    let generation = app.detail_generation;
+
+    // The user explicitly opens the same issue before that load resolves —
+    // must not dispatch a second fetch, but must remember to navigate.
+    app.open_by_key(&key);
+    assert_eq!(
+        app.detail_generation, generation,
+        "must not dispatch a duplicate fetch for the same key"
+    );
+
+    let event = next_event(&mut app).await;
+    app.apply_event(event);
+    assert!(!app.loading);
+    assert_eq!(
+        app.screen,
+        Screen::Detail,
+        "the escalated open must still navigate once the shared fetch resolves"
+    );
+    assert_eq!(app.detail.as_ref().unwrap().key, key);
+}
+
+/// Regression test for a code-review finding on PR #20: without a
+/// re-entrancy guard, cancelling out of a pending edit/transition and
+/// immediately starting a new one bumps the shared generation counter,
+/// silently discarding the first request's result (success or failure)
+/// with no user-visible feedback. `open_transitions` now refuses to reopen
+/// the picker while a transition is still in flight.
+#[tokio::test]
+async fn open_transitions_refuses_to_reopen_while_one_is_in_flight() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    let key = app.issues[0].key.clone();
+    app.detail = Some(crate::domain::demo_detail(&key));
+    app.screen = Screen::Detail;
+    app.open_transitions();
+    app.picker_index = 3; // "Done"
+    app.confirm_transition();
+    assert!(app.loading);
+    assert!(app.transition_pending);
+    let generation = app.transition_generation;
+
+    // Reopening the picker while the first transition is still resolving
+    // must not be possible — that would let a second `confirm_transition`
+    // bump the generation counter out from under the first request.
+    app.open_transitions();
+    assert!(
+        !app.picker_open,
+        "the picker must not reopen while a transition is in flight"
+    );
+
+    let event = next_event(&mut app).await;
+    app.apply_event(event);
+    assert!(!app.loading);
+    assert!(!app.transition_pending);
+    assert_eq!(app.detail.as_ref().unwrap().status, "Done");
+    assert_eq!(app.transition_generation, generation);
+}
+
+/// Same regression as above, for the edit/comment side: starting a new
+/// edit session while a previous description update or comment post is
+/// still resolving must be refused, not silently allowed to clobber the
+/// shared `edit_generation` counter.
+#[tokio::test]
+async fn begin_tui_edit_refuses_to_start_while_an_edit_is_in_flight() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    let key = app.issues[0].key.clone();
+    app.detail = Some(crate::domain::demo_detail(&key));
+    app.screen = Screen::Detail;
+    app.begin_description_edit_target();
+    app.finish_edit("## First edit\n\nStill in flight.");
+    app.apply_edit();
+    assert!(app.loading);
+    assert!(app.edit_pending);
+    let generation = app.edit_generation;
+
+    // Starting a second edit session while the first is still resolving
+    // must be refused — it would otherwise take a fresh `pending_edit` and
+    // dispatch a second write under a bumped `edit_generation`, discarding
+    // whatever the first one eventually returns.
+    app.begin_tui_edit();
+    assert_eq!(
+        app.screen,
+        Screen::Preview,
+        "must not open a new edit session while one is pending"
+    );
+
+    let event = next_event(&mut app).await;
+    app.apply_event(event);
+    assert!(!app.loading);
+    assert!(!app.edit_pending);
+    let text = crate::adf::to_markdown(&app.detail.as_ref().unwrap().description);
+    assert!(text.contains("First edit"));
+    assert_eq!(app.edit_generation, generation);
+}

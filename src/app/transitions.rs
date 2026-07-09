@@ -6,6 +6,10 @@ use super::{async_ops, App};
 
 impl App {
     pub fn open_transitions(&mut self) {
+        if self.transition_pending {
+            self.status = "a transition is already in progress".into();
+            return;
+        }
         if let Some(detail) = self.detail.as_ref() {
             if detail.transitions.is_empty() {
                 self.status = "no transitions available".into();
@@ -75,6 +79,7 @@ impl App {
 
         self.transition_generation += 1;
         let generation = self.transition_generation;
+        self.transition_pending = true;
         self.loading = true;
         self.status = format!("↻ moving {key} → {}…", t.to);
         let tx = self.events_tx.clone();

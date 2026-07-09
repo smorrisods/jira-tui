@@ -164,12 +164,26 @@ pub struct App {
     // operation kind so an in-flight detail fetch can't be invalidated by an
     // unrelated transition or edit completing (and vice versa). See
     // `async_ops` for the dispatch/apply plumbing.
-    /// The key of the detail fetch currently in flight, if any — lets
-    /// `ensure_quick_view_loaded` (polled every tick) avoid dispatching a
-    /// duplicate fetch for the same key while one is already outstanding.
-    pub(crate) detail_pending: Option<String>,
+    /// The key of the detail fetch currently in flight, and whether it
+    /// should navigate to `Screen::Detail` once it resolves — a
+    /// cache-only quick-view load (`false`) can be "upgraded" to an
+    /// explicit open (`true`) if the user opens the same issue before the
+    /// first request resolves, without dispatching a duplicate fetch. See
+    /// `App::dispatch_detail_fetch`.
+    pub(crate) detail_pending: Option<(String, bool)>,
     pub(crate) detail_generation: u64,
+    /// Whether a workflow transition is currently in flight. `open_transitions`
+    /// refuses to reopen the picker while this is set, so at most one
+    /// transition can be dispatched at a time — this keeps
+    /// `transition_generation` from ever going stale mid-flight instead of
+    /// silently dropping an overlapping request's result.
+    pub(crate) transition_pending: bool,
     pub(crate) transition_generation: u64,
+    /// Whether a description update or comment post is currently in
+    /// flight. `begin_tui_edit`/`begin_external_edit`/`begin_comment`
+    /// refuse to start a new edit session while this is set, for the same
+    /// reason as `transition_pending` above.
+    pub(crate) edit_pending: bool,
     pub(crate) edit_generation: u64,
 }
 
@@ -239,7 +253,9 @@ impl App {
             events_rx,
             detail_pending: None,
             detail_generation: 0,
+            transition_pending: false,
             transition_generation: 0,
+            edit_pending: false,
             edit_generation: 0,
         };
         app.recompute_view();
