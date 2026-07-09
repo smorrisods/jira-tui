@@ -5,7 +5,7 @@
 
 use crate::domain::{Comment, Source};
 
-use super::{App, Screen};
+use super::{async_ops, App, Screen};
 
 /// What the in-TUI editor / preview screen is currently editing. Both share
 /// the same Markdown-compose → ADF-preview → confirm flow; only the apply
@@ -228,6 +228,10 @@ impl App {
         }
     }
 
+    /// Apply the previewed description edit (live if possible, always
+    /// locally). Demo/cache sessions apply inline; a live session dispatches
+    /// off the render thread and lands on `return_screen` once the update
+    /// resolves — see `dispatch_update_description`.
     fn apply_description_edit(&mut self) {
         let return_screen = self.edit_return_screen;
         self.reset_edit_target();
@@ -240,31 +244,30 @@ impl App {
             return;
         };
 
-        #[cfg(feature = "live")]
-        {
-            if let Source::Live { .. } = self.source {
-                if let Some(cfg) = crate::jira::Config::load() {
-                    if let Err(e) = crate::jira::update_description(&cfg, &key, &adf) {
-                        self.status = format!("update failed: {e}");
-                        self.screen = return_screen;
-                        return;
-                    }
-                }
+        if !matches!(self.source, Source::Live { .. }) {
+            if let Some(d) = self.detail.as_mut() {
+                d.description = adf;
             }
+            self.status = format!("updated {key} description");
+            self.flash("✓ description updated");
+            self.screen = return_screen;
+            return;
         }
 
-        if let Some(d) = self.detail.as_mut() {
-            d.description = adf;
-        }
-        self.status = format!("updated {key} description");
-        self.flash("✓ description updated");
-        self.screen = return_screen;
+        self.edit_generation += 1;
+        let generation = self.edit_generation;
+        self.loading = true;
+        self.status = format!("↻ updating {key}…");
+        let tx = self.events_tx.clone();
+        async_ops::dispatch_update_description(tx, generation, key, adf, return_screen);
     }
 
-    /// Post the previewed comment (live if possible), then append it to
-    /// whichever cached detail(s) currently hold this issue so it shows up
-    /// immediately without a re-fetch — both the full detail screen and the
-    /// quick-view cache.
+    /// Post the previewed comment (live if possible, always locally). Demo/
+    /// cache sessions apply the optimistic local comment inline; a live
+    /// session dispatches the post off the render thread and appends
+    /// whichever comment comes back — server copy on success, the same
+    /// optimistic one on failure/no-credentials — once it resolves. See
+    /// `dispatch_add_comment`.
     fn apply_comment(&mut self) {
         let return_screen = self.edit_return_screen;
         let Some(key) = self.edit_key.take() else {
@@ -278,42 +281,43 @@ impl App {
             return;
         };
 
-        #[cfg_attr(not(feature = "live"), allow(unused_mut))]
-        let mut comment = Comment {
-            id: format!("local-{}", self.tick),
-            author: self.current_user_display(),
-            created: "just now".into(),
-            body: adf.clone(),
-        };
-
-        #[cfg(feature = "live")]
-        {
-            if let Source::Live { .. } = self.source {
-                if let Some(cfg) = crate::jira::Config::load() {
-                    match crate::jira::add_comment(&cfg, &key, &adf) {
-                        Ok(created) => comment = created,
-                        Err(e) => {
-                            self.status = format!("comment failed: {e}");
-                            self.screen = return_screen;
-                            return;
-                        }
-                    }
+        if !matches!(self.source, Source::Live { .. }) {
+            let comment = Comment {
+                id: format!("local-{}", self.tick),
+                author: self.current_user_display(),
+                created: "just now".into(),
+                body: adf,
+            };
+            if let Some(d) = self.detail.as_mut() {
+                if d.key == key {
+                    d.comments.push(comment.clone());
                 }
             }
-        }
-
-        if let Some(d) = self.detail.as_mut() {
-            if d.key == key {
-                d.comments.push(comment.clone());
+            if let Some(cached) = self.detail_cache.get_mut(&key) {
+                cached.comments.push(comment);
             }
-        }
-        if let Some(cached) = self.detail_cache.get_mut(&key) {
-            cached.comments.push(comment);
+            self.status = format!("added comment to {key}");
+            self.flash("✓ comment added");
+            self.screen = return_screen;
+            return;
         }
 
-        self.status = format!("added comment to {key}");
-        self.flash("✓ comment added");
-        self.screen = return_screen;
+        self.edit_generation += 1;
+        let generation = self.edit_generation;
+        self.loading = true;
+        self.status = format!("↻ adding comment to {key}…");
+        let local_author = self.current_user_display();
+        let local_id = format!("local-{}", self.tick);
+        let tx = self.events_tx.clone();
+        async_ops::dispatch_add_comment(
+            tx,
+            generation,
+            key,
+            adf,
+            local_author,
+            local_id,
+            return_screen,
+        );
     }
 
     /// Display name to attribute a locally-composed comment to before any

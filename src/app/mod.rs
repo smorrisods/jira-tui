@@ -158,6 +158,19 @@ pub struct App {
     pub(crate) events_tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
     /// Drained by the run loop each iteration and applied via `apply_event`.
     pub events_rx: tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
+
+    // Async detail load / transition apply / edit apply — same generation +
+    // channel pattern as refresh/switch_view above, one counter per
+    // operation kind so an in-flight detail fetch can't be invalidated by an
+    // unrelated transition or edit completing (and vice versa). See
+    // `async_ops` for the dispatch/apply plumbing.
+    /// The key of the detail fetch currently in flight, if any — lets
+    /// `ensure_quick_view_loaded` (polled every tick) avoid dispatching a
+    /// duplicate fetch for the same key while one is already outstanding.
+    pub(crate) detail_pending: Option<String>,
+    pub(crate) detail_generation: u64,
+    pub(crate) transition_generation: u64,
+    pub(crate) edit_generation: u64,
 }
 
 impl App {
@@ -224,6 +237,10 @@ impl App {
             generation: 0,
             events_tx,
             events_rx,
+            detail_pending: None,
+            detail_generation: 0,
+            transition_generation: 0,
+            edit_generation: 0,
         };
         app.recompute_view();
 
