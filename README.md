@@ -202,10 +202,11 @@ issues you're looking at:
   filtered the same way as My Work.
 
 Use **`↑`/`↓`** to move, **`⏎`** to switch, **`esc`** to cancel. The header
-shows `viewing: <name>` whenever you're on anything other than My Work. Only
-My Work is written to the on-disk cache today — All Project Issues and
-teammate views are session-only and re-fetch each time you switch to them or
-press **`r`** to refresh.
+shows `viewing: <name>` whenever you're on anything other than My Work. Every
+view — My Work, All Project Issues, and each teammate — gets its own entry in
+the on-disk SQLite cache, so switching back to a view you've already loaded
+this session (or a previous one) doesn't always re-hit the API, and each
+still has an offline fallback if Jira is unreachable.
 
 Live queries page through up to 500 issues (10 pages of 50); if a project
 genuinely has more than that, the status bar says so
