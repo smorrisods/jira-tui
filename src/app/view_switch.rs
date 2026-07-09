@@ -45,15 +45,17 @@ impl App {
     /// Teammate display names seen in the currently loaded issues, deduped
     /// and sorted, excluding unassigned issues and (best-effort, by display
     /// name) the current user — "my work" already covers your own issues.
+    /// Offline `Source::Demo` has no real username, so it falls back to the
+    /// baked-in demo dataset's implicit "you" (`DEMO_CURRENT_USER`).
     pub fn known_teammates(&self) -> Vec<String> {
         let me = match &self.source {
-            Source::Live { user, .. } | Source::Cache { user } => Some(user.as_str()),
-            Source::Demo => None,
+            Source::Live { user, .. } | Source::Cache { user } => user.as_str(),
+            Source::Demo => crate::domain::DEMO_CURRENT_USER,
         };
         let mut seen = std::collections::BTreeSet::new();
         for issue in &self.all_issues {
             if let Some(name) = &issue.assignee {
-                if Some(name.as_str()) != me {
+                if name.as_str() != me {
                     seen.insert(name.clone());
                 }
             }

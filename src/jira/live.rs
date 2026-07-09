@@ -192,9 +192,11 @@ pub fn jql_for(view: &crate::domain::ViewKind, project: &str) -> String {
         ViewKind::MyWork => MY_WORK_JQL.to_string(),
         ViewKind::AllProject => format!("project = \"{project}\" ORDER BY updated DESC"),
         ViewKind::Teammate(name) => {
-            // Escape embedded quotes so a display name containing `"` can't
-            // break out of the JQL string literal.
-            let escaped = name.replace('"', "\\\"");
+            // Escape backslashes *before* quotes — a JQL string literal
+            // uses `\` as its escape character, so a name ending in `\`
+            // would otherwise absorb the closing quote as an escaped
+            // character instead of terminating the string.
+            let escaped = name.replace('\\', "\\\\").replace('"', "\\\"");
             format!("assignee = \"{escaped}\" AND statusCategory != Done ORDER BY updated DESC")
         }
     }
@@ -535,6 +537,26 @@ mod tests {
         assert_eq!(
             jql,
             "assignee = \"Robert \\\"Bob\\\" Smith\" AND statusCategory != Done ORDER BY updated DESC"
+        );
+    }
+
+    #[test]
+    fn jql_for_teammate_escapes_backslashes_before_quotes() {
+        use crate::domain::ViewKind;
+
+        // A trailing backslash must be escaped to `\\` *before* the closing
+        // quote is appended, or the parser reads `\"` as an escaped quote
+        // rather than the string's terminator.
+        let jql = jql_for(&ViewKind::Teammate("Robert\\".into()), "PROJ");
+        assert_eq!(
+            jql,
+            "assignee = \"Robert\\\\\" AND statusCategory != Done ORDER BY updated DESC"
+        );
+
+        let jql = jql_for(&ViewKind::Teammate("Back\\slash \"Quote\"".into()), "PROJ");
+        assert_eq!(
+            jql,
+            "assignee = \"Back\\\\slash \\\"Quote\\\"\" AND statusCategory != Done ORDER BY updated DESC"
         );
     }
 

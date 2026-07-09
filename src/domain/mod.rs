@@ -171,6 +171,13 @@ impl ViewKind {
 
 /// Baked-in sample issues so the TUI is fully explorable with zero network.
 /// Flavoured after the real DS design-system project this toolkit grew from.
+///
+/// The implicit "you" in demo mode — offline `Source::Demo` carries no real
+/// username, but the view switcher's teammate list still needs to exclude
+/// whichever assignee stands in for "my work" so it isn't offered back as a
+/// redundant pseudo-teammate.
+pub const DEMO_CURRENT_USER: &str = "scott.morris";
+
 pub fn demo_issues() -> Vec<IssueSummary> {
     vec![
         IssueSummary {
@@ -179,7 +186,7 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             issue_type: "Epic".into(),
             status: "In Progress".into(),
             priority: Priority::High,
-            assignee: Some("scott.morris".into()),
+            assignee: Some(DEMO_CURRENT_USER.into()),
             blocked: false,
             updated: "2h ago".into(),
             epic: None,
@@ -190,7 +197,7 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             issue_type: "Develop".into(),
             status: "In Progress".into(),
             priority: Priority::High,
-            assignee: Some("scott.morris".into()),
+            assignee: Some(DEMO_CURRENT_USER.into()),
             blocked: false,
             updated: "31m ago".into(),
             epic: Some("DS-2722".into()),
@@ -201,7 +208,7 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             issue_type: "Develop".into(),
             status: "To Do".into(),
             priority: Priority::High,
-            assignee: Some("scott.morris".into()),
+            assignee: Some(DEMO_CURRENT_USER.into()),
             blocked: true,
             updated: "1d ago".into(),
             epic: Some("DS-2602".into()),
@@ -223,7 +230,7 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             issue_type: "Develop".into(),
             status: "In Review".into(),
             priority: Priority::Medium,
-            assignee: Some("scott.morris".into()),
+            assignee: Some(DEMO_CURRENT_USER.into()),
             blocked: false,
             updated: "3d ago".into(),
             epic: Some("DS-2600".into()),
@@ -234,7 +241,7 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             issue_type: "Bug".into(),
             status: "To Do".into(),
             priority: Priority::Highest,
-            assignee: Some("scott.morris".into()),
+            assignee: Some(DEMO_CURRENT_USER.into()),
             blocked: false,
             updated: "5h ago".into(),
             epic: None,
@@ -245,7 +252,7 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             issue_type: "Bug".into(),
             status: "Done".into(),
             priority: Priority::High,
-            assignee: Some("scott.morris".into()),
+            assignee: Some(DEMO_CURRENT_USER.into()),
             blocked: false,
             updated: "6d ago".into(),
             epic: None,

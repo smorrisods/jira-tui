@@ -672,11 +672,15 @@ fn open_view_picker_lists_my_work_all_project_and_teammates() {
     assert!(app.view_picker_open);
     assert_eq!(app.view_picker_options[0], ViewKind::MyWork);
     assert_eq!(app.view_picker_options[1], ViewKind::AllProject);
-    // Demo data includes teammates distinct from the (unset, so `None`)
-    // current-user comparison — both should show up, deduped and sorted.
+    // Teammates distinct from the demo "current user" should show up,
+    // deduped and sorted; the demo current user itself must not appear as a
+    // redundant pseudo-teammate (it's already covered by "My Work").
     let teammates: Vec<&ViewKind> = app.view_picker_options[2..].iter().collect();
     assert!(teammates.contains(&&ViewKind::Teammate("priya.nair".into())));
     assert!(teammates.contains(&&ViewKind::Teammate("alex.chen".into())));
+    assert!(!teammates.contains(&&ViewKind::Teammate(
+        crate::domain::DEMO_CURRENT_USER.into()
+    )));
 }
 
 #[test]
