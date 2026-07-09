@@ -70,6 +70,18 @@ pub enum AppEvent {
         result: Result<Comment, String>,
         return_screen: Screen,
     },
+    /// A field-mapping custom-field lookup resolved. `origin` decides how
+    /// the result is applied — see `FieldMappingOrigin`. Fields are plain
+    /// `(id, name)` pairs rather than `jira::FieldInfo` so this variant (and
+    /// `apply_event`) compile under every feature set. The `Option<String>`
+    /// alongside them is the field currently mapped in `config.toml` (read
+    /// fresh inside the same fetch, since it needs the same `Config` the
+    /// fetch itself loads), used to pre-select the catalog.
+    FieldsLoaded {
+        generation: u64,
+        origin: super::field_mapping::FieldMappingOrigin,
+        result: FieldsFetchResult,
+    },
 }
 
 impl App {
@@ -233,6 +245,67 @@ impl App {
                 }
                 self.status = format!("added comment to {key}");
                 self.flash("✓ comment added");
+            }
+            AppEvent::FieldsLoaded {
+                generation,
+                origin,
+                result,
+            } => {
+                use super::field_mapping::{build_catalog_and_selection, FieldMappingOrigin};
+
+                if generation != self.field_mapping_generation {
+                    return;
+                }
+                self.loading = false;
+                self.field_mapping_pending = false;
+
+                let connected_status = match &origin {
+                    FieldMappingOrigin::Direct => None,
+                    FieldMappingOrigin::Onboarding { connected_status } => {
+                        Some(connected_status.clone())
+                    }
+                };
+
+                match result {
+                    Ok((fields, current_mapping)) if fields.is_empty() => {
+                        self.field_mapping.current_mapping = current_mapping;
+                        self.status = "No custom fields found on this Jira site.".into();
+                        if let Some(status) = connected_status {
+                            self.screen = Screen::Home;
+                            self.status = status;
+                        }
+                    }
+                    Ok((fields, current_mapping)) => {
+                        // catalog.len() - 1 for the leading "none" sentinel;
+                        // clears the "↻ looking up…" status left by
+                        // `dispatch_field_mapping` (unlike most other async
+                        // ops, the old synchronous code never set a status
+                        // on this path, so there's nothing to "restore" —
+                        // just something that isn't a stale spinner message).
+                        let count = fields.len();
+                        let (catalog, selected) =
+                            build_catalog_and_selection(fields, current_mapping.as_deref());
+                        self.field_mapping.catalog = catalog;
+                        self.field_mapping.query.clear();
+                        self.field_mapping.selected = selected;
+                        self.field_mapping.current_mapping = current_mapping;
+                        self.screen = Screen::FieldMapping;
+                        self.status = format!("Loaded {count} custom fields.");
+                    }
+                    Err(e) => {
+                        self.status = format!("Could not fetch fields: {e}");
+                        if let Some(status) = connected_status {
+                            // A transient failure here shouldn't block
+                            // finishing onboarding — but it's easy to forget
+                            // the field-mapping screen exists at all if it
+                            // silently never appears, so leave a toast
+                            // pointing at `F` rather than just the raw error.
+                            self.screen = Screen::Home;
+                            self.status = status;
+                            self.flash("Couldn't look up custom fields — press F to try again");
+                        }
+                    }
+                }
             }
         }
     }
@@ -466,4 +539,54 @@ fn add_comment_blocking(
         created: "just now".into(),
         body: adf.clone(),
     })
+}
+
+/// Spawn a custom-field lookup off the render thread, sending the result
+/// back as `AppEvent::FieldsLoaded`. Only dispatched by
+/// `App::dispatch_field_mapping` once it's already confirmed a live source
+/// and loaded credentials — this always makes the real network call.
+pub(crate) fn dispatch_field_mapping(
+    tx: UnboundedSender<AppEvent>,
+    generation: u64,
+    origin: super::field_mapping::FieldMappingOrigin,
+) {
+    tokio::spawn(async move {
+        let result = tokio::task::spawn_blocking(list_fields_blocking)
+            .await
+            .unwrap_or_else(|_| Err("internal error: task panicked".into()));
+        let _ = tx.send(AppEvent::FieldsLoaded {
+            generation,
+            origin,
+            result,
+        });
+    });
+}
+
+/// A field-mapping fetch's result: the catalog as `(id, name)` pairs
+/// alongside the field currently mapped in `config.toml` (if any).
+type FieldsFetchResult = Result<(Vec<(String, String)>, Option<String>), String>;
+
+/// Mirrors the live branch of the old synchronous `open_field_mapping`,
+/// including the "no credentials configured" case, which is now an `Err`
+/// applied via `AppEvent::FieldsLoaded` instead of a synchronous
+/// `NotAvailable` return (see `field_mapping.rs`'s module docs).
+#[allow(unused_variables)]
+fn list_fields_blocking() -> FieldsFetchResult {
+    #[cfg(feature = "live")]
+    {
+        let Some(cfg) = crate::jira::Config::load() else {
+            return Err("No live credentials configured.".into());
+        };
+        crate::jira::list_fields(&cfg)
+            .map(|fields| {
+                let current_mapping = cfg.acceptance_criteria_field.clone();
+                (
+                    fields.into_iter().map(|f| (f.id, f.name)).collect(),
+                    current_mapping,
+                )
+            })
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(feature = "live"))]
+    Err("This build has no live support; rebuild with the `live` feature.".into())
 }

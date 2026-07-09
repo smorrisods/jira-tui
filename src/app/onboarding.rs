@@ -127,26 +127,18 @@ impl App {
                     self.recompute_view();
                     config::mark_onboarded();
                     // Offer to map "Acceptance Criteria" (or another custom
-                    // field) now, while we're already talking to Jira.
+                    // field) now, while we're already talking to Jira. The
+                    // lookup itself resolves asynchronously; the fallback to
+                    // `Screen::Home` with the "connected" status on
+                    // anything other than success happens once it lands
+                    // (see `FieldMappingOrigin::Onboarding` in
+                    // `AppEvent::FieldsLoaded`'s handler).
                     let connected_status = self.status.clone();
-                    match self.open_field_mapping() {
-                        super::FieldMappingOutcome::Opened => {}
-                        super::FieldMappingOutcome::NothingToMap
-                        | super::FieldMappingOutcome::NotAvailable => {
-                            self.screen = Screen::Home;
-                            self.status = connected_status;
-                        }
-                        super::FieldMappingOutcome::Failed(_) => {
-                            // A transient failure (network blip, etc.) here
-                            // shouldn't block finishing onboarding — but it's
-                            // easy to forget the field-mapping screen exists
-                            // at all if it silently never appears, so leave a
-                            // toast pointing at `F` rather than just the raw
-                            // error.
-                            self.screen = Screen::Home;
-                            self.status = connected_status;
-                            self.flash("Couldn't look up custom fields — press F to try again");
-                        }
+                    if self.open_field_mapping_for_onboarding(connected_status.clone())
+                        == super::FieldMappingOutcome::NotAvailable
+                    {
+                        self.screen = Screen::Home;
+                        self.status = connected_status;
                     }
                 }
                 _ => {

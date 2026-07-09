@@ -185,6 +185,11 @@ pub struct App {
     /// reason as `transition_pending` above.
     pub(crate) edit_pending: bool,
     pub(crate) edit_generation: u64,
+    /// Whether a field-mapping custom-field lookup is currently in flight —
+    /// guards against a duplicate `F`-key press re-dispatching while one is
+    /// already resolving.
+    pub(crate) field_mapping_pending: bool,
+    pub(crate) field_mapping_generation: u64,
 }
 
 impl App {
@@ -257,6 +262,8 @@ impl App {
             transition_generation: 0,
             edit_pending: false,
             edit_generation: 0,
+            field_mapping_pending: false,
+            field_mapping_generation: 0,
         };
         app.recompute_view();
 

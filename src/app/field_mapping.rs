@@ -6,17 +6,15 @@
 //! returns every field's name alongside its ID, so this screen just lets you
 //! search that list by name instead of hunting for the ID yourself.
 
-use super::{App, Screen};
+use super::{async_ops, App, Screen};
 use crate::config;
 
 /// Sentinel entry meaning "don't map a custom field" — always present (when
 /// the query is empty) so a mapping can be cleared as easily as it's set.
-#[cfg(feature = "live")]
 const NONE_SENTINEL: (&str, &str) = ("", "— none — don't track acceptance criteria —");
 
 /// Index of the catalog entry matching `mapped` (or the leading sentinel at
 /// index 0 if there's no mapping, or it's no longer in the catalog).
-#[cfg_attr(not(feature = "live"), allow(dead_code))]
 fn index_of_mapping(catalog: &[(String, String)], mapped: Option<&str>) -> usize {
     match mapped {
         Some(id) => catalog.iter().position(|(fid, _)| fid == id).unwrap_or(0),
@@ -38,77 +36,82 @@ pub struct FieldMappingState {
     pub current_mapping: Option<String>,
 }
 
-/// Outcome of trying to open the field-mapping screen, so callers (like the
-/// onboarding handoff) can react precisely instead of inferring what
-/// happened from `self.screen`.
+/// Where a field-mapping lookup was triggered from, so the async result can
+/// be applied the same way each caller used to branch on the old
+/// synchronous return value.
+#[derive(Debug)]
+pub enum FieldMappingOrigin {
+    /// The `F` key — stays wherever the user currently is on
+    /// success/failure; `open_field_mapping`'s own status message (applied
+    /// once the fetch resolves) is the final word, no extra screen change.
+    Direct,
+    /// The onboarding credential-verification handoff — falls back to
+    /// `Screen::Home` with the "connected" status (captured before the
+    /// lookup started) on anything other than a successful catalog fetch,
+    /// exactly like the old synchronous `match` used to.
+    Onboarding { connected_status: String },
+}
+
+/// Outcome of *attempting* to start a field-mapping lookup — this only
+/// covers what's knowable synchronously (whether a real fetch was even
+/// dispatched). What the fetch actually finds (a catalog, an empty site, or
+/// a failure) is no longer a return value — it's applied once the fetch
+/// resolves, via `self.screen`/`self.status` (see `AppEvent::FieldsLoaded`).
 #[derive(Debug, PartialEq, Eq)]
 pub enum FieldMappingOutcome {
-    /// The screen opened; the catalog was fetched successfully.
-    Opened,
-    /// Live mode isn't active, or credentials aren't configured.
+    /// A lookup was dispatched (or one was already in flight) — watch
+    /// `self.screen`/`self.status` for the result.
+    Pending,
+    /// Live mode isn't active, or credentials aren't configured — decided
+    /// without a network round-trip, so there's nothing to wait on.
     NotAvailable,
-    /// Fetched successfully, but the site has no custom fields to map.
-    NothingToMap,
-    /// The fetch itself failed (network, auth, etc.) — worth retrying later.
-    Failed(String),
 }
 
 impl App {
     /// Open the field-mapping screen, fetching the site's custom fields.
-    /// Also sets `self.status` on every non-`Opened` outcome, so a direct
-    /// keybinding invocation (`F`) still surfaces a message even though
-    /// callers that need to branch on the outcome can match the return
-    /// value instead of re-deriving it from `self.screen`.
+    /// Demo/cache sessions resolve `NotAvailable` synchronously (there's no
+    /// fetch to dispatch); a genuine live session dispatches the lookup off
+    /// the render thread — see `dispatch_field_mapping`. Missing
+    /// credentials are *not* checked synchronously here — that's decided
+    /// inside the dispatched fetch itself, same as detail/transition/edit,
+    /// so it surfaces as an `Err` on `AppEvent::FieldsLoaded` instead.
     pub fn open_field_mapping(&mut self) -> FieldMappingOutcome {
-        #[cfg(feature = "live")]
-        {
-            use crate::domain::Source;
-            use crate::jira;
+        self.dispatch_field_mapping(FieldMappingOrigin::Direct)
+    }
 
-            if !matches!(self.source, Source::Live { .. }) {
-                self.status =
-                    "Field mapping needs live credentials — set them up first (--onboard).".into();
-                return FieldMappingOutcome::NotAvailable;
-            }
-            let Some(cfg) = jira::Config::load() else {
-                self.status = "No live credentials configured.".into();
-                return FieldMappingOutcome::NotAvailable;
-            };
-            match jira::list_fields(&cfg) {
-                Ok(fields) if fields.is_empty() => {
-                    self.status = "No custom fields found on this Jira site.".into();
-                    FieldMappingOutcome::NothingToMap
-                }
-                Ok(fields) => {
-                    self.field_mapping.catalog =
-                        std::iter::once((NONE_SENTINEL.0.to_string(), NONE_SENTINEL.1.to_string()))
-                            .chain(fields.into_iter().map(|f| (f.id, f.name)))
-                            .collect();
-                    self.field_mapping.query.clear();
-                    self.field_mapping.current_mapping = cfg.acceptance_criteria_field.clone();
-                    // Pre-select whatever's already mapped so re-opening the
-                    // screen to edit a mapping shows (and defaults to
-                    // keeping) the current choice, rather than resetting to
-                    // "none".
-                    self.field_mapping.selected = index_of_mapping(
-                        &self.field_mapping.catalog,
-                        self.field_mapping.current_mapping.as_deref(),
-                    );
-                    self.screen = Screen::FieldMapping;
-                    FieldMappingOutcome::Opened
-                }
-                Err(e) => {
-                    let msg = e.to_string();
-                    self.status = format!("Could not fetch fields: {msg}");
-                    FieldMappingOutcome::Failed(msg)
-                }
-            }
+    /// Same lookup, but for the onboarding handoff right after verifying
+    /// fresh credentials — see `FieldMappingOrigin::Onboarding` for how the
+    /// post-resolution branching differs from the `F` key. Only called from
+    /// `onboarding.rs`'s live-gated verification flow, so it's dead code in
+    /// a no-live build.
+    #[cfg_attr(not(feature = "live"), allow(dead_code))]
+    pub(crate) fn open_field_mapping_for_onboarding(
+        &mut self,
+        connected_status: String,
+    ) -> FieldMappingOutcome {
+        self.dispatch_field_mapping(FieldMappingOrigin::Onboarding { connected_status })
+    }
+
+    fn dispatch_field_mapping(&mut self, origin: FieldMappingOrigin) -> FieldMappingOutcome {
+        use crate::domain::Source;
+
+        if !matches!(self.source, Source::Live { .. }) {
+            self.status =
+                "Field mapping needs live credentials — set them up first (--onboard).".into();
+            return FieldMappingOutcome::NotAvailable;
         }
-        #[cfg(not(feature = "live"))]
-        {
-            self.status = "This build has no live support; rebuild with the `live` feature.".into();
-            FieldMappingOutcome::NotAvailable
+        if self.field_mapping_pending {
+            self.status = "Already looking up custom fields…".into();
+            return FieldMappingOutcome::Pending;
         }
+        self.field_mapping_generation += 1;
+        let generation = self.field_mapping_generation;
+        self.field_mapping_pending = true;
+        self.loading = true;
+        self.status = "↻ looking up custom fields…".into();
+        let tx = self.events_tx.clone();
+        async_ops::dispatch_field_mapping(tx, generation, origin);
+        FieldMappingOutcome::Pending
     }
 
     pub fn close_field_mapping(&mut self) {
@@ -192,6 +195,25 @@ impl App {
         }
         self.screen = Screen::Home;
     }
+}
+
+/// Build the catalog (with the leading "none" sentinel) and the pre-selected
+/// index from a resolved fetch. Used by `AppEvent::FieldsLoaded`'s handler
+/// once the async lookup completes — factored out here purely so it sits
+/// next to `index_of_mapping` and the sentinel it uses. Takes plain
+/// `(id, name)` pairs rather than `jira::FieldInfo` so this (and the
+/// always-compiled `apply_event` that calls it) don't need to be gated
+/// behind the `live` feature.
+pub(crate) fn build_catalog_and_selection(
+    fields: Vec<(String, String)>,
+    current_mapping: Option<&str>,
+) -> (Vec<(String, String)>, usize) {
+    let catalog: Vec<(String, String)> =
+        std::iter::once((NONE_SENTINEL.0.to_string(), NONE_SENTINEL.1.to_string()))
+            .chain(fields)
+            .collect();
+    let selected = index_of_mapping(&catalog, current_mapping);
+    (catalog, selected)
 }
 
 #[cfg(test)]
