@@ -4,133 +4,66 @@ Guidelines for humans and AI agents working in `jira-tui`.
 
 ## Project
 
-`jira-tui` is a developer-first, keyboard-driven Jira terminal UI written in
-Rust (`ratatui` + `crossterm`). It should feel fast, legible, and have a little
-personality — it does not need to be strictly utilitarian.
+`jira-tui` is a developer-first, keyboard-driven Jira terminal UI written in Rust (`ratatui` + `crossterm`). It should feel fast, legible, and have a little personality — it does not need to be strictly utilitarian.
 
 ## Core Principles
 
-- **ADF-first display.** Jira rich text is ADF (a JSON document tree). Render it
-  as structured text (headings, task lists, code blocks) via `src/adf`. The
-  round-trip edit converts ADF → Markdown for `$EDITOR` and recompiles Markdown →
-  ADF; never write raw Markdown strings into Jira fields.
-- **Demo mode always works.** The TUI must be fully explorable with zero network
-  and zero credentials. Live Jira is an enhancement gated behind the `live`
-  feature and the presence of credentials; missing creds fall back to the cached
-  list, then to demo data, never a crash.
-- **Onboarding is friendly.** First run shows a welcome screen that can collect
-  and verify credentials or continue in demo. Secrets never land in
-  `config.toml` — the API token is saved to a `0600` `token` file.
-- **Preview before mutate.** Any action that changes Jira must be legible and
-  confirmable first.
-- **Intent over resources.** Lead with developer jobs (start work, open branch
-  issue, triage blocked) rather than raw REST surface.
-- **Respect XDG.** Config, token, onboarding marker, and cache live under the XDG
-  config/cache directories.
-- **Mouse is opt-in and polite.** Mouse mode is a toggle; Shift-drag must always
-  fall through to the terminal's native selection.
+- **ADF-first display.** Jira rich text is ADF (a JSON document tree). Render it as structured text (headings, task lists, code blocks) via `src/adf`. The round-trip edit converts ADF → Markdown for `$EDITOR` and recompiles Markdown → ADF; never write raw Markdown strings into Jira fields.
+- **Demo mode always works.** The TUI must be fully explorable with zero network and zero credentials. Live Jira is an enhancement gated behind the `live` feature and the presence of credentials; missing creds fall back to the cached list, then to demo data, never a crash.
+- **Onboarding is friendly.** First run shows a welcome screen that can collect and verify credentials or continue in demo. Secrets never land in `config.toml` — the API token is saved to a `0600` `token` file.
+- **Preview before mutate.** Any action that changes Jira must be legible and confirmable first.
+- **Intent over resources.** Lead with developer jobs (start work, open branch issue, triage blocked) rather than raw REST surface.
+- **Respect XDG.** Config, token, onboarding marker, and cache live under the XDG config/cache directories.
+- **Mouse is opt-in and polite.** Mouse mode is a toggle; Shift-drag must always fall through to the terminal's native selection.
 
 ## Rust Conventions
 
 - Keep fast UI state separate from slow remote state.
 - Domain models in `src/domain` stay stable even if Jira API shapes vary.
 - Prefer small, readable functions; avoid clever borrows that hurt legibility.
-- Run `cargo fmt` and keep `cargo clippy` clean (both the default and
-  `--no-default-features` builds) before committing.
-- Add tests for pure logic and rendering: unit tests live beside the code, and
-  the integration suite in `tests/` covers the CLI (`tests/cli.rs`) and headless
-  screen rendering via `ratatui`'s `TestBackend` (`tests/render.rs`). The library
-  surface in `src/lib.rs` exists so tests can drive the real `app`/`ui`/`adf`.
+- Run `cargo fmt` and keep `cargo clippy` clean (both the default and `--no-default-features` builds) before committing.
+- Add tests for pure logic and rendering: unit tests live beside the code, and the integration suite in `tests/` covers the CLI (`tests/cli.rs`) and headless screen rendering via `ratatui`'s `TestBackend` (`tests/render.rs`). The library surface in `src/lib.rs` exists so tests can drive the real `app`/`ui`/`adf`.
 
 ## Canadian English
 
-- Use Canadian spelling in comments, docs, and user-facing copy where technically
-  valid (e.g. "colour", "behaviour").
-- Keep required external spellings unchanged for API fields, crate names, and
-  third-party schema keys.
+- Use Canadian spelling in comments, docs, and user-facing copy where technically valid (e.g. "colour", "behaviour").
+- Keep required external spellings unchanged for API fields, crate names, and third-party schema keys.
+
+## Writing style (commits, PRs, issues, docs)
+
+- **Don't hard-wrap prose at a fixed column.** Write each paragraph, bullet, or list item as one continuous line — no manual line breaks in the middle of a sentence just to keep it under ~80 columns. This applies everywhere prose gets rendered somewhere that reflows it anyway: commit bodies, PR descriptions, GitHub issues, and Markdown docs (`README.md`, `AGENTS.md`, `docs/**`). Hard-wrapped source lines look fine in a terminal `cat`, but render as awkward, unnecessary line breaks in GitHub's PR/issue viewer, in Markdown previews, and in most editors with soft-wrap enabled.
+- This doesn't apply to fixed-width content where line length is part of the format itself — e.g. the ASCII wireframes in `docs/WIREFRAMES.md`, code blocks, or tables.
+- Commit bodies specifically: use `git commit -F <message-file>` (see Commits below) so long unwrapped lines and backticks survive verbatim rather than getting mangled by shell quoting or an editor's auto-wrap.
 
 ## Commits
 
 - Use Conventional Commits: `type(scope): short summary`.
-- Bodies are Markdown, but **do not use Markdown headings (`#`)** — use **bold**
-  for section titles instead.
-- Recommended body sections (as bold labels): **Summary**, **Why**, **Details**,
-  **Validation**, **Risks**.
-- Do not pass unescaped backticks to `git commit -m`. Prefer
-  `git commit -F <message-file>` so backticks and formatting survive verbatim.
+- Bodies are Markdown, but **do not use Markdown headings (`#`)** — use **bold** for section titles instead.
+- Recommended body sections (as bold labels): **Summary**, **Why**, **Details**, **Validation**, **Risks**.
+- Do not pass unescaped backticks to `git commit -m`. Prefer `git commit -F <message-file>` so backticks and formatting survive verbatim.
 - Commit at meaningful milestones with a clear, detailed body.
-- Use `test:` for test-only changes (including fixes to tests themselves) —
-  reserve `fix:` for application-code bugs.
+- Use `test:` for test-only changes (including fixes to tests themselves) — reserve `fix:` for application-code bugs.
 
 ## Pull Requests
 
-- **Branching:** work happens on a branch, not directly on `main`. Name
-  feature branches `feature/<short-description>` and fix branches
-  `fix/<short-description>` (add an issue number when one exists, e.g.
-  `fix/issue-19-token-file-fallback`).
-- **Titles:** human-readable summaries starting with a capital letter — no
-  Conventional Commit prefixes (`feat:`, `fix:`, etc.) in the title itself.
-  Describe the outcome/behaviour change, not internal process language.
-- **Content:** PR descriptions must not mention internal workflow artefacts
-  (session notes, todo-tracking mechanics, agent planning chatter) — keep
-  that in `agent-reviews/` and local tooling, not in outward-facing PR text.
-- **Description format:** compact Markdown with `## Summary` and
-  `## Test plan`. Use `###` sub-sections under Summary when it helps group
-  the change (e.g. `### User-facing changes`, `### Internals`,
-  `### Documentation`). Flat bullets with bold lead-ins under each section.
-  Under `## Test plan`, use checklist bullets (`- [x]`/`- [ ]`) naming the
-  concrete commands run; state plainly anything that couldn't be verified.
-  No need to hard-wrap PR body lines to a fixed width — GitHub renders
-  Markdown paragraphs regardless of source line length, so write natural
-  prose/bullet lines and let them run long. The same goes for prose in
-  Markdown docs generally (`README.md`, `AGENTS.md`, `docs/**`) — don't
-  manually wrap paragraphs/bullets at ~80 columns; write each as one
-  line. (Doesn't apply to fixed-width content like the ASCII wireframes
-  in `docs/WIREFRAMES.md`, where line length is part of the diagram.)
-- **Labels:** every PR gets at least one primary category label
-  (`enhancement`, `bug`, `documentation`, `testing`, `ci`, `build`, `chore`)
-  plus scope labels where useful (`rust`, `dependencies`, `github_actions`).
-  Use `skip-changelog` for changes that shouldn't appear in release notes.
-- **Readiness:** open PRs ready for review by default; only mark a PR draft
-  when explicitly asked or when there's a clearly communicated blocker.
-- **Merging:** use a real merge commit (`gh pr merge --merge`), not squash or
-  rebase — the individual per-commit history (feature/fix/docs split across
-  meaningful, reviewable commits) is deliberate and should survive onto
-  `main` intact, not get flattened into one commit.
-- **Force-pushing** an already-open PR branch (e.g. after a rebase) requires
-  explicit user confirmation first — history rewrites on shared branches are
-  disruptive.
-- Prefer the `gh` CLI for PR/issue/label/workflow-run work over other GitHub
-  tooling, unless it can't complete the task cleanly.
+- **Branching:** work happens on a branch, not directly on `main`. Name feature branches `feature/<short-description>` and fix branches `fix/<short-description>` (add an issue number when one exists, e.g. `fix/issue-19-token-file-fallback`).
+- **Titles:** human-readable summaries starting with a capital letter — no Conventional Commit prefixes (`feat:`, `fix:`, etc.) in the title itself. Describe the outcome/behaviour change, not internal process language.
+- **Content:** PR descriptions must not mention internal workflow artefacts (session notes, todo-tracking mechanics, agent planning chatter) — keep that in `agent-reviews/` and local tooling, not in outward-facing PR text.
+- **Description format:** compact Markdown with `## Summary` and `## Test plan`. Use `###` sub-sections under Summary when it helps group the change (e.g. `### User-facing changes`, `### Internals`, `### Documentation`). Flat bullets with bold lead-ins under each section. Under `## Test plan`, use checklist bullets (`- [x]`/`- [ ]`) naming the concrete commands run; state plainly anything that couldn't be verified. See "Writing style" above for line-wrapping.
+- **Labels:** every PR gets at least one primary category label (`enhancement`, `bug`, `documentation`, `testing`, `ci`, `build`, `chore`) plus scope labels where useful (`rust`, `dependencies`, `github_actions`). Use `skip-changelog` for changes that shouldn't appear in release notes.
+- **Readiness:** open PRs ready for review by default; only mark a PR draft when explicitly asked or when there's a clearly communicated blocker.
+- **Merging:** use a real merge commit (`gh pr merge --merge`), not squash or rebase — the individual per-commit history (feature/fix/docs split across meaningful, reviewable commits) is deliberate and should survive onto `main` intact, not get flattened into one commit.
+- **Force-pushing** an already-open PR branch (e.g. after a rebase) requires explicit user confirmation first — history rewrites on shared branches are disruptive.
+- Prefer the `gh` CLI for PR/issue/label/workflow-run work over other GitHub tooling, unless it can't complete the task cleanly.
 
 ## Releases
 
-- **Tag format:** `vX.Y.Z` (matches `Cargo.toml`'s `version`, without the
-  leading `v` there).
-- **Version bump flow:** run `scripts/prepare-release-version.sh --version
-  X.Y.Z` in a clean working tree — it updates `Cargo.toml`/`Cargo.lock` and
-  creates a `chore/release-vX.Y.Z` branch. Open a PR from that branch,
-  merge to `main`, *then* create the tag on `main`. Never tag from a
-  branch other than `main`.
-- **What ships:** Linux and macOS `amd64`/`arm64` (binary, `.tar.gz`,
-  plus Linux-only `.deb`/`.rpm`), plus one `SHA256SUMS` file covering
-  every artefact — not a `.sha256` per file. `scripts/install.sh` is a
-  curl-pipeable installer that downloads, verifies, and installs the
-  right archive for the current OS/arch. macOS builds are **ad-hoc
-  signed only** (no notarization/Developer account yet). `jira-mcp` and
-  Windows builds are deliberately out of scope until revisited; see
-  `docs/release/distribution-strategy.md` for the full rationale.
-- **Man page:** generated at build time from `src/cli.rs` via
-  `clap_mangen` (`build.rs`) — never hand-edit a man page file; if the CLI
-  surface changes, update `src/cli.rs` and the man page follows
-  automatically. `src/cli.rs` is the single source of truth, shared by
-  both `main.rs` and `build.rs` — don't duplicate the `Cli` struct
-  definition anywhere else.
-- `.github/workflows/release.yml` handles the actual build/publish once a
-  `v*` tag lands on `main` (or via manual `workflow_dispatch`); see
-  `docs/release/distribution-strategy.md` for the full workflow shape.
+- **Tag format:** `vX.Y.Z` (matches `Cargo.toml`'s `version`, without the leading `v` there).
+- **Version bump flow:** run `scripts/prepare-release-version.sh --version X.Y.Z` in a clean working tree — it updates `Cargo.toml`/`Cargo.lock` and creates a `chore/release-vX.Y.Z` branch. Open a PR from that branch, merge to `main`, *then* create the tag on `main`. Never tag from a branch other than `main`.
+- **What ships:** Linux and macOS `amd64`/`arm64` (binary, `.tar.gz`, plus Linux-only `.deb`/`.rpm`), plus one `SHA256SUMS` file covering every artefact — not a `.sha256` per file. `scripts/install.sh` is a curl-pipeable installer that downloads, verifies, and installs the right archive for the current OS/arch. macOS builds are **ad-hoc signed only** (no notarization/Developer account yet). `jira-mcp` and Windows builds are deliberately out of scope until revisited; see `docs/release/distribution-strategy.md` for the full rationale.
+- **Man page:** generated at build time from `src/cli.rs` via `clap_mangen` (`build.rs`) — never hand-edit a man page file; if the CLI surface changes, update `src/cli.rs` and the man page follows automatically. `src/cli.rs` is the single source of truth, shared by both `main.rs` and `build.rs` — don't duplicate the `Cli` struct definition anywhere else.
+- `.github/workflows/release.yml` handles the actual build/publish once a `v*` tag lands on `main` (or via manual `workflow_dispatch`); see `docs/release/distribution-strategy.md` for the full workflow shape.
 
 ## Reviews
 
-- Leave a dated note in `agent-reviews/` after a substantial session: what worked,
-  what caused friction, and how it was handled. Read existing reviews first.
+- Leave a dated note in `agent-reviews/` after a substantial session: what worked, what caused friction, and how it was handled. Read existing reviews first.

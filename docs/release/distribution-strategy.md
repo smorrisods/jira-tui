@@ -48,56 +48,25 @@ That makes a GitHub Releases-first approach the cleanest fit.
 
 ## macOS: ad-hoc signed, not notarized
 
-macOS builds are cross-compiled/built on a single `macos-14` (Apple
-Silicon) runner — `aarch64-apple-darwin` natively, `x86_64-apple-darwin`
-cross-compiled from the same runner, so no separate Intel runner is
-needed. Binaries are **ad-hoc signed** (`codesign --sign - --force
---deep`) before archiving:
+macOS builds are cross-compiled/built on a single `macos-14` (Apple Silicon) runner — `aarch64-apple-darwin` natively, `x86_64-apple-darwin` cross-compiled from the same runner, so no separate Intel runner is needed. Binaries are **ad-hoc signed** (`codesign --sign - --force --deep`) before archiving:
 
-- This gives the binary a consistent local code identity, but it is
-  **not** the same as Apple notarization — there's no Apple Developer
-  account behind this yet, so Gatekeeper will still flag the binary as
-  unidentified on first run.
-- Documented plainly (README, install script output) rather than
-  glossed over: users need to right-click → Open in Finder once, or run
-  `xattr -d com.apple.quarantine jira-tui`.
-- Full notarization (paid Developer account, `xcrun notarytool` in CI,
-  stored credentials) is a real cost/complexity jump — revisit only if
-  this grows beyond a small-team tool.
-- No `.pkg` installer, no Homebrew tap yet — same reasoning as Linux's
-  "no separate install script" *used to be* (see below, now reversed)
-  and macOS's own installer/signing cost: keep the surface small until
-  there's a concrete need. A Homebrew tap is the natural next step once
-  there's a stable release cadence worth tracking that way.
+- This gives the binary a consistent local code identity, but it is **not** the same as Apple notarization — there's no Apple Developer account behind this yet, so Gatekeeper will still flag the binary as unidentified on first run.
+- Documented plainly (README, install script output) rather than glossed over: users need to right-click → Open in Finder once, or run `xattr -d com.apple.quarantine jira-tui`.
+- Full notarization (paid Developer account, `xcrun notarytool` in CI, stored credentials) is a real cost/complexity jump — revisit only if this grows beyond a small-team tool.
+- No `.pkg` installer, no Homebrew tap yet — same reasoning as Linux's "no separate install script" *used to be* (see below, now reversed) and macOS's own installer/signing cost: keep the surface small until there's a concrete need. A Homebrew tap is the natural next step once there's a stable release cadence worth tracking that way.
 
 ## Install script
 
-`scripts/install.sh` is a POSIX `sh` script (works whether it's run
-directly or piped from `curl`) that:
+`scripts/install.sh` is a POSIX `sh` script (works whether it's run directly or piped from `curl`) that:
 
 - detects OS (`linux`/`darwin`) and architecture (`amd64`/`arm64`)
-- resolves the latest release tag via the GitHub API, or installs a
-  specific `--version`
-- downloads the matching `.tar.gz` and `SHA256SUMS`, verifies the
-  checksum, and refuses to install on a mismatch
-- installs the binary + man page into `--prefix`/`$PREFIX` (default
-  `/usr/local`), using `sudo` only if the prefix isn't writable
+- resolves the latest release tag via the GitHub API, or installs a specific `--version`
+- downloads the matching `.tar.gz` and `SHA256SUMS`, verifies the checksum, and refuses to install on a mismatch
+- installs the binary + man page into `--prefix`/`$PREFIX` (default `/usr/local`), using `sudo` only if the prefix isn't writable
 - supports `--uninstall` to remove a previous install
-- prints coloured output (skipped for non-tty output or when `NO_COLOR`
-  is set) and a small bit of Jax personality in the banner/completion
-  message, matching the TUI's own tone
+- prints coloured output (skipped for non-tty output or when `NO_COLOR` is set) and a small bit of Jax personality in the banner/completion message, matching the TUI's own tone
 
-This *reverses* the original "no separate install script" stance from
-this doc's first draft — worth calling out explicitly. The original
-reasoning (extra trust surface, more to test and maintain) is real, but
-weaker than it first appeared: the script just automates the same
-curl → verify → extract → install steps we already tell people to run
-by hand, over the same GitHub Releases HTTPS connection they'd already
-need to trust to download a binary in the first place. For a
-small-team tool, the UX win (one command, no manual arch/prefix
-juggling) outweighs that marginal surface increase. Tested locally
-end-to-end (install, checksum-mismatch rejection, and uninstall) against
-a local HTTP server serving real built artefacts before shipping.
+This *reverses* the original "no separate install script" stance from this doc's first draft — worth calling out explicitly. The original reasoning (extra trust surface, more to test and maintain) is real, but weaker than it first appeared: the script just automates the same curl → verify → extract → install steps we already tell people to run by hand, over the same GitHub Releases HTTPS connection they'd already need to trust to download a binary in the first place. For a small-team tool, the UX win (one command, no manual arch/prefix juggling) outweighs that marginal surface increase. Tested locally end-to-end (install, checksum-mismatch rejection, and uninstall) against a local HTTP server serving real built artefacts before shipping.
 
 ## Man pages: generated, not hand-authored
 
@@ -118,12 +87,7 @@ jira-tui doesn't use `clap`'s subcommand model the way some other Liminal HQ CLI
 7. Binaries, packages, tarballs, and one `SHA256SUMS` file are attached.
 8. Release notes are generated from merged PRs (via `.github/release.yml` category labels); do a quick install smoke test (`scripts/install.sh`, or manual extraction) from the uploaded assets before considering the release final.
 
-Manual dispatch is also available (`workflow_dispatch`) so a tag can be rebuilt, or a draft release
-prepared before publication. `release_tag` is a **required** input (e.g. `v0.1.0`) — it is never
-derived automatically, so a manual run always targets an explicit, deliberate tag. The workflow also
-refuses to attach new assets to a matching release that's already published (not a draft); it only
-ever reuses a release that is still in its own draft state, so a manual dispatch can never silently
-overwrite a real published release's assets.
+Manual dispatch is also available (`workflow_dispatch`) so a tag can be rebuilt, or a draft release prepared before publication. `release_tag` is a **required** input (e.g. `v0.1.0`) — it is never derived automatically, so a manual run always targets an explicit, deliberate tag. The workflow also refuses to attach new assets to a matching release that's already published (not a draft); it only ever reuses a release that is still in its own draft state, so a manual dispatch can never silently overwrite a real published release's assets.
 
 ## Version prep
 
@@ -212,9 +176,7 @@ Linux packaging installs files into conventional package-managed locations:
 - binary: `/usr/bin/jira-tui`
 - man page: `/usr/share/man/man1/jira-tui.1.gz`
 
-Manual archive installs (Linux or macOS) can use `/usr/local` or another
-user-managed prefix — this is exactly what `scripts/install.sh` does by
-default.
+Manual archive installs (Linux or macOS) can use `/usr/local` or another user-managed prefix — this is exactly what `scripts/install.sh` does by default.
 
 ## Linux package metadata
 

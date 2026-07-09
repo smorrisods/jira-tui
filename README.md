@@ -4,34 +4,19 @@
   <img src="assets/hero.svg" alt="jira-tui — A keyboard-driven Jira terminal UI in Rust" width="100%">
 </p>
 
-A developer-first, keyboard-driven **Jira terminal UI** written in Rust
-(`ratatui` + `crossterm`) — fast, legible, ADF-native, mouse-friendly, and with a
-little bit of soul (there's an animated about panel and a mascot named Jax).
+A developer-first, keyboard-driven **Jira terminal UI** written in Rust (`ratatui` + `crossterm`) — fast, legible, ADF-native, mouse-friendly, and with a little bit of soul (there's an animated about panel and a mascot named Jax).
 
 ## Highlights
 
-- **Guided onboarding.** First launch greets you with a welcome screen (and Jax)
-  that can collect and verify your Jira credentials, or drop you into demo mode.
-- **Always explorable.** Runs against built-in sample data with zero setup, and
-  caches your last live "my work" list for instant, offline starts.
-- **Sort, filter, and peek.** Sort your work by date/priority/status/key, filter
-  by status, and toggle a quick-view panel to peek at the selected issue without
-  leaving the list.
-- **ADF-native rendering.** Headings, task lists, code blocks, tables, and inline
-  marks render as structured terminal text — not flattened Markdown.
-- **Edit in place.** Change status with a picker, and edit descriptions either in
-  a **built-in Markdown editor** or your external `$EDITOR` — recompiled to ADF
-  and previewed before anything is sent to Jira.
-- **Read and add comments.** Comments render inline (oldest first) in both the
-  detail screen and quick-view, with jump/step navigation (`]`/`[`, `n`/`p`)
-  and a built-in composer (`c`) that previews before posting.
-- **Git-aware.** Detects your repo and branch and elevates the `DS-123` issue in
-  your current branch name.
-- **Mouse mode + clipboard.** Optional click-to-open, wheel scroll, and
-  drag-to-copy via OSC 52 — with Shift-drag reserved for native terminal
-  selection.
-- **A bit of soul.** A colour-wave animated ASCII about panel (`a`) and a
-  toggleable ambient mascot, **Jax** (`J`), who fishes, naps, and parties. 🦦
+- **Guided onboarding.** First launch greets you with a welcome screen (and Jax) that can collect and verify your Jira credentials, or drop you into demo mode.
+- **Always explorable.** Runs against built-in sample data with zero setup, and caches your last live "my work" list for instant, offline starts.
+- **Sort, filter, and peek.** Sort your work by date/priority/status/key, filter by status, and toggle a quick-view panel to peek at the selected issue without leaving the list.
+- **ADF-native rendering.** Headings, task lists, code blocks, tables, and inline marks render as structured terminal text — not flattened Markdown.
+- **Edit in place.** Change status with a picker, and edit descriptions either in a **built-in Markdown editor** or your external `$EDITOR` — recompiled to ADF and previewed before anything is sent to Jira.
+- **Read and add comments.** Comments render inline (oldest first) in both the detail screen and quick-view, with jump/step navigation (`]`/`[`, `n`/`p`) and a built-in composer (`c`) that previews before posting.
+- **Git-aware.** Detects your repo and branch and elevates the `DS-123` issue in your current branch name.
+- **Mouse mode + clipboard.** Optional click-to-open, wheel scroll, and drag-to-copy via OSC 52 — with Shift-drag reserved for native terminal selection.
+- **A bit of soul.** A colour-wave animated ASCII about panel (`a`) and a toggleable ambient mascot, **Jax** (`J`), who fishes, naps, and parties. 🦦
 
 ## Quick start
 
@@ -58,27 +43,17 @@ cargo build --no-default-features
 
 ### Installing a release build
 
-Tagged releases publish pre-built Linux and macOS (`amd64`/`arm64`)
-artefacts on the
-[Releases page](https://github.com/smorrisods/jira-tui/releases): a
-standalone binary, a `.tar.gz` archive (unpacks to `bin/jira-tui` +
-`share/man/man1/jira-tui.1.gz`), and — Linux only — `.deb`/`.rpm`
-packages. One `SHA256SUMS` file covers every artefact in the release.
+Tagged releases publish pre-built Linux and macOS (`amd64`/`arm64`) artefacts on the [Releases page](https://github.com/smorrisods/jira-tui/releases): a standalone binary, a `.tar.gz` archive (unpacks to `bin/jira-tui` + `share/man/man1/jira-tui.1.gz`), and — Linux only — `.deb`/`.rpm` packages. One `SHA256SUMS` file covers every artefact in the release.
 
-**Quickest path — the install script** downloads the right archive for
-your OS/architecture, verifies its checksum, and installs the binary +
-man page:
+**Quickest path — the install script** downloads the right archive for your OS/architecture, verifies its checksum, and installs the binary + man page:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/smorrisods/jira-tui/main/scripts/install.sh | sh
 ```
 
-It installs into `/usr/local` by default (`--prefix`/`PREFIX` to
-override), and supports `--uninstall` to remove a previous install. Run
-it with `--help` to see all options.
+It installs into `/usr/local` by default (`--prefix`/`PREFIX` to override), and supports `--uninstall` to remove a previous install. Run it with `--help` to see all options.
 
-**Manual install** works the same way, if you'd rather not pipe a script
-into `sh`:
+**Manual install** works the same way, if you'd rather not pipe a script into `sh`:
 
 ```bash
 # verify, then install a package (Debian/Ubuntu shown; use --rpm on Fedora/RHEL)
@@ -89,36 +64,25 @@ sudo dpkg -i jira-tui-<tag>-linux-amd64.deb
 tar -xzf jira-tui-<tag>-linux-amd64.tar.gz -C /usr/local --strip-components=0
 ```
 
-Uninstall: `sudo dpkg -r jira-tui` (or `sudo rpm -e jira-tui`) for package
-installs, or just remove `bin/jira-tui` and
-`share/man/man1/jira-tui.1.gz` for a manual tarball install (or
-`install.sh --uninstall` if you installed that way).
+Uninstall: `sudo dpkg -r jira-tui` (or `sudo rpm -e jira-tui`) for package installs, or just remove `bin/jira-tui` and `share/man/man1/jira-tui.1.gz` for a manual tarball install (or `install.sh --uninstall` if you installed that way).
 
-**macOS note:** builds are **ad-hoc signed only** — there's no Apple
-Developer account / notarization behind them yet, so Gatekeeper will
-likely flag the binary on first run. Either right-click `jira-tui` in
-Finder and choose **Open**, or run:
+**macOS note:** builds are **ad-hoc signed only** — there's no Apple Developer account / notarization behind them yet, so Gatekeeper will likely flag the binary on first run. Either right-click `jira-tui` in Finder and choose **Open**, or run:
 
 ```bash
 xattr -d com.apple.quarantine /usr/local/bin/jira-tui
 ```
 
-Windows builds aren't published yet — see
-`docs/release/distribution-strategy.md` for the plan.
+Windows builds aren't published yet — see `docs/release/distribution-strategy.md` for the plan.
 
 ## First run & onboarding
 
 On first launch (when no config exists yet) jira-tui shows a welcome screen:
 
-- **`s` — Set up live access:** enter your Jira **site**, **email**, and **API
-  token**. The token is **masked**, **verified** against Jira (`/myself`), then
-  saved to `~/.config/jira-tui/token` with `0600` permissions (never in
-  `config.toml`). Non-secret settings are written to `config.toml`.
+- **`s` — Set up live access:** enter your Jira **site**, **email**, and **API token**. The token is **masked**, **verified** against Jira (`/myself`), then saved to `~/.config/jira-tui/token` with `0600` permissions (never in `config.toml`). Non-secret settings are written to `config.toml`.
 - **`d` — Continue in demo:** keep browsing the sample data.
 - **`w` — Write config:** scaffold a default `config.toml` you can edit by hand.
 
-Re-run it any time with `--onboard`. The non-interactive `--init` just writes the
-default config file.
+Re-run it any time with `--onboard`. The non-interactive `--init` just writes the default config file.
 
 ## Live mode
 
@@ -133,12 +97,9 @@ export JIRA_ACCEPTANCE_CRITERIA_FIELD="customfield_10001" # optional — your si
 export JIRA_TOKEN_FILE="/path/to/your/token"               # optional — use a token file anywhere you like
 ```
 
-Without `JIRA_API_TOKEN` or `JIRA_TOKEN_FILE`, the token is read from
-`~/.config/jira-tui/token` (see `--init`), then `./token.txt` in the current
-directory.
+Without `JIRA_API_TOKEN` or `JIRA_TOKEN_FILE`, the token is read from `~/.config/jira-tui/token` (see `--init`), then `./token.txt` in the current directory.
 
-Non-secret settings live in `$XDG_CONFIG_HOME/jira-tui/config.toml`
-(default `~/.config/jira-tui/config.toml`):
+Non-secret settings live in `$XDG_CONFIG_HOME/jira-tui/config.toml` (default `~/.config/jira-tui/config.toml`):
 
 ```toml
 base_url = "https://your-org.atlassian.net"
@@ -151,159 +112,88 @@ mouse = false   # start with mouse mode on/off
 
 ### Mapping custom fields
 
-Custom field IDs (`customfield_10001`, etc.) are assigned per Jira site, so
-there's no single correct default to ship. Rather than hunting for yours in
-Jira's admin settings, jira-tui can look it up for you:
+Custom field IDs (`customfield_10001`, etc.) are assigned per Jira site, so there's no single correct default to ship. Rather than hunting for yours in Jira's admin settings, jira-tui can look it up for you:
 
-- After verifying credentials during onboarding, you're dropped straight into
-  a searchable list of your site's custom fields — type to filter by name
-  (e.g. "acceptance"), then `⏎` to map it, or pick the leading **— none —**
-  entry to skip.
-- Press **`F`** at any time (from the work list) to reopen that screen and
-  change or clear the mapping.
+- After verifying credentials during onboarding, you're dropped straight into a searchable list of your site's custom fields — type to filter by name (e.g. "acceptance"), then `⏎` to map it, or pick the leading **— none —** entry to skip.
+- Press **`F`** at any time (from the work list) to reopen that screen and change or clear the mapping.
 
-Currently only "Acceptance Criteria" is wired up as a mapped field, shown on
-the issue detail screen when configured.
+Currently only "Acceptance Criteria" is wired up as a mapped field, shown on the issue detail screen when configured.
 
-Missing or invalid credentials never crash the app — it falls back to the last
-cached list, then to demo data.
+Missing or invalid credentials never crash the app — it falls back to the last cached list, then to demo data.
 
 ## The work list
 
 The `my work` panel supports quick triage:
 
-- **`s` / `S`** — cycle the sort field (updated date → priority → status → key)
-  and flip the direction. The current mode shows in the panel title.
+- **`s` / `S`** — cycle the sort field (updated date → priority → status → key) and flip the direction. The current mode shows in the panel title.
 - **`f`** — cycle a status filter (all → each status → all).
-- **`v`** — toggle a full-width **quick-view** panel below the list showing the
-  selected issue's full fields (type, status, priority, assignee, reporter,
-  epic, components, labels, links) and its complete ADF-rendered description,
-  acceptance criteria, and transitions — loaded automatically as you move the
-  selection.
-- **`Tab`** — move keyboard focus between the list and the quick-view panel
-  (its border brightens when focused). With focus on quick view, `↑`/`↓` and
-  `PageUp`/`PageDown` scroll its body instead of moving the list selection;
-  `Tab` again to hand control back to the list.
-- **Mouse wheel** scrolls whichever panel the pointer is over — hover the list
-  to move the selection, hover quick view to scroll it — no `Tab` needed.
+- **`v`** — toggle a full-width **quick-view** panel below the list showing the selected issue's full fields (type, status, priority, assignee, reporter, epic, components, labels, links) and its complete ADF-rendered description, acceptance criteria, and transitions — loaded automatically as you move the selection.
+- **`Tab`** — move keyboard focus between the list and the quick-view panel (its border brightens when focused). With focus on quick view, `↑`/`↓` and `PageUp`/`PageDown` scroll its body instead of moving the list selection; `Tab` again to hand control back to the list.
+- **Mouse wheel** scrolls whichever panel the pointer is over — hover the list to move the selection, hover quick view to scroll it — no `Tab` needed.
 - **`/`** — open **search / go to issue** (see below).
 - **`→` / `⏎`** — open the selected issue; **`esc` / `←` / `⌫`** — go back.
 
 ## Switching views
 
-Press **`V`** from Home, the full list, or the swimlane board to switch which
-issues you're looking at:
+Press **`V`** from Home, the full list, or the swimlane board to switch which issues you're looking at:
 
 - **My Work** — the default: your own assigned, not-yet-done issues.
-- **All Project Issues** — everything in `JIRA_PROJECT`, most recently updated
-  first.
-- **A teammate's work** — one entry per assignee already visible in your
-  currently loaded issues (no extra API call needed to populate the list),
-  filtered the same way as My Work.
+- **All Project Issues** — everything in `JIRA_PROJECT`, most recently updated first.
+- **A teammate's work** — one entry per assignee already visible in your currently loaded issues (no extra API call needed to populate the list), filtered the same way as My Work.
 
-Use **`↑`/`↓`** to move, **`⏎`** to switch, **`esc`** to cancel. The header
-shows `viewing: <name>` whenever you're on anything other than My Work. Every
-view — My Work, All Project Issues, and each teammate — gets its own entry in
-the on-disk SQLite cache, so switching back to a view you've already loaded
-this session (or a previous one) doesn't always re-hit the API, and each
-still has an offline fallback if Jira is unreachable.
+Use **`↑`/`↓`** to move, **`⏎`** to switch, **`esc`** to cancel. The header shows `viewing: <name>` whenever you're on anything other than My Work. Every view — My Work, All Project Issues, and each teammate — gets its own entry in the on-disk SQLite cache, so switching back to a view you've already loaded this session (or a previous one) doesn't always re-hit the API, and each still has an offline fallback if Jira is unreachable.
 
-Live queries page through up to 500 issues (10 pages of 50); if a project
-genuinely has more than that, the status bar says so
-("capped at 500; more may exist") rather than silently truncating. The
-teammate list is seeded from whatever's currently loaded, so a teammate
-whose only issues fall outside that window won't show up until you're
-viewing a page that includes one of their issues.
+Live queries page through up to 500 issues (10 pages of 50); if a project genuinely has more than that, the status bar says so ("capped at 500; more may exist") rather than silently truncating. The teammate list is seeded from whatever's currently loaded, so a teammate whose only issues fall outside that window won't show up until you're viewing a page that includes one of their issues.
 
 ## Search & go to issue
 
 Press **`/`** from Home, the full list, or an open issue to search:
 
-- Type to filter your work list by **key or summary** (case-insensitive
-  substring match) — results update as you type.
-- Type something that looks like an issue key (`DS-123`) and a **"↵ go to
-  DS-123"** row appears at the top — press `⏎` to jump straight to that issue
-  via a direct fetch, even if it isn't in your current list or view.
-- **`↑`/`↓`** to move between results, **`⏎`** to open the highlighted one,
-  **`esc`** to cancel back to where you were.
+- Type to filter your work list by **key or summary** (case-insensitive substring match) — results update as you type.
+- Type something that looks like an issue key (`DS-123`) and a **"↵ go to DS-123"** row appears at the top — press `⏎` to jump straight to that issue via a direct fetch, even if it isn't in your current list or view.
+- **`↑`/`↓`** to move between results, **`⏎`** to open the highlighted one, **`esc`** to cancel back to where you were.
 
 ## Swimlane board
 
 Press **`b`** from Home or the full list to open a terminal Kanban board:
 
-- **Columns** are your workflow statuses (Backlog → To Do → In Progress → In
-  Review → Done, plus anything else present), each with a live count.
-- **Swimlanes** group cards by parent **Epic** — issues under the same Epic
-  share a lane, with a **"No epic"** lane for everything else — so you can see
-  at a glance how work is distributed across initiatives, the way Jira's own
-  board view groups things by default.
-- **`↑`/`↓`** move between cards in the current lane/column, **`←`/`→`** switch
-  columns, **`PageUp`/`PageDown`** switch lanes, **`⏎`** opens the highlighted
-  card, **`/`** jumps into search, **`esc`**/**`q`** goes back home.
-- The whole board scrolls (mouse wheel or the same keys) if it's taller than
-  the terminal.
+- **Columns** are your workflow statuses (Backlog → To Do → In Progress → In Review → Done, plus anything else present), each with a live count.
+- **Swimlanes** group cards by parent **Epic** — issues under the same Epic share a lane, with a **"No epic"** lane for everything else — so you can see at a glance how work is distributed across initiatives, the way Jira's own board view groups things by default.
+- **`↑`/`↓`** move between cards in the current lane/column, **`←`/`→`** switch columns, **`PageUp`/`PageDown`** switch lanes, **`⏎`** opens the highlighted card, **`/`** jumps into search, **`esc`**/**`q`** goes back home.
+- The whole board scrolls (mouse wheel or the same keys) if it's taller than the terminal.
 
-The board reflects your current sort and status filter, so narrowing the list
-first (see below) narrows the board too.
+The board reflects your current sort and status filter, so narrowing the list first (see below) narrows the board too.
 
 ## Editing
 
 Inside an issue (`Detail`):
 
-- **`t` — change status:** opens a transition picker; pick a target and it's
-  applied (via Jira REST in live mode, locally in demo). The current status is
-  marked, and a toast confirms the move.
-- **`e` — edit the description:** serialises the issue's ADF to Markdown and
-  opens it in a **built-in editor** (`^S` to preview, `esc` to cancel). Prefer
-  your own editor? **`E`** opens `$VISUAL`/`$EDITOR` (falling back to `vi`)
-  instead. Either way your Markdown is **recompiled to ADF** and shown as a
-  **preview**; press `y` to apply (REST in live mode) or `esc` to cancel —
-  nothing is sent to Jira until you confirm.
+- **`t` — change status:** opens a transition picker; pick a target and it's applied (via Jira REST in live mode, locally in demo). The current status is marked, and a toast confirms the move.
+- **`e` — edit the description:** serialises the issue's ADF to Markdown and opens it in a **built-in editor** (`^S` to preview, `esc` to cancel). Prefer your own editor? **`E`** opens `$VISUAL`/`$EDITOR` (falling back to `vi`) instead. Either way your Markdown is **recompiled to ADF** and shown as a **preview**; press `y` to apply (REST in live mode) or `esc` to cancel — nothing is sent to Jira until you confirm.
 
-The Markdown ↔ ADF conversion supports the common formatting elements
-(headings, bullet/ordered/task lists, code blocks, and inline
-`code`/**bold**/*italic*/links), so the round trip stays ADF-native.
+The Markdown ↔ ADF conversion supports the common formatting elements (headings, bullet/ordered/task lists, code blocks, and inline `code`/**bold**/*italic*/links), so the round trip stays ADF-native.
 
 ## Comments
 
-Both the full `Detail` screen and the quick-view panel render an issue's
-comments (oldest first) below the description and acceptance criteria, so
-you can read the discussion without scanning through the body fields:
+Both the full `Detail` screen and the quick-view panel render an issue's comments (oldest first) below the description and acceptance criteria, so you can read the discussion without scanning through the body fields:
 
-- A **"💬 N comments"** indicator sits near the top of the panel, and again
-  as the comments section header, so you know at a glance whether there's
-  discussion to read.
-- **`]`** jumps straight to the comments section; **`[`** jumps back to the
-  top of the panel.
-- **`n`** / **`p`** step to the next / previous individual comment, clamped
-  at the first and last (no wrap-around).
-- **`c`** opens the same built-in Markdown composer used for description
-  edits (empty this time) — `^S` to preview, `esc` to cancel. The compiled
-  ADF is **previewed** before sending; press `y` to post the comment (REST
-  in live mode) or `esc` to cancel. Works from both `Detail` and the
-  quick-view panel.
-- In live mode, comments are fetched with **full pagination** (not just
-  Jira's default most-recent page), so long comment threads are shown in
-  full.
-- Newly posted comments appear immediately (no re-fetch needed) — attributed
-  to your Jira display name in live mode, or `you` in demo/cache mode.
+- A **"💬 N comments"** indicator sits near the top of the panel, and again as the comments section header, so you know at a glance whether there's discussion to read.
+- **`]`** jumps straight to the comments section; **`[`** jumps back to the top of the panel.
+- **`n`** / **`p`** step to the next / previous individual comment, clamped at the first and last (no wrap-around).
+- **`c`** opens the same built-in Markdown composer used for description edits (empty this time) — `^S` to preview, `esc` to cancel. The compiled ADF is **previewed** before sending; press `y` to post the comment (REST in live mode) or `esc` to cancel. Works from both `Detail` and the quick-view panel.
+- In live mode, comments are fetched with **full pagination** (not just Jira's default most-recent page), so long comment threads are shown in full.
+- Newly posted comments appear immediately (no re-fetch needed) — attributed to your Jira display name in live mode, or `you` in demo/cache mode.
 
 ## Mouse & clipboard
 
 Press **`m`** to toggle mouse mode:
 
 - **Click** a row to open that issue.
-- **Wheel** scrolls whatever panel is **under the pointer** — the list, the
-  quick-view panel, the issue detail, or the board — regardless of which panel
-  currently has keyboard focus (`Tab`). Mouse always follows the cursor;
-  keyboard follows focus — they're independent.
-- **Drag** to select rows; on release the text is copied to your system clipboard
-  via **OSC 52** (works over SSH, no X11/Wayland dependency).
-- **Shift-drag** bypasses the app so your terminal's **native selection/copy**
-  works as usual.
+- **Wheel** scrolls whatever panel is **under the pointer** — the list, the quick-view panel, the issue detail, or the board — regardless of which panel currently has keyboard focus (`Tab`). Mouse always follows the cursor; keyboard follows focus — they're independent.
+- **Drag** to select rows; on release the text is copied to your system clipboard via **OSC 52** (works over SSH, no X11/Wayland dependency).
+- **Shift-drag** bypasses the app so your terminal's **native selection/copy** works as usual.
 
-You can also yank without the mouse: **`y`** copies the selected issue key, **`Y`**
-copies its browse URL.
+You can also yank without the mouse: **`y`** copies the selected issue key, **`Y`** copies its browse URL.
 
 ## Keys
 
@@ -345,13 +235,9 @@ copies its browse URL.
 
 ## MCP server for agents
 
-`jira-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server
-that lets agents read and write Jira the same ADF-safe way the TUI does —
-descriptions and comments go in and out as **Markdown**; the server converts
-to/from ADF for you, so an agent never has to construct raw ADF JSON.
+`jira-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server that lets agents read and write Jira the same ADF-safe way the TUI does — descriptions and comments go in and out as **Markdown**; the server converts to/from ADF for you, so an agent never has to construct raw ADF JSON.
 
-Build and run it (a separate `mcp` feature, so the plain `jira-tui` binary
-doesn't pull in an async runtime):
+Build and run it (a separate `mcp` feature, so the plain `jira-tui` binary doesn't pull in an async runtime):
 
 ```bash
 cargo build --release --features mcp   # ./target/release/jira-mcp
@@ -370,26 +256,13 @@ Point any stdio-based MCP client at that binary. Example client config:
 }
 ```
 
-It reuses the exact same credentials as the TUI (`JIRA_EMAIL` /
-`JIRA_API_TOKEN` / `JIRA_BASE_URL` / `JIRA_PROJECT`, `~/.config/jira-tui/token`,
-`config.toml`) — if you've already run `--onboard` or `--init`, there's nothing
-extra to set up.
+It reuses the exact same credentials as the TUI (`JIRA_EMAIL` / `JIRA_API_TOKEN` / `JIRA_BASE_URL` / `JIRA_PROJECT`, `~/.config/jira-tui/token`, `config.toml`) — if you've already run `--onboard` or `--init`, there's nothing extra to set up.
 
-**Read tools** (`list_my_work`, `get_issue`, `search_issues`,
-`list_transitions`, `get_description_markdown`) fall back to the same baked-in
-demo data the TUI uses when no credentials are configured, so an agent can
-explore the tool surface with zero setup.
+**Read tools** (`list_my_work`, `get_issue`, `search_issues`, `list_transitions`, `get_description_markdown`) fall back to the same baked-in demo data the TUI uses when no credentials are configured, so an agent can explore the tool surface with zero setup.
 
-**Write tools** (`create_issue`, `update_summary`, `add_comment`,
-`transition_issue`, `update_description_markdown`) require live credentials —
-mutating the static demo data would be a no-op — and return a clear
-configuration error otherwise instead of silently doing nothing.
+**Write tools** (`create_issue`, `update_summary`, `add_comment`, `transition_issue`, `update_description_markdown`) require live credentials — mutating the static demo data would be a no-op — and return a clear configuration error otherwise instead of silently doing nothing.
 
-**Full round-trip parity** with the TUI's in-app editor: `get_description_markdown`
-/ `update_description_markdown` mirror the same `adf::to_markdown` /
-`adf::compile` conversion used by pressing `e` on an issue, so an agent can
-fetch a description as Markdown, edit it, and push it back without ever
-touching ADF.
+**Full round-trip parity** with the TUI's in-app editor: `get_description_markdown` / `update_description_markdown` mirror the same `adf::to_markdown` / `adf::compile` conversion used by pressing `e` on an issue, so an agent can fetch a description as Markdown, edit it, and push it back without ever touching ADF.
 
 ## Layout
 
@@ -458,21 +331,12 @@ cargo clippy --no-default-features --all-targets   # offline build stays clean
 cargo clippy --features mcp --all-targets          # MCP server build stays clean
 ```
 
-The suite covers ADF rendering (including malformed input), branch-key parsing,
-config/cache/token lifecycle, selection and mouse logic, the credential form, the
-CLI surface (`--version`, `--help`, `--init`), and headless rendering of every
-screen via `ratatui`'s `TestBackend`.
+The suite covers ADF rendering (including malformed input), branch-key parsing, config/cache/token lifecycle, selection and mouse logic, the credential form, the CLI surface (`--version`, `--help`, `--init`), and headless rendering of every screen via `ratatui`'s `TestBackend`.
 
 ## Status
 
-Milestone 1 (browse) and Milestone 2 (quick transitions + the Markdown
-round-trip edit) are working end to end against demo, cached, and live data, with
-onboarding, mouse mode, clipboard support, sort/filter, a focusable quick-view
-panel, search / go-to-issue, and a swimlane board grouped by epic. Attachments
-are next — see `docs/` for the full spec and roadmap.
+Milestone 1 (browse) and Milestone 2 (quick transitions + the Markdown round-trip edit) are working end to end against demo, cached, and live data, with onboarding, mouse mode, clipboard support, sort/filter, a focusable quick-view panel, search / go-to-issue, and a swimlane board grouped by epic. Attachments are next — see `docs/` for the full spec and roadmap.
 
 ## Guidelines
 
-See `AGENTS.md`. In short: ADF-first, demo mode never breaks, preview before
-mutate, Canadian spelling 🍁, and Conventional Commits with Markdown bodies (bold
-section labels, no headings).
+See `AGENTS.md`. In short: ADF-first, demo mode never breaks, preview before mutate, Canadian spelling 🍁, and Conventional Commits with Markdown bodies (bold section labels, no headings).
