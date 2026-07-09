@@ -279,7 +279,7 @@ fn open_cache_for_site(cfg: &crate::jira::Config) -> Option<(crate::cache::Cache
     if !crate::config::Settings::load().cache_enabled {
         return None;
     }
-    let cache = crate::cache::Cache::open().ok()?;
+    let mut cache = crate::cache::Cache::open().ok()?;
     let site_id = cache.site_id(&cfg.base_url).ok()?;
     cache.migrate_legacy_json(site_id, crate::jira::MY_WORK_JQL);
     Some((cache, site_id))
@@ -291,12 +291,12 @@ fn load_issues(force_demo: bool) -> (Vec<IssueSummary>, Source, String) {
         {
             if let Some(cfg) = crate::jira::Config::load() {
                 let user = crate::jira::whoami(&cfg).unwrap_or_else(|_| "me".into());
-                let cache = open_cache_for_site(&cfg);
+                let mut cache = open_cache_for_site(&cfg);
                 match crate::jira::fetch_my_work(&cfg) {
                     Ok(issues) if !issues.is_empty() => {
                         let host = cfg.site_host();
                         let n = issues.len();
-                        if let Some((cache, site_id)) = &cache {
+                        if let Some((cache, site_id)) = &mut cache {
                             let _ = cache.save_view(
                                 *site_id,
                                 "my_work",

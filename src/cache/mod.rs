@@ -153,21 +153,32 @@ impl Cache {
     /// if it exists and this site has no cached `my_work` view yet, import
     /// it as the initial one. Best-effort — any read/parse failure just
     /// means we fall through to a fresh live fetch, exactly like a
-    /// corrupt/missing cache always has. Always removes the legacy file
-    /// afterwards (successful import or not) so this check only ever runs
-    /// once per upgrade.
-    pub fn migrate_legacy_json(&self, site_id: i64, jql: &str) {
+    /// corrupt/missing cache always has.
+    pub fn migrate_legacy_json(&mut self, site_id: i64, jql: &str) {
         let Some(legacy_path) = crate::config::legacy_cache_file() else {
             return;
         };
         if !legacy_path.exists() {
             return;
         }
-        if !matches!(self.load_view(site_id, "my_work"), Ok(None)) {
-            // Either already migrated, or a live fetch already populated
-            // this site's cache — nothing left to import.
-            let _ = std::fs::remove_file(&legacy_path);
-            return;
+        match self.load_view(site_id, "my_work") {
+            Ok(None) => {
+                // Nothing cached for this site yet -- try the import below.
+            }
+            Ok(Some(_)) => {
+                // Already migrated, or a live fetch already populated this
+                // site's cache — nothing left to import; clean up the file
+                // so this check only ever runs once per upgrade.
+                let _ = std::fs::remove_file(&legacy_path);
+                return;
+            }
+            Err(_) => {
+                // Couldn't tell whether this site already has a view (a
+                // transient error, not "definitely empty") — leave the
+                // legacy file alone and try again next launch rather than
+                // risk silently discarding an importable cache.
+                return;
+            }
         }
         if let Ok(content) = std::fs::read_to_string(&legacy_path) {
             if let Ok(issues) = serde_json::from_str::<Vec<IssueSummary>>(&content) {
@@ -180,35 +191,38 @@ impl Cache {
     /// Replace whatever is cached for `(site_id, kind)` with `issues`,
     /// upserting each issue's own row along the way. Overwrite semantics
     /// (not incremental merge) — matches the previous `my-work.json`
-    /// behaviour of "the last successful fetch wins".
+    /// behaviour of "the last successful fetch wins". Runs as a single
+    /// transaction so a mid-write failure (or process kill) can never leave
+    /// `view_issues` partially deleted/repopulated.
     pub fn save_view(
-        &self,
+        &mut self,
         site_id: i64,
         kind: &str,
         label: &str,
         jql: &str,
         issues: &[IssueSummary],
     ) -> Result<()> {
+        let tx = self.conn.transaction()?;
         let now = now_iso8601();
-        self.conn.execute(
+        tx.execute(
             "INSERT INTO views (site_id, kind, label, jql, fetched_at)
              VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT(site_id, kind, jql) DO UPDATE SET label = ?3, fetched_at = ?5",
             params![site_id, kind, label, jql, now],
         )?;
-        let view_id: i64 = self.conn.query_row(
+        let view_id: i64 = tx.query_row(
             "SELECT id FROM views WHERE site_id = ?1 AND kind = ?2 AND jql = ?3",
             params![site_id, kind, jql],
             |row| row.get(0),
         )?;
 
-        self.conn.execute(
+        tx.execute(
             "DELETE FROM view_issues WHERE view_id = ?1",
             params![view_id],
         )?;
 
         for (position, issue) in issues.iter().enumerate() {
-            self.conn.execute(
+            tx.execute(
                 "INSERT INTO issues (site_id, key, summary, issue_type, status, priority, assignee, blocked, updated, epic)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
                  ON CONFLICT(site_id, key) DO UPDATE SET
@@ -227,17 +241,18 @@ impl Cache {
                     issue.epic,
                 ],
             )?;
-            let issue_id: i64 = self.conn.query_row(
+            let issue_id: i64 = tx.query_row(
                 "SELECT id FROM issues WHERE site_id = ?1 AND key = ?2",
                 params![site_id, issue.key],
                 |row| row.get(0),
             )?;
-            self.conn.execute(
+            tx.execute(
                 "INSERT INTO view_issues (view_id, issue_id, position) VALUES (?1, ?2, ?3)",
                 params![view_id, issue_id, position as i64],
             )?;
         }
 
+        tx.commit()?;
         Ok(())
     }
 
@@ -412,7 +427,7 @@ mod tests {
 
     #[test]
     fn save_and_load_view_round_trips_issues_in_order() {
-        let (cache, _dir) = open_temp();
+        let (mut cache, _dir) = open_temp();
         let site = cache.site_id("https://a.atlassian.net").unwrap();
         let issues = sample_issues();
 
@@ -436,7 +451,7 @@ mod tests {
 
     #[test]
     fn save_view_overwrites_previous_contents() {
-        let (cache, _dir) = open_temp();
+        let (mut cache, _dir) = open_temp();
         let site = cache.site_id("https://a.atlassian.net").unwrap();
         cache
             .save_view(
@@ -468,7 +483,7 @@ mod tests {
 
     #[test]
     fn different_sites_do_not_leak_into_each_other() {
-        let (cache, _dir) = open_temp();
+        let (mut cache, _dir) = open_temp();
         let site_a = cache.site_id("https://a.atlassian.net").unwrap();
         let site_b = cache.site_id("https://b.atlassian.net").unwrap();
 
@@ -521,7 +536,7 @@ mod tests {
         )
         .unwrap();
 
-        let (cache, _dir) = open_temp();
+        let (mut cache, _dir) = open_temp();
         let site = cache.site_id("https://a.atlassian.net").unwrap();
 
         cache.migrate_legacy_json(site, "assignee = currentUser()");
@@ -565,7 +580,7 @@ mod tests {
         )
         .unwrap();
 
-        let (cache, _dir) = open_temp();
+        let (mut cache, _dir) = open_temp();
         let site = cache.site_id("https://a.atlassian.net").unwrap();
         let mut fresh = sample_issues();
         fresh.truncate(1);
