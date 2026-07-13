@@ -34,8 +34,25 @@ pub fn open_url(url: &str) -> std::io::Result<()> {
     };
     #[cfg(target_os = "windows")]
     let mut cmd = {
+        // `url` is untrusted text scraped out of Jira issue bodies
+        // (`render::match_url`), not an application-controlled string. `cmd
+        // /C` re-tokenizes its whole command line itself, so passing the
+        // URL as a bare argument would let characters like `&`/`|`/`<`/`>`
+        // — all valid in query strings — be interpreted as command
+        // separators/redirection by cmd rather than staying part of the
+        // URL. Quoting the argument (and rejecting embedded quotes, which
+        // would otherwise let a crafted URL break out of the quoting)
+        // keeps cmd's tokenizer from splitting on them.
+        use std::os::windows::process::CommandExt;
         let mut c = std::process::Command::new("cmd");
-        c.args(["/C", "start", "", url]);
+        c.arg("/C").arg("start").arg("");
+        if url.contains('"') {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "refusing to open a URL containing a quote character",
+            ));
+        }
+        c.raw_arg(format!("\"{url}\""));
         c
     };
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
