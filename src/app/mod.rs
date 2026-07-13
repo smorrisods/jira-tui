@@ -12,9 +12,10 @@ use std::collections::HashMap;
 use ratatui::layout::Rect;
 
 use crate::config::{self, Settings};
-use crate::domain::{demo_issues, IssueDetail, IssueSummary, Source, ViewKind};
+use crate::domain::{demo_issues, AssignableUser, IssueDetail, IssueSummary, Source, ViewKind};
 use crate::git::GitContext;
 
+mod assign;
 mod async_ops;
 mod board;
 mod comments;
@@ -35,6 +36,7 @@ mod view_switch;
 #[cfg(test)]
 mod tests;
 
+pub use assign::{AssigneePickerState, AssigneeRow};
 pub use async_ops::AppEvent;
 pub use board::BoardSelection;
 pub use edit::{EditTarget, EditorState};
@@ -213,6 +215,20 @@ pub struct App {
     /// silently dropping an overlapping request's result.
     pub(crate) transition_pending: bool,
     pub(crate) transition_generation: u64,
+    /// Whether an assignee change is currently in flight. Mirrors
+    /// `transition_pending`: `open_assignee_picker` refuses to reopen while
+    /// this is set, so `assignee_generation` can never go stale mid-flight.
+    pub(crate) assignee_pending: bool,
+    pub(crate) assignee_generation: u64,
+    /// Whether the assignee picker (`A`) is currently open.
+    pub assignee_picker_open: bool,
+    pub assignee_picker: AssigneePickerState,
+    /// Every assignable project member, as fetched by
+    /// `async_ops::dispatch_teammate_discovery` for a live session (empty
+    /// for demo/cache sessions, which fall back to
+    /// `domain::demo_assignable_users()` instead — see
+    /// `App::assignable_users_source`).
+    pub(crate) assignable_users: Vec<AssignableUser>,
     /// Whether a description update or comment post is currently in
     /// flight. `begin_tui_edit`/`begin_external_edit`/`begin_comment`
     /// refuse to start a new edit session while this is set, for the same
@@ -305,6 +321,11 @@ impl App {
             detail_generation: 0,
             transition_pending: false,
             transition_generation: 0,
+            assignee_pending: false,
+            assignee_generation: 0,
+            assignee_picker_open: false,
+            assignee_picker: AssigneePickerState::default(),
+            assignable_users: Vec::new(),
             edit_pending: false,
             edit_generation: 0,
             field_mapping_pending: false,

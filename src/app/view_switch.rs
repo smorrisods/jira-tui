@@ -95,7 +95,7 @@ impl App {
         }
     }
 
-    fn me_display_name(&self) -> &str {
+    pub(crate) fn me_display_name(&self) -> &str {
         match &self.source {
             Source::Live { user, .. } | Source::Cache { user } => user.as_str(),
             Source::Demo => crate::domain::DEMO_CURRENT_USER,

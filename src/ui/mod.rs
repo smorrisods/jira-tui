@@ -18,6 +18,7 @@ use crate::app::App;
 use crate::domain::Priority;
 
 mod about;
+mod assignee_picker;
 mod board;
 mod detail;
 mod editor;
@@ -33,6 +34,7 @@ mod view_picker;
 mod welcome;
 
 use about::draw_about;
+use assignee_picker::draw_assignee_picker;
 use board::draw_board;
 use detail::draw_detail;
 use editor::draw_editor;
@@ -117,6 +119,10 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     if app.view_picker_open {
         draw_view_picker(f, app, f.area());
+    }
+
+    if app.assignee_picker_open {
+        draw_assignee_picker(f, app, f.area());
     }
 
     // Highlight the active drag selection by inverting the covered rows.
@@ -251,7 +257,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
                 (false, false) => "",
             };
             format!(
-                "↑/↓ scroll · t transition · e edit · c comment · ]/[ comments/top · \
+                "↑/↓ scroll · t transition · A assign · e edit · c comment · ]/[ comments/top · \
                  n/p next/prev comment · {{/}} cycle links · ⏎ open link · r refresh · esc{history} back · a about · ? help · q quit"
             )
         }
@@ -276,7 +282,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
                 "r refresh list"
             };
             format!(
-                "↑/↓ move · →/⏎ open · tab focus quick view · c comment · ]/[ comments/top · \
+                "↑/↓ move · →/⏎ open · tab focus quick view · A assign · c comment · ]/[ comments/top · \
                  n/p next/prev comment · {{/}} cycle links · ⏎ open link (focused) · {refresh} · \
                  b board · / search · V switch view · ? help · q quit"
             )
