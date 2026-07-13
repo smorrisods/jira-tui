@@ -289,16 +289,16 @@ impl App {
             }
         }
 
-        // Kick off a one-shot background fetch of All Project Issues purely
-        // to discover teammates earlier, rather than waiting for the user
-        // to manually switch to that view — see
+        // Kick off a one-shot background fetch of the project's assignable
+        // users purely to discover teammates earlier, rather than waiting
+        // for the user to manually switch to All Project Issues — see
         // `async_ops::dispatch_teammate_discovery`. Skipped for demo/cache
-        // sessions (no live network worth a background call for) and when
-        // the initial load already was All Project Issues (nothing left to
-        // discover).
-        if matches!(app.source, Source::Live { .. })
-            && !matches!(app.current_view, ViewKind::AllProject)
-        {
+        // sessions (no live network worth a background call for). Unlike
+        // an earlier version of this that fetched All Project Issues,
+        // `assignable_users` is a single lightweight non-issue call, so
+        // it's cheap enough to fire unconditionally rather than needing to
+        // be lazy or gated on the initial view.
+        if matches!(app.source, Source::Live { .. }) {
             async_ops::dispatch_teammate_discovery(app.events_tx.clone());
         }
 

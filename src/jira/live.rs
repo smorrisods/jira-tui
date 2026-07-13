@@ -104,6 +104,39 @@ pub fn update_description(cfg: &Config, key: &str, description: &Value) -> Resul
     )
 }
 
+/// Every user assignable to issues in `project` — used to discover
+/// teammates for the view picker without touching any issue data at all
+/// (`GET /rest/api/3/user/assignable/search`). Far cheaper than deriving
+/// assignees from a full "All Project Issues" search: no issue payloads to
+/// page through, and most projects have far fewer members than issues.
+/// The endpoint returns a flat JSON array (no `total`/`isLast`), so a page
+/// shorter than `PAGE_SIZE` signals the last page.
+pub fn assignable_users(cfg: &Config, project: &str) -> Result<Vec<String>> {
+    let project = url_encode(project);
+    let mut out = Vec::new();
+    let mut start_at: u64 = 0;
+    const PAGE_SIZE: u64 = 100;
+    loop {
+        let path = format!(
+            "/rest/api/3/user/assignable/search?project={project}&startAt={start_at}&maxResults={PAGE_SIZE}"
+        );
+        let page = get(cfg, &path)?;
+        let users = page.as_array().cloned().unwrap_or_default();
+        let got = users.len() as u64;
+        out.extend(
+            users
+                .iter()
+                .filter_map(|u| u.get("displayName").and_then(|v| v.as_str()))
+                .map(str::to_string),
+        );
+        if got < PAGE_SIZE {
+            break;
+        }
+        start_at += got;
+    }
+    Ok(out)
+}
+
 pub fn whoami(cfg: &Config) -> Result<String> {
     let me = get(cfg, "/rest/api/3/myself")?;
     Ok(me
@@ -557,6 +590,83 @@ mod tests {
 
         let cfg = test_config(server.url());
         assert!(whoami(&cfg).is_err());
+    }
+
+    #[test]
+    fn assignable_users_returns_display_names_from_a_single_page() {
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("GET", "/rest/api/3/user/assignable/search")
+            .match_query(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::UrlEncoded("project".into(), "PROJ".into()),
+                mockito::Matcher::UrlEncoded("startAt".into(), "0".into()),
+                mockito::Matcher::UrlEncoded("maxResults".into(), "100".into()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"[
+                    {"accountId": "1", "displayName": "Priya Nair"},
+                    {"accountId": "2", "displayName": "Alex Chen"}
+                ]"#,
+            )
+            .create();
+
+        let cfg = test_config(server.url());
+        let names = assignable_users(&cfg, "PROJ").unwrap();
+
+        mock.assert();
+        assert_eq!(names, vec!["Priya Nair", "Alex Chen"]);
+    }
+
+    #[test]
+    fn assignable_users_pages_until_a_short_page() {
+        let mut server = mockito::Server::new();
+        // A full page (== PAGE_SIZE, 100 users) means there might be more.
+        let full_page: String = (0..100)
+            .map(|i| format!(r#"{{"accountId": "{i}", "displayName": "User {i}"}}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+        let first = server
+            .mock("GET", "/rest/api/3/user/assignable/search")
+            .match_query(mockito::Matcher::AllOf(vec![mockito::Matcher::UrlEncoded(
+                "startAt".into(),
+                "0".into(),
+            )]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!("[{full_page}]"))
+            .create();
+        let second = server
+            .mock("GET", "/rest/api/3/user/assignable/search")
+            .match_query(mockito::Matcher::AllOf(vec![mockito::Matcher::UrlEncoded(
+                "startAt".into(),
+                "100".into(),
+            )]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"[{"accountId": "100", "displayName": "User 100"}]"#)
+            .create();
+
+        let cfg = test_config(server.url());
+        let names = assignable_users(&cfg, "PROJ").unwrap();
+
+        first.assert();
+        second.assert();
+        assert_eq!(names.len(), 101);
+        assert_eq!(names[100], "User 100");
+    }
+
+    #[test]
+    fn assignable_users_surfaces_http_errors() {
+        let mut server = mockito::Server::new();
+        server
+            .mock("GET", "/rest/api/3/user/assignable/search")
+            .with_status(401)
+            .create();
+
+        let cfg = test_config(server.url());
+        assert!(assignable_users(&cfg, "PROJ").is_err());
     }
 
     #[test]

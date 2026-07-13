@@ -63,22 +63,42 @@ impl App {
 
     /// Merge every distinct assignee in `issues` (excluding "me") into
     /// `teammates_seen`, without touching `all_issues`/`current_view`.
-    /// Shared by `note_teammates_seen` (the active view) and applying
-    /// `AppEvent::TeammatesDiscovered` (a background All Project Issues
-    /// fetch dispatched once at startup purely to discover teammates
-    /// earlier than the user manually visiting that view — see
-    /// `async_ops::dispatch_teammate_discovery`).
+    /// Used by `note_teammates_seen` (the active view) — the fallback
+    /// mechanism for demo/cache sessions where the live-only
+    /// `assignable_users` endpoint isn't available.
     pub(crate) fn merge_teammates(&mut self, issues: &[IssueSummary]) {
-        let me = match &self.source {
-            Source::Live { user, .. } | Source::Cache { user } => user.as_str(),
-            Source::Demo => crate::domain::DEMO_CURRENT_USER,
-        };
+        let me = self.me_display_name().to_string();
         for issue in issues {
             if let Some(name) = &issue.assignee {
                 if name.as_str() != me {
                     self.teammates_seen.insert(name.clone());
                 }
             }
+        }
+    }
+
+    /// Merge a flat list of display names (excluding "me") into
+    /// `teammates_seen`, without touching `all_issues`/`current_view`.
+    /// Applies the result of a background `assignable_users` fetch (a
+    /// single lightweight call listing everyone assignable in the project,
+    /// dispatched once at startup for a live session — see
+    /// `async_ops::dispatch_teammate_discovery`) so the view picker's
+    /// teammate list is populated without deriving it from issue data at
+    /// all, and without waiting for the user to manually visit All Project
+    /// Issues first.
+    pub(crate) fn merge_teammate_names(&mut self, names: &[String]) {
+        let me = self.me_display_name().to_string();
+        for name in names {
+            if name.as_str() != me {
+                self.teammates_seen.insert(name.clone());
+            }
+        }
+    }
+
+    fn me_display_name(&self) -> &str {
+        match &self.source {
+            Source::Live { user, .. } | Source::Cache { user } => user.as_str(),
+            Source::Demo => crate::domain::DEMO_CURRENT_USER,
         }
     }
 

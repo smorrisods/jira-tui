@@ -929,19 +929,43 @@ async fn teammate_discovery_merges_without_disturbing_the_active_view() {
     let before_view = app.current_view.clone();
     let before_keys: Vec<String> = app.all_issues.iter().map(|i| i.key.clone()).collect();
 
+    // `dispatch_teammate_discovery` calls the real `assignable_users`
+    // endpoint, which needs a `Config`; `live_app()` deliberately has none
+    // configured (see `non_demo_app`), so this only exercises the
+    // spawn/spawn_blocking/channel plumbing — the merge logic itself is
+    // covered directly below via `merge_teammate_names`.
     super::async_ops::dispatch_teammate_discovery(app.events_tx.clone());
     let event = next_event(&mut app).await;
     app.apply_event(event);
 
     // The background discovery fetch must never touch the active view —
-    // only merge assignees into `teammates_seen`.
+    // only merge names into `teammates_seen`.
     assert_eq!(app.current_view, before_view);
     let after_keys: Vec<String> = app.all_issues.iter().map(|i| i.key.clone()).collect();
     assert_eq!(after_keys, before_keys);
+}
+
+#[test]
+fn merge_teammate_names_excludes_me_and_accumulates() {
+    let mut app = demo_app();
+    app.teammates_seen.clear();
+
+    app.merge_teammate_names(&[
+        "priya.nair".to_string(),
+        "alex.chen".to_string(),
+        crate::domain::DEMO_CURRENT_USER.to_string(),
+    ]);
 
     let discovered = app.known_teammates();
     assert!(discovered.contains(&"priya.nair".to_string()));
     assert!(discovered.contains(&"alex.chen".to_string()));
+    assert!(!discovered.contains(&crate::domain::DEMO_CURRENT_USER.to_string()));
+
+    // A second, overlapping call accumulates rather than replaces.
+    app.merge_teammate_names(&["jordan.blake".to_string()]);
+    let discovered = app.known_teammates();
+    assert!(discovered.contains(&"priya.nair".to_string()));
+    assert!(discovered.contains(&"jordan.blake".to_string()));
 }
 
 /// Like `non_demo_app`, but with a genuine `Source::Live` session — the
