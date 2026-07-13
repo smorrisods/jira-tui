@@ -148,6 +148,13 @@ pub struct App {
     /// Computed when the picker opens: My Work, All Project Issues, then one
     /// entry per teammate seen in the currently loaded issues.
     pub view_picker_options: Vec<ViewKind>,
+    /// Every distinct assignee (excluding "me") seen across *any* view
+    /// loaded so far this session, accumulated in `recompute_view` rather
+    /// than derived fresh from `all_issues` each time — otherwise switching
+    /// to a teammate's view (which narrows `all_issues` down to just their
+    /// issues) would make every other teammate vanish from the picker until
+    /// All Project Issues was reloaded. See `known_teammates`.
+    pub(crate) teammates_seen: std::collections::BTreeSet<String>,
 
     // Async data loading (refresh / switch_view against live Jira). See
     // `async_ops` — demo/cache-only sessions still resolve synchronously
@@ -262,6 +269,7 @@ impl App {
             view_picker_open: false,
             view_picker_index: 0,
             view_picker_options: Vec::new(),
+            teammates_seen: std::collections::BTreeSet::new(),
             loading: false,
             generation: 0,
             events_tx,
@@ -285,6 +293,20 @@ impl App {
                 app.selected = idx;
             }
         }
+
+        // Kick off a one-shot background fetch of the project's assignable
+        // users purely to discover teammates earlier, rather than waiting
+        // for the user to manually switch to All Project Issues — see
+        // `async_ops::dispatch_teammate_discovery`. Skipped for demo/cache
+        // sessions (no live network worth a background call for). Unlike
+        // an earlier version of this that fetched All Project Issues,
+        // `assignable_users` is a single lightweight non-issue call, so
+        // it's cheap enough to fire unconditionally rather than needing to
+        // be lazy or gated on the initial view.
+        if matches!(app.source, Source::Live { .. }) {
+            async_ops::dispatch_teammate_discovery(app.events_tx.clone());
+        }
+
         app
     }
 

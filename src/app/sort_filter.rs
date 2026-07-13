@@ -36,6 +36,7 @@ impl App {
     /// Rebuild `issues` from `all_issues` applying the current filter and sort,
     /// preserving the selected issue by key where possible.
     pub fn recompute_view(&mut self) {
+        self.note_teammates_seen();
         let cur_key = self.selected_issue().map(|i| i.key.clone());
 
         let mut view: Vec<IssueSummary> = self

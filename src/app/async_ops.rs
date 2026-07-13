@@ -92,6 +92,15 @@ pub enum AppEvent {
         source: Source,
         status: String,
     },
+    /// A one-shot background fetch of the project's assignable users
+    /// resolved, dispatched once at startup for a genuine live session
+    /// purely to discover teammates earlier than the user manually
+    /// visiting All Project Issues — see `dispatch_teammate_discovery`.
+    /// Deliberately carries no `generation`: it never overwrites
+    /// `all_issues`/`current_view` (only merges names into
+    /// `teammates_seen`), so it can't be made stale by an unrelated
+    /// refresh/switch_view and is safe to apply whenever it lands.
+    TeammatesDiscovered { names: Vec<String> },
 }
 
 impl App {
@@ -353,6 +362,9 @@ impl App {
                     }
                 }
             }
+            AppEvent::TeammatesDiscovered { names } => {
+                self.merge_teammate_names(&names);
+            }
         }
     }
 }
@@ -409,6 +421,44 @@ async fn load(view: ViewKind, force_demo: bool) -> (Vec<IssueSummary>, Source, S
                 "internal error: fetch task panicked".into(),
             )
         })
+}
+
+/// Spawn a one-shot background fetch of the project's assignable users,
+/// sending the result back as `AppEvent::TeammatesDiscovered`. Dispatched
+/// once from `App::new` for a genuine live session so the view picker's
+/// teammate list is populated without the user having to manually visit
+/// All Project Issues first — see `App::merge_teammate_names`, which
+/// applies the result without disturbing `all_issues`/`current_view`. Uses
+/// `GET /rest/api/3/user/assignable/search` (`jira::assignable_users`)
+/// rather than a full issue search: a single lightweight call listing
+/// every assignable project member, with no issue payloads to page
+/// through — cheap enough to fire unconditionally on every live-session
+/// startup rather than needing to be lazy.
+pub(crate) fn dispatch_teammate_discovery(tx: UnboundedSender<AppEvent>) {
+    tokio::spawn(async move {
+        let names = tokio::task::spawn_blocking(assignable_users_blocking)
+            .await
+            .unwrap_or_default();
+        let _ = tx.send(AppEvent::TeammatesDiscovered { names });
+    });
+}
+
+/// Mirrors `fetch_detail_blocking`'s "load config, call the live client,
+/// fall back on any failure" shape. Returns an empty list (rather than
+/// demo data) on failure since there's nothing sensible to show in the
+/// view picker for a broken live session — it just stays as-is until the
+/// user manually visits a view that reveals teammates another way.
+#[allow(unused_variables)]
+fn assignable_users_blocking() -> Vec<String> {
+    #[cfg(feature = "live")]
+    {
+        if let Some(cfg) = crate::jira::Config::load() {
+            if let Ok(names) = crate::jira::assignable_users(&cfg, &cfg.project) {
+                return names;
+            }
+        }
+    }
+    Vec::new()
 }
 
 /// Spawn a full-detail fetch off the render thread, sending the result back

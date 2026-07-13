@@ -3,7 +3,7 @@
 //! runner (see `jira::live::jql_for`), swapped in for `App.all_issues`
 //! exactly like `refresh()` does today.
 
-use crate::domain::{Source, ViewKind};
+use crate::domain::{IssueSummary, Source, ViewKind};
 
 use super::{load_issues_for, App};
 
@@ -42,25 +42,64 @@ impl App {
         self.view_picker_index = idx as usize;
     }
 
-    /// Teammate display names seen in the currently loaded issues, deduped
-    /// and sorted, excluding unassigned issues and (best-effort, by display
-    /// name) the current user — "my work" already covers your own issues.
-    /// Offline `Source::Demo` has no real username, so it falls back to the
-    /// baked-in demo dataset's implicit "you" (`DEMO_CURRENT_USER`).
+    /// Teammate display names seen across any view loaded so far this
+    /// session (see `teammates_seen`), sorted and deduped by construction
+    /// (a `BTreeSet`).
     pub fn known_teammates(&self) -> Vec<String> {
-        let me = match &self.source {
-            Source::Live { user, .. } | Source::Cache { user } => user.as_str(),
-            Source::Demo => crate::domain::DEMO_CURRENT_USER,
-        };
-        let mut seen = std::collections::BTreeSet::new();
-        for issue in &self.all_issues {
+        self.teammates_seen.iter().cloned().collect()
+    }
+
+    /// Record every distinct assignee in `all_issues` (excluding "me") into
+    /// `teammates_seen`. Called from `recompute_view`, i.e. after every
+    /// `all_issues` load — accumulating rather than overwriting means a
+    /// teammate discovered while viewing All Project Issues stays in the
+    /// picker even after switching to a narrower view (My Work, or another
+    /// teammate's work) whose `all_issues` wouldn't mention them at all.
+    pub(crate) fn note_teammates_seen(&mut self) {
+        let issues = std::mem::take(&mut self.all_issues);
+        self.merge_teammates(&issues);
+        self.all_issues = issues;
+    }
+
+    /// Merge every distinct assignee in `issues` (excluding "me") into
+    /// `teammates_seen`, without touching `all_issues`/`current_view`.
+    /// Used by `note_teammates_seen` (the active view) — the fallback
+    /// mechanism for demo/cache sessions where the live-only
+    /// `assignable_users` endpoint isn't available.
+    pub(crate) fn merge_teammates(&mut self, issues: &[IssueSummary]) {
+        let me = self.me_display_name().to_string();
+        for issue in issues {
             if let Some(name) = &issue.assignee {
                 if name.as_str() != me {
-                    seen.insert(name.clone());
+                    self.teammates_seen.insert(name.clone());
                 }
             }
         }
-        seen.into_iter().collect()
+    }
+
+    /// Merge a flat list of display names (excluding "me") into
+    /// `teammates_seen`, without touching `all_issues`/`current_view`.
+    /// Applies the result of a background `assignable_users` fetch (a
+    /// single lightweight call listing everyone assignable in the project,
+    /// dispatched once at startup for a live session — see
+    /// `async_ops::dispatch_teammate_discovery`) so the view picker's
+    /// teammate list is populated without deriving it from issue data at
+    /// all, and without waiting for the user to manually visit All Project
+    /// Issues first.
+    pub(crate) fn merge_teammate_names(&mut self, names: &[String]) {
+        let me = self.me_display_name().to_string();
+        for name in names {
+            if name.as_str() != me {
+                self.teammates_seen.insert(name.clone());
+            }
+        }
+    }
+
+    fn me_display_name(&self) -> &str {
+        match &self.source {
+            Source::Live { user, .. } | Source::Cache { user } => user.as_str(),
+            Source::Demo => crate::domain::DEMO_CURRENT_USER,
+        }
     }
 
     /// Apply the highlighted entry in the view picker.

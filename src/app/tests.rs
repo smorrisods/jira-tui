@@ -776,6 +776,44 @@ fn refresh_preserves_the_current_view() {
         .all(|i| i.assignee.as_deref() == Some("alex.chen")));
 }
 
+#[test]
+fn known_teammates_persist_after_switching_to_a_narrower_view() {
+    let mut app = demo_app();
+    // `demo_app()`'s constructor already seeded `teammates_seen` from the
+    // demo dataset's shortcut "My Work" (which doesn't filter by
+    // assignee); reset it to start from the same blank slate a real
+    // session would after its first genuinely-filtered "My Work" load.
+    app.teammates_seen.clear();
+    app.all_issues = crate::domain::demo_issues()
+        .into_iter()
+        .filter(|i| i.assignee.as_deref() == Some(crate::domain::DEMO_CURRENT_USER))
+        .collect();
+    app.recompute_view();
+    assert!(app.known_teammates().is_empty());
+
+    // Loading a broader view (e.g. All Project Issues) reveals teammates.
+    app.all_issues = crate::domain::demo_issues();
+    app.recompute_view();
+    let discovered = app.known_teammates();
+    assert!(discovered.contains(&"priya.nair".to_string()));
+    assert!(discovered.contains(&"alex.chen".to_string()));
+
+    // Switching to a single teammate's work narrows `all_issues` down to
+    // just their issues again.
+    app.all_issues = crate::domain::demo_issues()
+        .into_iter()
+        .filter(|i| i.assignee.as_deref() == Some("priya.nair"))
+        .collect();
+    app.recompute_view();
+
+    // Every teammate discovered so far must still be listed, even though
+    // `all_issues` no longer mentions most of them — this is the bug fix:
+    // teammate selection (and the picker's contents) must survive
+    // navigating past the All Project Issues view, not reset to whatever
+    // `all_issues` happens to hold right now.
+    assert_eq!(app.known_teammates(), discovered);
+}
+
 /// Drain a completed fetch off `app.events_rx`, with a generous timeout —
 /// these tests have no real network to wait on, only `spawn_blocking`
 /// scheduling, so this should resolve almost immediately.
@@ -879,6 +917,55 @@ async fn a_superseded_fetch_result_is_dropped_instead_of_clobbering_newer_state(
     let fresh_event = next_event(&mut app).await;
     app.apply_event(fresh_event);
     assert!(!app.loading);
+}
+
+#[tokio::test]
+async fn teammate_discovery_merges_without_disturbing_the_active_view() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    // Start from a narrow view with no teammates discovered yet, mirroring
+    // a fresh live session that just loaded "My Work".
+    app.teammates_seen.clear();
+    let before_view = app.current_view.clone();
+    let before_keys: Vec<String> = app.all_issues.iter().map(|i| i.key.clone()).collect();
+
+    // `dispatch_teammate_discovery` calls the real `assignable_users`
+    // endpoint, which needs a `Config`; `live_app()` deliberately has none
+    // configured (see `non_demo_app`), so this only exercises the
+    // spawn/spawn_blocking/channel plumbing — the merge logic itself is
+    // covered directly below via `merge_teammate_names`.
+    super::async_ops::dispatch_teammate_discovery(app.events_tx.clone());
+    let event = next_event(&mut app).await;
+    app.apply_event(event);
+
+    // The background discovery fetch must never touch the active view —
+    // only merge names into `teammates_seen`.
+    assert_eq!(app.current_view, before_view);
+    let after_keys: Vec<String> = app.all_issues.iter().map(|i| i.key.clone()).collect();
+    assert_eq!(after_keys, before_keys);
+}
+
+#[test]
+fn merge_teammate_names_excludes_me_and_accumulates() {
+    let mut app = demo_app();
+    app.teammates_seen.clear();
+
+    app.merge_teammate_names(&[
+        "priya.nair".to_string(),
+        "alex.chen".to_string(),
+        crate::domain::DEMO_CURRENT_USER.to_string(),
+    ]);
+
+    let discovered = app.known_teammates();
+    assert!(discovered.contains(&"priya.nair".to_string()));
+    assert!(discovered.contains(&"alex.chen".to_string()));
+    assert!(!discovered.contains(&crate::domain::DEMO_CURRENT_USER.to_string()));
+
+    // A second, overlapping call accumulates rather than replaces.
+    app.merge_teammate_names(&["jordan.blake".to_string()]);
+    let discovered = app.known_teammates();
+    assert!(discovered.contains(&"priya.nair".to_string()));
+    assert!(discovered.contains(&"jordan.blake".to_string()));
 }
 
 /// Like `non_demo_app`, but with a genuine `Source::Live` session — the
