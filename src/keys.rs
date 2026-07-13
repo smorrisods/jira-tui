@@ -19,6 +19,14 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Global: Ctrl-Z suspends to the shell, same as any other job-control-
+    // aware terminal program; the run loop picks this up and hands off to
+    // `crate::suspend`.
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('z') {
+        app.request_suspend = true;
+        return;
+    }
+
     // Help overlay swallows input while open.
     if app.show_help {
         app.show_help = false;

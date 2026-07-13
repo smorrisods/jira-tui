@@ -121,6 +121,10 @@ pub struct App {
     pub pending_edit: Option<serde_json::Value>,
     /// Set by a key handler to ask the run loop to launch `$EDITOR`.
     pub request_edit: bool,
+    /// Set on Ctrl+Z to ask the run loop to suspend the process to the
+    /// shell (`SIGTSTP`) and restore the TUI on resume; see
+    /// `crate::suspend` in the binary.
+    pub request_suspend: bool,
     /// Whether `Screen::Edit`/`Screen::Preview` are composing a description
     /// edit or a new comment; both share the same compose → preview → apply
     /// flow, only the apply action and footer text differ.
@@ -249,6 +253,7 @@ impl App {
             picker_index: 0,
             pending_edit: None,
             request_edit: false,
+            request_suspend: false,
             edit_target: EditTarget::default(),
             edit_key: None,
             edit_return_screen: Screen::Detail,

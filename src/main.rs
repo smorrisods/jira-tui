@@ -22,6 +22,7 @@ use cli::Cli;
 mod cli;
 mod editor_launch;
 mod keys;
+mod suspend;
 
 /// Frame cadence — also the animation tick rate for the About panel.
 const TICK: Duration = Duration::from_millis(90);
@@ -137,6 +138,15 @@ async fn run(terminal: &mut Term, app: &mut App) -> Result<()> {
             app.request_edit = false;
             if let Err(e) = editor_launch::edit_in_editor(terminal, app) {
                 app.status = format!("edit failed: {e}");
+            }
+        }
+
+        // Suspend to the shell on Ctrl+Z, resuming once the shell brings us
+        // back to the foreground.
+        if app.request_suspend {
+            app.request_suspend = false;
+            if let Err(e) = suspend::suspend(terminal, app) {
+                app.status = format!("suspend failed: {e}");
             }
         }
 
