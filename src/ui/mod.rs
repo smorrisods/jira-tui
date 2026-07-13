@@ -243,9 +243,18 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
                 "type to edit · tab next · ⏎ verify & save · esc back".into()
             }
         },
-        Screen::Detail => "↑/↓ scroll · t transition · e edit · c comment · ]/[ comments/top · \
-             n/p next/prev comment · {/} cycle links · ⏎ open link · esc/← back · a about · ? help · q quit"
-            .into(),
+        Screen::Detail => {
+            let history = match (app.can_go_back(), app.can_go_forward()) {
+                (true, true) => " · ←/→ history back/forward",
+                (true, false) => " · ← history back",
+                (false, true) => " · → history forward",
+                (false, false) => "",
+            };
+            format!(
+                "↑/↓ scroll · t transition · e edit · c comment · ]/[ comments/top · \
+                 n/p next/prev comment · {{/}} cycle links · ⏎ open link · esc{history} back · a about · ? help · q quit"
+            )
+        }
         Screen::Preview => match app.edit_target {
             EditTarget::Description => "y apply to Jira · esc/← cancel · ↑/↓ scroll".into(),
             EditTarget::Comment => "y post comment · esc/← cancel · ↑/↓ scroll".into(),

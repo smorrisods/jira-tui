@@ -44,6 +44,10 @@ pub(crate) fn draw_help_overlay(f: &mut Frame, area: Rect) {
             "⏎ (on a link)",
             "open it — jump to the issue, or open the URL",
         ),
+        (
+            "← / →",
+            "step back/forward through issues followed via links (in an issue)",
+        ),
         ("F", "map a custom field (e.g. Acceptance Criteria)"),
         ("V", "switch view (My Work / All Project Issues / teammate)"),
         ("a", "about panel"),

@@ -21,6 +21,7 @@ mod comments;
 mod detail;
 mod edit;
 mod field_mapping;
+mod history;
 mod links;
 mod mouse;
 mod onboarding;
@@ -94,6 +95,15 @@ pub struct App {
     // whichever detail is shown (see `app::links::active_links`) rather
     // than cached, so it can never go stale.
     pub link_index: usize,
+
+    // Detail navigation history (browser-style back/forward), built as the
+    // user follows in-body issue links from one Detail view to another —
+    // see `app::history`. Opening an issue fresh from the list/search
+    // starts a new history; `←`/`→` only step through it while it's
+    // non-empty, otherwise falling back to their prior meaning (exit
+    // Detail / open the selected issue).
+    pub(crate) detail_back: Vec<String>,
+    pub(crate) detail_forward: Vec<String>,
 
     // Search / go-to-issue.
     pub search: SearchState,
@@ -254,6 +264,8 @@ impl App {
             list_focus: ListFocus::List,
             detail_cache: HashMap::new(),
             link_index: 0,
+            detail_back: Vec::new(),
+            detail_forward: Vec::new(),
             search: SearchState::default(),
             board_sel: BoardSelection::default(),
             board_scroll: 0,
