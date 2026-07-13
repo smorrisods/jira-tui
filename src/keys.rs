@@ -181,6 +181,14 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('y') => yank_key(app),
         KeyCode::Char('Y') => yank_url(app),
         KeyCode::Char('q') => back_or_quit(app),
+
+        // Detail issue-navigation history: `←`/`→` step back/forward
+        // through issues followed via in-body links (see `app::history`),
+        // falling through to their prior meaning — exit Detail / open the
+        // selected issue — once there's nothing left to step through.
+        KeyCode::Left if app.screen == Screen::Detail && app.can_go_back() => app.go_back(),
+        KeyCode::Right if app.screen == Screen::Detail && app.can_go_forward() => app.go_forward(),
+
         KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => back_or_quit(app),
 
         // Sort + filter on the work list.

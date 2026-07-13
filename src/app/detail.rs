@@ -17,10 +17,34 @@ impl App {
     /// issue". If the key is present in the current view, `selected` is
     /// synced so back-navigation lands somewhere sensible.
     ///
+    /// If already viewing another issue's Detail, the outgoing issue is
+    /// pushed onto the back-navigation history (see `app::history`) so
+    /// `←`/`→` can step through issues followed via in-body links; opening
+    /// fresh from the list/search starts a new history instead.
+    ///
     /// Demo/cache sessions resolve inline (no network call to speak of); a
     /// genuine live session dispatches the fetch off the render thread and
     /// navigates to `Screen::Detail` once it lands — see `dispatch_detail_fetch`.
     pub fn open_by_key(&mut self, key: &str) {
+        if self.screen == Screen::Detail {
+            if let Some(current) = self.detail.as_ref().map(|d| d.key.clone()) {
+                if current != key {
+                    self.detail_back.push(current);
+                    self.detail_forward.clear();
+                }
+            }
+        } else {
+            self.detail_back.clear();
+            self.detail_forward.clear();
+        }
+        self.show_issue(key);
+    }
+
+    /// The actual issue-detail load/display, shared by `open_by_key` and
+    /// `app::history`'s back/forward navigation — unlike `open_by_key`, this
+    /// doesn't touch the navigation history, since history steps manage
+    /// their own back/forward bookkeeping around a call to this.
+    pub(crate) fn show_issue(&mut self, key: &str) {
         self.detail_scroll = 0;
         self.link_index = 0;
         if !matches!(self.source, Source::Live { .. }) {
