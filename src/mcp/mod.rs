@@ -98,6 +98,16 @@ struct UpdateDescriptionMarkdownParams {
     description_markdown: String,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct AssignIssueParams {
+    /// Issue key, e.g. "DS-123".
+    key: String,
+    /// Display name of the teammate to assign to (see
+    /// list_assignable_users), the literal string "me" to assign to the
+    /// authenticated user, or omitted/empty to unassign.
+    assignee: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct JiraMcpServer {
     // Read by the code the `#[tool_router]`/`#[tool_handler]` macros
@@ -322,6 +332,59 @@ impl JiraMcpServer {
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         Ok(format!("Updated description for {key}"))
     }
+
+    #[tool(
+        description = "List teammates who can be assigned issues in the configured project (display names, for use with assign_issue)."
+    )]
+    fn list_assignable_users(&self) -> Result<String, McpError> {
+        let cfg = live_cfg()?;
+        let users = crate::jira::assignable_users(&cfg, &cfg.project)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        to_json(&users)
+    }
+
+    #[tool(
+        description = "Assign (or unassign) an issue. `assignee` may be a teammate's display name (see list_assignable_users), the literal string \"me\" for the authenticated user, or omitted/empty to unassign. Requires live Jira credentials."
+    )]
+    fn assign_issue(
+        &self,
+        Parameters(AssignIssueParams { key, assignee }): Parameters<AssignIssueParams>,
+    ) -> Result<String, McpError> {
+        let cfg = live_cfg()?;
+        let requested = assignee.as_deref().unwrap_or("").trim();
+        if requested.is_empty() {
+            crate::jira::assign_issue(&cfg, &key, None)
+                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            return Ok(format!("Unassigned {key}"));
+        }
+
+        let users = crate::jira::assignable_users(&cfg, &cfg.project)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let target_name = if requested.eq_ignore_ascii_case("me") {
+            crate::jira::whoami(&cfg).map_err(|e| McpError::internal_error(e.to_string(), None))?
+        } else {
+            requested.to_string()
+        };
+        let matched = users
+            .iter()
+            .find(|u| u.display_name.eq_ignore_ascii_case(&target_name))
+            .ok_or_else(|| {
+                let available = users
+                    .iter()
+                    .map(|u| u.display_name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                McpError::invalid_params(
+                    format!(
+                        "no assignable user matching '{target_name}' for {key}; available: {available}"
+                    ),
+                    None,
+                )
+            })?;
+        crate::jira::assign_issue(&cfg, &key, Some(&matched.account_id))
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        Ok(format!("Assigned {key} to {}", matched.display_name))
+    }
 }
 
 #[tool_handler]
@@ -333,8 +396,10 @@ impl ServerHandler for JiraMcpServer {
                 "Jira MCP server for jira-tui. Always read/write issue descriptions and \
                  comments as Markdown via add_comment_markdown, get_description_markdown, \
                  and update_description_markdown (and create_issue's description_markdown \
-                 field) — never construct raw ADF JSON yourself. Read tools work against \
-                 demo data with no configuration; write tools need JIRA_EMAIL / \
+                 field) — never construct raw ADF JSON yourself. Use list_assignable_users \
+                 and assign_issue to reassign or unassign issues by display name (or \"me\"). \
+                 Read tools work against demo data with no configuration; write tools need \
+                 JIRA_EMAIL / \
                  JIRA_API_TOKEN (and optionally JIRA_BASE_URL / JIRA_PROJECT) set the same \
                  way the jira-tui TUI expects.",
             )

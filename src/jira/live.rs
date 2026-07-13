@@ -2,7 +2,7 @@
 //! description/summary writes, comments, and issue creation.
 
 use super::config::Config;
-use crate::domain::{IssueDetail, IssueLink, IssueSummary, Priority};
+use crate::domain::{AssignableUser, IssueDetail, IssueLink, IssueSummary, Priority};
 use anyhow::{anyhow, Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::Value;
@@ -105,13 +105,17 @@ pub fn update_description(cfg: &Config, key: &str, description: &Value) -> Resul
 }
 
 /// Every user assignable to issues in `project` — used to discover
-/// teammates for the view picker without touching any issue data at all
-/// (`GET /rest/api/3/user/assignable/search`). Far cheaper than deriving
+/// teammates for the view picker and to populate the assignee picker
+/// (`A`), without touching any issue data at all (`GET
+/// /rest/api/3/user/assignable/search`). Far cheaper than deriving
 /// assignees from a full "All Project Issues" search: no issue payloads to
 /// page through, and most projects have far fewer members than issues.
 /// The endpoint returns a flat JSON array (no `total`/`isLast`), so a page
-/// shorter than `PAGE_SIZE` signals the last page.
-pub fn assignable_users(cfg: &Config, project: &str) -> Result<Vec<String>> {
+/// shorter than `PAGE_SIZE` signals the last page. Carries `accountId`
+/// alongside the display name — the view picker only ever needed the name,
+/// but assigning an issue (`assign_issue`) requires the account id, so this
+/// is the one place both are captured together.
+pub fn assignable_users(cfg: &Config, project: &str) -> Result<Vec<AssignableUser>> {
     let project = url_encode(project);
     let mut out = Vec::new();
     let mut start_at: u64 = 0;
@@ -123,12 +127,14 @@ pub fn assignable_users(cfg: &Config, project: &str) -> Result<Vec<String>> {
         let page = get(cfg, &path)?;
         let users = page.as_array().cloned().unwrap_or_default();
         let got = users.len() as u64;
-        out.extend(
-            users
-                .iter()
-                .filter_map(|u| u.get("displayName").and_then(|v| v.as_str()))
-                .map(str::to_string),
-        );
+        out.extend(users.iter().filter_map(|u| {
+            let account_id = u.get("accountId").and_then(|v| v.as_str())?.to_string();
+            let display_name = u.get("displayName").and_then(|v| v.as_str())?.to_string();
+            Some(AssignableUser {
+                account_id,
+                display_name,
+            })
+        }));
         if got < PAGE_SIZE {
             break;
         }
@@ -144,6 +150,18 @@ pub fn whoami(cfg: &Config) -> Result<String> {
         .and_then(|v| v.as_str())
         .unwrap_or("me")
         .to_string())
+}
+
+/// Assign (or, with `account_id: None`, unassign) an issue
+/// (`PUT /issue/{key}/assignee`). Jira accepts `null` for `accountId` to
+/// clear the assignee entirely.
+pub fn assign_issue(cfg: &Config, key: &str, account_id: Option<&str>) -> Result<()> {
+    send(
+        cfg,
+        "PUT",
+        &format!("/rest/api/3/issue/{key}/assignee"),
+        serde_json::json!({ "accountId": account_id }),
+    )
 }
 
 fn priority_from(name: &str) -> Priority {
@@ -613,10 +631,22 @@ mod tests {
             .create();
 
         let cfg = test_config(server.url());
-        let names = assignable_users(&cfg, "PROJ").unwrap();
+        let users = assignable_users(&cfg, "PROJ").unwrap();
 
         mock.assert();
-        assert_eq!(names, vec!["Priya Nair", "Alex Chen"]);
+        assert_eq!(
+            users,
+            vec![
+                AssignableUser {
+                    account_id: "1".into(),
+                    display_name: "Priya Nair".into()
+                },
+                AssignableUser {
+                    account_id: "2".into(),
+                    display_name: "Alex Chen".into()
+                },
+            ]
+        );
     }
 
     #[test]
@@ -649,12 +679,13 @@ mod tests {
             .create();
 
         let cfg = test_config(server.url());
-        let names = assignable_users(&cfg, "PROJ").unwrap();
+        let users = assignable_users(&cfg, "PROJ").unwrap();
 
         first.assert();
         second.assert();
-        assert_eq!(names.len(), 101);
-        assert_eq!(names[100], "User 100");
+        assert_eq!(users.len(), 101);
+        assert_eq!(users[100].display_name, "User 100");
+        assert_eq!(users[100].account_id, "100");
     }
 
     #[test]
@@ -956,6 +987,52 @@ mod tests {
         apply_transition(&cfg, "DS-1", "31").unwrap();
 
         mock.assert();
+    }
+
+    #[test]
+    fn assign_issue_sends_the_account_id() {
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("PUT", "/rest/api/3/issue/DS-1/assignee")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "accountId": "abc123"
+            })))
+            .with_status(204)
+            .create();
+
+        let cfg = test_config(server.url());
+        assign_issue(&cfg, "DS-1", Some("abc123")).unwrap();
+
+        mock.assert();
+    }
+
+    #[test]
+    fn assign_issue_with_none_unassigns() {
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("PUT", "/rest/api/3/issue/DS-1/assignee")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "accountId": null
+            })))
+            .with_status(204)
+            .create();
+
+        let cfg = test_config(server.url());
+        assign_issue(&cfg, "DS-1", None).unwrap();
+
+        mock.assert();
+    }
+
+    #[test]
+    fn assign_issue_surfaces_http_errors() {
+        let mut server = mockito::Server::new();
+        server
+            .mock("PUT", "/rest/api/3/issue/DS-1/assignee")
+            .with_status(403)
+            .create();
+
+        let cfg = test_config(server.url());
+        assert!(assign_issue(&cfg, "DS-1", Some("abc123")).is_err());
     }
 
     #[test]

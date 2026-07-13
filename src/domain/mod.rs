@@ -113,6 +113,18 @@ pub struct IssueLink {
     pub summary: String,
 }
 
+/// A user assignable to issues in the configured project — carries the
+/// `accountId` Jira's assign endpoint requires alongside the display name
+/// shown everywhere else (`IssueSummary`/`IssueDetail::assignee` stay
+/// display-name-only strings; this is the one place jira-tui needs the
+/// account id at all, so it isn't threaded through the rest of the domain
+/// model). See `jira::live::assignable_users` / `app::assign`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssignableUser {
+    pub account_id: String,
+    pub display_name: String,
+}
+
 /// Where the data on screen came from, shown in the footer.
 /// `Live`/`Cache` are only constructed when the `live` feature is enabled.
 #[allow(dead_code)]
@@ -296,6 +308,34 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             blocked: false,
             updated: "9h ago".into(),
             epic: None,
+        },
+    ]
+}
+
+/// Offline stand-in for `jira::live::assignable_users`, so the assignee
+/// picker (`A`) is fully explorable in demo mode and in a cache-only
+/// session with no live client to ask — see `App::assignable_users_source`.
+/// Account ids are obviously fake; only the display names need to line up
+/// with `demo_issues`' existing assignees (`DEMO_CURRENT_USER`,
+/// `priya.nair`, `alex.chen`) so "assign to me" and reassigning to a
+/// teammate already visible in the demo data both work as expected.
+pub fn demo_assignable_users() -> Vec<AssignableUser> {
+    vec![
+        AssignableUser {
+            account_id: "demo-scott-morris".into(),
+            display_name: DEMO_CURRENT_USER.into(),
+        },
+        AssignableUser {
+            account_id: "demo-priya-nair".into(),
+            display_name: "priya.nair".into(),
+        },
+        AssignableUser {
+            account_id: "demo-alex-chen".into(),
+            display_name: "alex.chen".into(),
+        },
+        AssignableUser {
+            account_id: "demo-jane-reporter".into(),
+            display_name: "jane.reporter".into(),
         },
     ]
 }

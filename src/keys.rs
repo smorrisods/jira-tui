@@ -67,6 +67,22 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Modal: the assignee picker. Type-to-filter like Search, so j/k aren't
+    // bound to movement (they're typeable filter characters) — only the
+    // arrow keys move the highlight.
+    if app.assignee_picker_open {
+        match key.code {
+            KeyCode::Esc => app.close_assignee_picker(),
+            KeyCode::Enter => app.confirm_assignee(),
+            KeyCode::Up => app.assignee_picker_move(-1),
+            KeyCode::Down => app.assignee_picker_move(1),
+            KeyCode::Backspace => app.assignee_picker_backspace(),
+            KeyCode::Char(c) => app.assignee_picker_input_char(c),
+            _ => {}
+        }
+        return;
+    }
+
     // The edit preview is a confirm screen.
     if app.screen == Screen::Preview {
         match key.code {
@@ -248,6 +264,18 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
                     && app.quick_view_detail().is_some()) =>
         {
             app.begin_comment();
+        }
+        // Assignee picker: reassign or unassign the viewed issue (Detail or
+        // quick-view). Deliberately not gated on `list_focus` — like `c`
+        // above, opening a modal picker captures all subsequent input
+        // anyway, so there's no ambiguity about which issue it targets.
+        KeyCode::Char('A')
+            if (app.screen == Screen::Detail && app.detail.is_some())
+                || (matches!(app.screen, Screen::Home | Screen::List)
+                    && app.quick_view
+                    && app.quick_view_detail().is_some()) =>
+        {
+            app.open_assignee_picker();
         }
         KeyCode::Char(']')
             if app.screen == Screen::Detail

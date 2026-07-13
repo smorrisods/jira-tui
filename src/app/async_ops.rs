@@ -10,7 +10,7 @@
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::domain::{Comment, IssueDetail, IssueSummary, Source, ViewKind};
+use crate::domain::{AssignableUser, Comment, IssueDetail, IssueSummary, Source, ViewKind};
 
 use super::{load_issues, load_issues_for, App, Screen};
 
@@ -96,11 +96,23 @@ pub enum AppEvent {
     /// resolved, dispatched once at startup for a genuine live session
     /// purely to discover teammates earlier than the user manually
     /// visiting All Project Issues — see `dispatch_teammate_discovery`.
-    /// Deliberately carries no `generation`: it never overwrites
-    /// `all_issues`/`current_view` (only merges names into
-    /// `teammates_seen`), so it can't be made stale by an unrelated
-    /// refresh/switch_view and is safe to apply whenever it lands.
-    TeammatesDiscovered { names: Vec<String> },
+    /// Also seeds `App::assignable_users`, the same list the assignee
+    /// picker (`A`) draws from, so opening it doesn't need its own
+    /// dedicated fetch. Deliberately carries no `generation`: it never
+    /// overwrites `all_issues`/`current_view` (only merges names into
+    /// `teammates_seen` and replaces `assignable_users` wholesale), so it
+    /// can't be made stale by an unrelated refresh/switch_view and is safe
+    /// to apply whenever it lands.
+    TeammatesDiscovered { users: Vec<AssignableUser> },
+    /// An assignee change (or unassign, when `account_id`/`display_name`
+    /// were `None`) resolved against live Jira — see
+    /// `App::confirm_assignee`/`dispatch_assign`.
+    AssigneeApplied {
+        generation: u64,
+        key: String,
+        display_name: Option<String>,
+        error: Option<String>,
+    },
 }
 
 impl App {
@@ -362,8 +374,38 @@ impl App {
                     }
                 }
             }
-            AppEvent::TeammatesDiscovered { names } => {
+            AppEvent::TeammatesDiscovered { users } => {
+                let names: Vec<String> = users.iter().map(|u| u.display_name.clone()).collect();
                 self.merge_teammate_names(&names);
+                self.assignable_users = users;
+            }
+            AppEvent::AssigneeApplied {
+                generation,
+                key,
+                display_name,
+                error,
+            } => {
+                if generation != self.assignee_generation {
+                    // A newer picker interaction (or the picker closing and
+                    // reopening) superseded this result; drop it silently,
+                    // mirroring `TransitionApplied`'s stale-generation guard.
+                    return;
+                }
+                self.loading = false;
+                self.assignee_pending = false;
+                if let Some(e) = error {
+                    self.status = format!("assign failed: {e}");
+                    return;
+                }
+                self.apply_assignee_locally(&key, display_name.as_deref());
+                self.status = match &display_name {
+                    Some(name) => format!("assigned {key} to {name}"),
+                    None => format!("unassigned {key}"),
+                };
+                self.flash(match &display_name {
+                    Some(name) => format!("✓ assigned to {name}"),
+                    None => "✓ unassigned".to_string(),
+                });
             }
         }
     }
@@ -436,10 +478,10 @@ async fn load(view: ViewKind, force_demo: bool) -> (Vec<IssueSummary>, Source, S
 /// startup rather than needing to be lazy.
 pub(crate) fn dispatch_teammate_discovery(tx: UnboundedSender<AppEvent>) {
     tokio::spawn(async move {
-        let names = tokio::task::spawn_blocking(assignable_users_blocking)
+        let users = tokio::task::spawn_blocking(assignable_users_blocking)
             .await
             .unwrap_or_default();
-        let _ = tx.send(AppEvent::TeammatesDiscovered { names });
+        let _ = tx.send(AppEvent::TeammatesDiscovered { users });
     });
 }
 
@@ -449,12 +491,12 @@ pub(crate) fn dispatch_teammate_discovery(tx: UnboundedSender<AppEvent>) {
 /// view picker for a broken live session — it just stays as-is until the
 /// user manually visits a view that reveals teammates another way.
 #[allow(unused_variables)]
-fn assignable_users_blocking() -> Vec<String> {
+fn assignable_users_blocking() -> Vec<AssignableUser> {
     #[cfg(feature = "live")]
     {
         if let Some(cfg) = crate::jira::Config::load() {
-            if let Ok(names) = crate::jira::assignable_users(&cfg, &cfg.project) {
-                return names;
+            if let Ok(users) = crate::jira::assignable_users(&cfg, &cfg.project) {
+                return users;
             }
         }
     }
@@ -540,6 +582,52 @@ fn apply_transition_blocking(key: &str, transition_id: &str) -> Option<String> {
     {
         if let Some(cfg) = crate::jira::Config::load() {
             return crate::jira::apply_transition(&cfg, key, transition_id)
+                .err()
+                .map(|e| e.to_string());
+        }
+    }
+    None
+}
+
+/// Spawn an assignee change off the render thread, sending the result back
+/// as `AppEvent::AssigneeApplied`. `account_id`/`display_name` are both
+/// `None` together to unassign, or both `Some` to assign to a specific
+/// teammate — mirrors `dispatch_transition`'s shape.
+pub(crate) fn dispatch_assign(
+    tx: UnboundedSender<AppEvent>,
+    generation: u64,
+    key: String,
+    account_id: Option<String>,
+    display_name: Option<String>,
+) {
+    tokio::spawn(async move {
+        let key_for_result = key.clone();
+        let display_name_for_result = display_name.clone();
+        let error =
+            tokio::task::spawn_blocking(move || assign_issue_blocking(&key, account_id.as_deref()))
+                .await
+                .unwrap_or_else(|_| Some("internal error: task panicked".into()));
+        let _ = tx.send(AppEvent::AssigneeApplied {
+            generation,
+            key: key_for_result,
+            display_name: if error.is_none() {
+                display_name_for_result
+            } else {
+                None
+            },
+            error,
+        });
+    });
+}
+
+/// Mirrors `apply_transition_blocking`'s "no credentials means nothing to do
+/// live" shape.
+#[allow(unused_variables)]
+fn assign_issue_blocking(key: &str, account_id: Option<&str>) -> Option<String> {
+    #[cfg(feature = "live")]
+    {
+        if let Some(cfg) = crate::jira::Config::load() {
+            return crate::jira::assign_issue(&cfg, key, account_id)
                 .err()
                 .map(|e| e.to_string());
         }

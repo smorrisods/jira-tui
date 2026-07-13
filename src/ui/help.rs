@@ -35,6 +35,10 @@ pub(crate) fn draw_help_overlay(f: &mut Frame, area: Rect) {
         ("tab", "focus list ↔ quick view (enables arrow scroll)"),
         ("b", "swimlane board (Kanban-style, grouped by epic)"),
         ("t", "change status (in an issue)"),
+        (
+            "A",
+            "assign/unassign (in an issue or quick view) — type to filter, ↑/↓ move",
+        ),
         ("e / E", "edit description (in-TUI / $EDITOR)"),
         ("c", "add a comment (in an issue or quick view)"),
         ("] / [", "jump to comments section / back to top"),
