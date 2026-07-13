@@ -260,7 +260,7 @@ It reuses the exact same credentials as the TUI (`JIRA_EMAIL` / `JIRA_API_TOKEN`
 
 **Read tools** (`list_my_work`, `get_issue`, `search_issues`, `list_transitions`, `get_description_markdown`) fall back to the same baked-in demo data the TUI uses when no credentials are configured, so an agent can explore the tool surface with zero setup.
 
-**Write tools** (`create_issue`, `update_summary`, `add_comment`, `transition_issue`, `update_description_markdown`) require live credentials — mutating the static demo data would be a no-op — and return a clear configuration error otherwise instead of silently doing nothing.
+**Write tools** (`create_issue`, `update_summary`, `add_comment_markdown`, `transition_issue`, `update_description_markdown`) require live credentials — mutating the static demo data would be a no-op — and return a clear configuration error otherwise instead of silently doing nothing.
 
 **Full round-trip parity** with the TUI's in-app editor: `get_description_markdown` / `update_description_markdown` mirror the same `adf::to_markdown` / `adf::compile` conversion used by pressing `e` on an issue, so an agent can fetch a description as Markdown, edit it, and push it back without ever touching ADF.
 
