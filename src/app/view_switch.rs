@@ -42,25 +42,31 @@ impl App {
         self.view_picker_index = idx as usize;
     }
 
-    /// Teammate display names seen in the currently loaded issues, deduped
-    /// and sorted, excluding unassigned issues and (best-effort, by display
-    /// name) the current user — "my work" already covers your own issues.
-    /// Offline `Source::Demo` has no real username, so it falls back to the
-    /// baked-in demo dataset's implicit "you" (`DEMO_CURRENT_USER`).
+    /// Teammate display names seen across any view loaded so far this
+    /// session (see `teammates_seen`), sorted and deduped by construction
+    /// (a `BTreeSet`).
     pub fn known_teammates(&self) -> Vec<String> {
+        self.teammates_seen.iter().cloned().collect()
+    }
+
+    /// Record every distinct assignee in `all_issues` (excluding "me") into
+    /// `teammates_seen`. Called from `recompute_view`, i.e. after every
+    /// `all_issues` load — accumulating rather than overwriting means a
+    /// teammate discovered while viewing All Project Issues stays in the
+    /// picker even after switching to a narrower view (My Work, or another
+    /// teammate's work) whose `all_issues` wouldn't mention them at all.
+    pub(crate) fn note_teammates_seen(&mut self) {
         let me = match &self.source {
             Source::Live { user, .. } | Source::Cache { user } => user.as_str(),
             Source::Demo => crate::domain::DEMO_CURRENT_USER,
         };
-        let mut seen = std::collections::BTreeSet::new();
         for issue in &self.all_issues {
             if let Some(name) = &issue.assignee {
                 if name.as_str() != me {
-                    seen.insert(name.clone());
+                    self.teammates_seen.insert(name.clone());
                 }
             }
         }
-        seen.into_iter().collect()
     }
 
     /// Apply the highlighted entry in the view picker.

@@ -144,6 +144,13 @@ pub struct App {
     /// Computed when the picker opens: My Work, All Project Issues, then one
     /// entry per teammate seen in the currently loaded issues.
     pub view_picker_options: Vec<ViewKind>,
+    /// Every distinct assignee (excluding "me") seen across *any* view
+    /// loaded so far this session, accumulated in `recompute_view` rather
+    /// than derived fresh from `all_issues` each time — otherwise switching
+    /// to a teammate's view (which narrows `all_issues` down to just their
+    /// issues) would make every other teammate vanish from the picker until
+    /// All Project Issues was reloaded. See `known_teammates`.
+    pub(crate) teammates_seen: std::collections::BTreeSet<String>,
 
     // Async data loading (refresh / switch_view against live Jira). See
     // `async_ops` — demo/cache-only sessions still resolve synchronously
@@ -257,6 +264,7 @@ impl App {
             view_picker_open: false,
             view_picker_index: 0,
             view_picker_options: Vec::new(),
+            teammates_seen: std::collections::BTreeSet::new(),
             loading: false,
             generation: 0,
             events_tx,

@@ -776,6 +776,44 @@ fn refresh_preserves_the_current_view() {
         .all(|i| i.assignee.as_deref() == Some("alex.chen")));
 }
 
+#[test]
+fn known_teammates_persist_after_switching_to_a_narrower_view() {
+    let mut app = demo_app();
+    // `demo_app()`'s constructor already seeded `teammates_seen` from the
+    // demo dataset's shortcut "My Work" (which doesn't filter by
+    // assignee); reset it to start from the same blank slate a real
+    // session would after its first genuinely-filtered "My Work" load.
+    app.teammates_seen.clear();
+    app.all_issues = crate::domain::demo_issues()
+        .into_iter()
+        .filter(|i| i.assignee.as_deref() == Some(crate::domain::DEMO_CURRENT_USER))
+        .collect();
+    app.recompute_view();
+    assert!(app.known_teammates().is_empty());
+
+    // Loading a broader view (e.g. All Project Issues) reveals teammates.
+    app.all_issues = crate::domain::demo_issues();
+    app.recompute_view();
+    let discovered = app.known_teammates();
+    assert!(discovered.contains(&"priya.nair".to_string()));
+    assert!(discovered.contains(&"alex.chen".to_string()));
+
+    // Switching to a single teammate's work narrows `all_issues` down to
+    // just their issues again.
+    app.all_issues = crate::domain::demo_issues()
+        .into_iter()
+        .filter(|i| i.assignee.as_deref() == Some("priya.nair"))
+        .collect();
+    app.recompute_view();
+
+    // Every teammate discovered so far must still be listed, even though
+    // `all_issues` no longer mentions most of them — this is the bug fix:
+    // teammate selection (and the picker's contents) must survive
+    // navigating past the All Project Issues view, not reset to whatever
+    // `all_issues` happens to hold right now.
+    assert_eq!(app.known_teammates(), discovered);
+}
+
 /// Drain a completed fetch off `app.events_rx`, with a generous timeout —
 /// these tests have no real network to wait on, only `spawn_blocking`
 /// scheduling, so this should resolve almost immediately.
