@@ -10,7 +10,7 @@ use clap::Parser;
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen, SetTitle,
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
@@ -61,6 +61,9 @@ async fn main() -> Result<()> {
     }
     let result = run(&mut terminal, &mut app).await;
     let _ = execute!(io::stdout(), DisableMouseCapture);
+    // Drop any issue-specific title set while running rather than leaving it
+    // stuck in the shell's tab/window after we hand the terminal back.
+    let _ = execute!(io::stdout(), SetTitle("jira-tui"));
     restore_terminal(&mut terminal)?;
     result
 }
@@ -83,8 +86,21 @@ async fn run(terminal: &mut Term, app: &mut App) -> Result<()> {
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     // The first tick fires immediately; that's fine, it just draws once.
 
+    // Empty so the very first loop iteration always issues a `SetTitle`,
+    // even if the initial state resolves to the plain "jira-tui" title.
+    let mut window_title = String::new();
+
     loop {
         terminal.draw(|f| ui::draw(f, app))?;
+
+        // Reflect the issue currently being viewed (full detail, its
+        // preview/edit flow, or the quick-view panel) in the window title,
+        // only touching the terminal when it actually changes.
+        let title = app.window_title();
+        if title != window_title {
+            let _ = execute!(terminal.backend_mut(), SetTitle(&title));
+            window_title = title;
+        }
 
         tokio::select! {
             maybe_event = events.next() => {

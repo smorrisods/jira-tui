@@ -89,6 +89,41 @@ fn selected_issue_url_is_a_browse_link() {
 }
 
 #[test]
+fn window_title_is_plain_outside_issue_screens() {
+    let app = demo_app();
+    assert_eq!(app.window_title(), "jira-tui");
+}
+
+#[test]
+fn window_title_reflects_open_detail() {
+    let mut app = demo_app();
+    app.open_detail();
+    let key = app.detail.as_ref().unwrap().key.clone();
+    let summary = app.detail.as_ref().unwrap().summary.clone();
+    assert_eq!(app.window_title(), format!("{key}: {summary} — jira-tui"));
+}
+
+#[test]
+fn window_title_reflects_quick_view_selection() {
+    let mut app = demo_app();
+    app.screen = Screen::List;
+    app.quick_view = true;
+    let issue = app.selected_issue().unwrap().clone();
+    assert_eq!(
+        app.window_title(),
+        format!("{}: {} — jira-tui", issue.key, issue.summary)
+    );
+}
+
+#[test]
+fn window_title_ignores_quick_view_when_closed() {
+    let mut app = demo_app();
+    app.screen = Screen::List;
+    app.quick_view = false;
+    assert_eq!(app.window_title(), "jira-tui");
+}
+
+#[test]
 fn confirm_transition_updates_status_locally() {
     let mut app = demo_app();
     app.selected = 0;

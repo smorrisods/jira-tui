@@ -287,6 +287,30 @@ impl App {
         self.issues.get(self.selected)
     }
 
+    /// The terminal window title for the app's current state: the key and
+    /// summary of the issue actually being viewed (full detail, its preview
+    /// or edit flow, or the quick-view panel), falling back to a plain
+    /// `jira-tui` outside those screens. Pure state → `String`; the run loop
+    /// is responsible for actually issuing a `SetTitle` command only when
+    /// this changes, so it stays testable without a real terminal.
+    pub fn window_title(&self) -> String {
+        const BASE: &str = "jira-tui";
+        let issue = match self.screen {
+            Screen::Detail | Screen::Preview | Screen::Edit => self
+                .detail
+                .as_ref()
+                .map(|d| (d.key.as_str(), d.summary.as_str())),
+            Screen::List if self.quick_view => self
+                .selected_issue()
+                .map(|i| (i.key.as_str(), i.summary.as_str())),
+            _ => None,
+        };
+        match issue {
+            Some((key, summary)) => format!("{key}: {summary} — {BASE}"),
+            None => BASE.to_string(),
+        }
+    }
+
     /// Show a transient toast for roughly 1.5s (tied to the animation tick).
     pub fn flash(&mut self, msg: impl Into<String>) {
         self.flash_msg = msg.into();
