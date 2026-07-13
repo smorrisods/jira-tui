@@ -214,6 +214,38 @@ fn assignee_picker_filters_as_the_query_is_typed() {
 }
 
 #[test]
+fn assignee_picker_keeps_the_selection_in_view_on_a_short_terminal() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.open_assignee_picker();
+    // Demo data has "Unassign" + 4 users; move to the last row.
+    let last = app.assignee_picker.rows.len() - 1;
+    app.assignee_picker.selected = last;
+
+    // A short terminal can't fit every row at once — the scroll window
+    // must still keep the highlighted (last) row on screen instead of
+    // clipping it off the bottom of the popup.
+    let backend = TestBackend::new(120, 12);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(|f| ui::draw(f, &app)).unwrap();
+    let text = dump(terminal.backend().buffer());
+
+    let last_label = match &app.assignee_picker.rows[last] {
+        jira_tui::app::AssigneeRow::Unassign => "Unassign".to_string(),
+        jira_tui::app::AssigneeRow::User(u) => u.display_name.clone(),
+    };
+    assert!(
+        text.contains(&last_label),
+        "the selected row must stay visible even when the popup can't fit every row"
+    );
+    assert!(
+        text.contains('▌'),
+        "the selection cursor must still be drawn somewhere"
+    );
+}
+
+#[test]
 fn switching_to_a_teammate_view_shows_in_the_header() {
     let mut app = demo_app();
     app.screen = Screen::Home;

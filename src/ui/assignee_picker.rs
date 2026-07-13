@@ -14,9 +14,20 @@ use super::{centered_rect_h, ACCENT, ACCENT2, MUTED};
 
 pub(crate) fn draw_assignee_picker(f: &mut Frame, app: &App, area: Rect) {
     let rows = &app.assignee_picker.rows;
-    // +4 for the border, the query line, and the footer hint; +1 blank
-    // separator between the query line and the row list.
-    let height = (rows.len() as u16).saturating_add(5).min(area.height);
+    // Cap how many rows the popup ever tries to show at once — unlike the
+    // transition/view pickers (whose lists are inherently small), the
+    // assignee list is every assignable project member, which can easily
+    // run past what fits on screen. `visible` is a scroll *window*, not the
+    // full row count, so the popup stays a reasonable size and the
+    // highlighted row is always kept in view (mirroring `list.rs`'s
+    // "simple scroll window around the selection").
+    let max_popup_height = area.height.saturating_sub(4).max(1);
+    // +5 for the border, the query line, its blank separator, and the
+    // footer hint.
+    let visible = (max_popup_height.saturating_sub(5) as usize).max(1);
+    let height = (rows.len().min(visible) as u16)
+        .saturating_add(5)
+        .min(area.height);
     let popup = centered_rect_h(46, height, area);
     f.render_widget(Clear, popup);
     let block = Block::default()
@@ -50,7 +61,15 @@ pub(crate) fn draw_assignee_picker(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
         )));
     }
-    for (i, row) in rows.iter().enumerate() {
+    // Simple scroll window around the selection, same shape as `list.rs`'s
+    // tree view — keeps `selected` on screen even when `rows` is longer
+    // than `visible`.
+    let start = app
+        .assignee_picker
+        .selected
+        .saturating_sub(visible.saturating_sub(1) / 2)
+        .min(rows.len().saturating_sub(visible));
+    for (i, row) in rows.iter().enumerate().skip(start).take(visible) {
         let selected = i == app.assignee_picker.selected;
         let cursor = if selected { "▌ " } else { "  " };
         let style = if selected {
