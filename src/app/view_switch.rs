@@ -3,7 +3,7 @@
 //! runner (see `jira::live::jql_for`), swapped in for `App.all_issues`
 //! exactly like `refresh()` does today.
 
-use crate::domain::{Source, ViewKind};
+use crate::domain::{IssueSummary, Source, ViewKind};
 
 use super::{load_issues_for, App};
 
@@ -56,11 +56,24 @@ impl App {
     /// picker even after switching to a narrower view (My Work, or another
     /// teammate's work) whose `all_issues` wouldn't mention them at all.
     pub(crate) fn note_teammates_seen(&mut self) {
+        let issues = std::mem::take(&mut self.all_issues);
+        self.merge_teammates(&issues);
+        self.all_issues = issues;
+    }
+
+    /// Merge every distinct assignee in `issues` (excluding "me") into
+    /// `teammates_seen`, without touching `all_issues`/`current_view`.
+    /// Shared by `note_teammates_seen` (the active view) and applying
+    /// `AppEvent::TeammatesDiscovered` (a background All Project Issues
+    /// fetch dispatched once at startup purely to discover teammates
+    /// earlier than the user manually visiting that view — see
+    /// `async_ops::dispatch_teammate_discovery`).
+    pub(crate) fn merge_teammates(&mut self, issues: &[IssueSummary]) {
         let me = match &self.source {
             Source::Live { user, .. } | Source::Cache { user } => user.as_str(),
             Source::Demo => crate::domain::DEMO_CURRENT_USER,
         };
-        for issue in &self.all_issues {
+        for issue in issues {
             if let Some(name) = &issue.assignee {
                 if name.as_str() != me {
                     self.teammates_seen.insert(name.clone());

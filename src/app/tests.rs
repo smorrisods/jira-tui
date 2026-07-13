@@ -919,6 +919,31 @@ async fn a_superseded_fetch_result_is_dropped_instead_of_clobbering_newer_state(
     assert!(!app.loading);
 }
 
+#[tokio::test]
+async fn teammate_discovery_merges_without_disturbing_the_active_view() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    // Start from a narrow view with no teammates discovered yet, mirroring
+    // a fresh live session that just loaded "My Work".
+    app.teammates_seen.clear();
+    let before_view = app.current_view.clone();
+    let before_keys: Vec<String> = app.all_issues.iter().map(|i| i.key.clone()).collect();
+
+    super::async_ops::dispatch_teammate_discovery(app.events_tx.clone());
+    let event = next_event(&mut app).await;
+    app.apply_event(event);
+
+    // The background discovery fetch must never touch the active view —
+    // only merge assignees into `teammates_seen`.
+    assert_eq!(app.current_view, before_view);
+    let after_keys: Vec<String> = app.all_issues.iter().map(|i| i.key.clone()).collect();
+    assert_eq!(after_keys, before_keys);
+
+    let discovered = app.known_teammates();
+    assert!(discovered.contains(&"priya.nair".to_string()));
+    assert!(discovered.contains(&"alex.chen".to_string()));
+}
+
 /// Like `non_demo_app`, but with a genuine `Source::Live` session — the
 /// condition every detail/transition/edit dispatch actually checks (unlike
 /// `refresh`/`switch_view`, which also treat `Source::Cache` as needing a

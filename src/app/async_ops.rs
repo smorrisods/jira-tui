@@ -92,6 +92,15 @@ pub enum AppEvent {
         source: Source,
         status: String,
     },
+    /// A one-shot background fetch of All Project Issues resolved,
+    /// dispatched once at startup for a genuine live session purely to
+    /// discover teammates earlier than the user manually visiting that
+    /// view — see `dispatch_teammate_discovery`. Deliberately carries no
+    /// `generation`: it never overwrites `all_issues`/`current_view` (only
+    /// merges assignees into `teammates_seen`), so it can't be made stale
+    /// by an unrelated refresh/switch_view and is safe to apply whenever
+    /// it lands.
+    TeammatesDiscovered { issues: Vec<IssueSummary> },
 }
 
 impl App {
@@ -353,6 +362,9 @@ impl App {
                     }
                 }
             }
+            AppEvent::TeammatesDiscovered { issues } => {
+                self.merge_teammates(&issues);
+            }
         }
     }
 }
@@ -409,6 +421,20 @@ async fn load(view: ViewKind, force_demo: bool) -> (Vec<IssueSummary>, Source, S
                 "internal error: fetch task panicked".into(),
             )
         })
+}
+
+/// Spawn a one-shot background fetch of All Project Issues, sending the
+/// result back as `AppEvent::TeammatesDiscovered`. Dispatched once from
+/// `App::new` for a genuine live session so the view picker's teammate list
+/// is populated without the user having to manually visit All Project
+/// Issues first — see `App::merge_teammates`, which applies the result
+/// without disturbing `all_issues`/`current_view`. `force_demo` is always
+/// `false` here: this is only ever dispatched for a live session.
+pub(crate) fn dispatch_teammate_discovery(tx: UnboundedSender<AppEvent>) {
+    tokio::spawn(async move {
+        let (issues, _source, _status) = load(ViewKind::AllProject, false).await;
+        let _ = tx.send(AppEvent::TeammatesDiscovered { issues });
+    });
 }
 
 /// Spawn a full-detail fetch off the render thread, sending the result back

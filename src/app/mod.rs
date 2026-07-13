@@ -288,6 +288,20 @@ impl App {
                 app.selected = idx;
             }
         }
+
+        // Kick off a one-shot background fetch of All Project Issues purely
+        // to discover teammates earlier, rather than waiting for the user
+        // to manually switch to that view — see
+        // `async_ops::dispatch_teammate_discovery`. Skipped for demo/cache
+        // sessions (no live network worth a background call for) and when
+        // the initial load already was All Project Issues (nothing left to
+        // discover).
+        if matches!(app.source, Source::Live { .. })
+            && !matches!(app.current_view, ViewKind::AllProject)
+        {
+            async_ops::dispatch_teammate_discovery(app.events_tx.clone());
+        }
+
         app
     }
 
