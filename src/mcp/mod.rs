@@ -73,7 +73,7 @@ struct UpdateSummaryParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct AddCommentParams {
+struct AddCommentMarkdownParams {
     /// Issue key, e.g. "DS-123".
     key: String,
     /// Comment body, written in Markdown. Converted to ADF automatically —
@@ -90,12 +90,12 @@ struct TransitionIssueParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct UpdateDescriptionParams {
+struct UpdateDescriptionMarkdownParams {
     /// Issue key, e.g. "DS-123".
     key: String,
     /// New description body, written in Markdown. Converted to ADF
     /// automatically — never send raw ADF JSON here.
-    markdown: String,
+    description_markdown: String,
 }
 
 #[derive(Clone)]
@@ -241,11 +241,13 @@ impl JiraMcpServer {
     }
 
     #[tool(
-        description = "Add a comment to an issue. Requires live Jira credentials. Body is Markdown, converted to ADF automatically."
+        description = "Add a comment to an issue, from Markdown (converted to ADF automatically — never send raw ADF JSON here). Requires live Jira credentials."
     )]
-    fn add_comment(
+    fn add_comment_markdown(
         &self,
-        Parameters(AddCommentParams { key, body_markdown }): Parameters<AddCommentParams>,
+        Parameters(AddCommentMarkdownParams { key, body_markdown }): Parameters<
+            AddCommentMarkdownParams,
+        >,
     ) -> Result<String, McpError> {
         let cfg = live_cfg()?;
         let body = crate::adf::compile(&body_markdown);
@@ -309,10 +311,13 @@ impl JiraMcpServer {
     )]
     fn update_description_markdown(
         &self,
-        Parameters(UpdateDescriptionParams { key, markdown }): Parameters<UpdateDescriptionParams>,
+        Parameters(UpdateDescriptionMarkdownParams {
+            key,
+            description_markdown,
+        }): Parameters<UpdateDescriptionMarkdownParams>,
     ) -> Result<String, McpError> {
         let cfg = live_cfg()?;
-        let adf = crate::adf::compile(&markdown);
+        let adf = crate::adf::compile(&description_markdown);
         crate::jira::update_description(&cfg, &key, &adf)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         Ok(format!("Updated description for {key}"))
@@ -326,10 +331,12 @@ impl ServerHandler for JiraMcpServer {
             .with_server_info(Implementation::new("jira-mcp", env!("CARGO_PKG_VERSION")))
             .with_instructions(
                 "Jira MCP server for jira-tui. Always read/write issue descriptions and \
-                 comments as Markdown via the *_markdown tools — never construct raw ADF \
-                 JSON yourself. Read tools work against demo data with no configuration; \
-                 write tools need JIRA_EMAIL / JIRA_API_TOKEN (and optionally \
-                 JIRA_BASE_URL / JIRA_PROJECT) set the same way the jira-tui TUI expects.",
+                 comments as Markdown via add_comment_markdown, get_description_markdown, \
+                 and update_description_markdown (and create_issue's description_markdown \
+                 field) — never construct raw ADF JSON yourself. Read tools work against \
+                 demo data with no configuration; write tools need JIRA_EMAIL / \
+                 JIRA_API_TOKEN (and optionally JIRA_BASE_URL / JIRA_PROJECT) set the same \
+                 way the jira-tui TUI expects.",
             )
     }
 }
