@@ -197,6 +197,9 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
                 app.list_focus = app::ListFocus::List;
             }
         }
+        KeyCode::Char('T') if matches!(app.screen, Screen::Home | Screen::List) => {
+            app.toggle_list_view_mode();
+        }
         KeyCode::Char('F') if matches!(app.screen, Screen::Home | Screen::List) => {
             app.open_field_mapping();
         }
@@ -251,6 +254,34 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             app.prev_comment();
         }
 
+        // In-body link navigation: issue keys and URLs mentioned in the
+        // description/comments/parent/links fields are underlined; `{`/`}`
+        // cycle which one is highlighted, `Enter` opens it (jumps to the
+        // issue, or opens the URL in the system browser).
+        KeyCode::Char('}')
+            if app.screen == Screen::Detail
+                || (matches!(app.screen, Screen::Home | Screen::List) && app.quick_view) =>
+        {
+            app.next_link();
+        }
+        KeyCode::Char('{')
+            if app.screen == Screen::Detail
+                || (matches!(app.screen, Screen::Home | Screen::List) && app.quick_view) =>
+        {
+            app.prev_link();
+        }
+        KeyCode::Enter if app.screen == Screen::Detail && app.has_links() => {
+            app.open_highlighted_link();
+        }
+        KeyCode::Enter
+            if matches!(app.screen, Screen::Home | Screen::List)
+                && app.quick_view
+                && app.list_focus == app::ListFocus::QuickView
+                && app.has_links() =>
+        {
+            app.open_highlighted_link();
+        }
+
         KeyCode::Up | KeyCode::Char('k') => nav(app, -1),
         KeyCode::Down | KeyCode::Char('j') => nav(app, 1),
         KeyCode::PageUp => nav(app, -8),
@@ -303,7 +334,7 @@ pub(crate) fn handle_mouse(app: &mut App, me: MouseEvent) {
         MouseEventKind::ScrollDown => scroll_at(app, me.column, me.row, 1),
         MouseEventKind::Down(MouseButton::Left) => app.mouse_down(me.row),
         MouseEventKind::Drag(MouseButton::Left) => app.mouse_drag(me.row),
-        MouseEventKind::Up(MouseButton::Left) => app.mouse_up(me.row),
+        MouseEventKind::Up(MouseButton::Left) => app.mouse_up(me.column, me.row),
         _ => {}
     }
 }

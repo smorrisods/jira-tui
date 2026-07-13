@@ -21,12 +21,14 @@ mod comments;
 mod detail;
 mod edit;
 mod field_mapping;
+mod links;
 mod mouse;
 mod onboarding;
 mod quick_view;
 mod search;
 mod sort_filter;
 mod transitions;
+mod tree;
 mod view_switch;
 
 #[cfg(test)]
@@ -40,6 +42,7 @@ pub use mouse::{ListFocus, MouseState};
 pub use onboarding::{Field, OnboardingState, WelcomePhase};
 pub use search::{SearchRow, SearchState};
 pub use sort_filter::SortKey;
+pub use tree::ListViewMode;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Screen {
@@ -75,12 +78,22 @@ pub struct App {
     pub sort_key: SortKey,
     pub sort_asc: bool,
     pub filter_status: Option<String>,
+    /// Flat sort order, or a parent/child tree nesting an issue's children
+    /// (Epic → stories, story → sub-tasks) beneath it — see `app::tree`.
+    pub list_view_mode: ListViewMode,
 
     // Quick-view panel + a cache of opened issue details.
     pub quick_view: bool,
     pub quick_view_scroll: u16,
     pub list_focus: ListFocus,
     pub detail_cache: HashMap<String, IssueDetail>,
+
+    // In-body link navigation (issue-key/URL mentions in the Detail screen
+    // and quick-view panel): `{`/`}` cycle `link_index`, `Enter` opens the
+    // highlighted one. The link list itself is recomputed on demand from
+    // whichever detail is shown (see `app::links::active_links`) rather
+    // than cached, so it can never go stale.
+    pub link_index: usize,
 
     // Search / go-to-issue.
     pub search: SearchState,
@@ -235,10 +248,12 @@ impl App {
             sort_key: SortKey::Updated,
             sort_asc: false,
             filter_status: None,
+            list_view_mode: ListViewMode::default(),
             quick_view: false,
             quick_view_scroll: 0,
             list_focus: ListFocus::List,
             detail_cache: HashMap::new(),
+            link_index: 0,
             search: SearchState::default(),
             board_sel: BoardSelection::default(),
             board_scroll: 0,
@@ -369,16 +384,16 @@ impl App {
         if self.issues.is_empty() {
             return;
         }
-        let len = self.issues.len() as isize;
-        let mut idx = self.selected as isize + delta;
-        if idx < 0 {
-            idx = 0;
-        }
-        if idx >= len {
-            idx = len - 1;
-        }
-        self.selected = idx as usize;
+        let rows = self.tree_rows();
+        let cur_pos = rows
+            .iter()
+            .position(|(i, _)| *i == self.selected)
+            .unwrap_or(0);
+        let mut pos = cur_pos as isize + delta;
+        pos = pos.clamp(0, rows.len() as isize - 1);
+        self.selected = rows[pos as usize].0;
         self.quick_view_scroll = 0;
+        self.link_index = 0;
     }
 
     pub fn assigned_to_me(&self) -> Vec<&IssueSummary> {

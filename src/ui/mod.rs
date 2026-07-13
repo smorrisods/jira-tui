@@ -244,7 +244,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
             }
         },
         Screen::Detail => "↑/↓ scroll · t transition · e edit · c comment · ]/[ comments/top · \
-             n/p next/prev comment · esc/← back · a about · ? help · q quit"
+             n/p next/prev comment · {/} cycle links · ⏎ open link · esc/← back · a about · ? help · q quit"
             .into(),
         Screen::Preview => match app.edit_target {
             EditTarget::Description => "y apply to Jira · esc/← cancel · ↑/↓ scroll".into(),
@@ -262,10 +262,10 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         Screen::About => "esc/← back · ? help · q quit".into(),
         Screen::Home | Screen::List if app.quick_view => {
             "↑/↓ move · →/⏎ open · tab focus quick view · c comment · ]/[ comments/top · \
-             n/p next/prev comment · b board · / search · V switch view · ? help · q quit"
+             n/p next/prev comment · {/} cycle links · ⏎ open link (focused) · b board · / search · V switch view · ? help · q quit"
                 .into()
         }
-        _ => "↑/↓ move · →/⏎ open · s sort · f filter · v quick · b board · / search · V switch view · ? help · q quit".into(),
+        _ => "↑/↓ move · →/⏎ open · s sort · f filter · v quick · T tree view · b board · / search · V switch view · ? help · q quit".into(),
     };
     let keys = keys.as_str();
     let block = Block::default()

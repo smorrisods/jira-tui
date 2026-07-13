@@ -9,7 +9,7 @@
 - `src/jira` — the `live`-feature REST client (`ureq`): reads, workflow transitions, description writes, comments, and issue creation.
 - `src/git` — repo/branch detection and `DS-123` issue-key parsing.
 - `src/config` — XDG config/cache paths, settings, secure token file, onboarding marker, and the issue cache.
-- `src/infra` — clipboard support via OSC 52.
+- `src/infra` — clipboard support via OSC 52, and opening URLs in the system browser.
 - `src/mcp` — the `mcp`-feature Model Context Protocol server: exposes Jira read/write tools to agents, converting Markdown ⇄ ADF via `src/adf` so agents never construct raw ADF JSON. Reuses `src/jira::Config` for auth (same env vars / token file / `config.toml` as the TUI) and falls back to demo data for read tools when no credentials are configured. Served over stdio by the thin `src/bin/jira_mcp.rs` binary.
 - `src/app` — application state, split by concern into submodules (`sort_filter`, `quick_view`, `search`, `board`, `transitions`, `edit`, `onboarding`, `mouse`, `detail`), with shared struct/constructor/tests (`tests.rs`) in `mod.rs`. Owns data loading, onboarding, round-trip edit, sort/filter, quick-view + list focus, search/go-to-issue, and the swimlane board (grouped by epic).
 - `src/ui` — `ratatui` rendering, split by screen into submodules (`welcome`, `home`, `list`, `detail`, `search`, `board`, `preview`, `transition_picker`, `editor`, `jax_companion`, `about`, `help`), with the `draw()` dispatcher, theme, and shared chrome/helpers in `mod.rs`.

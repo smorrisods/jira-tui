@@ -29,6 +29,9 @@ pub(crate) fn draw_list(f: &mut Frame, app: &App, area: Rect, full: bool) {
     if let Some(filter) = app.filter_label() {
         title.push_str(&format!(" · {filter}"));
     }
+    if app.list_view_mode == crate::app::ListViewMode::Tree {
+        title.push_str(" · tree");
+    }
     title.push_str(&format!("  ({})  ", app.issues.len()));
     // Dim the list's border when the quick-view panel has keyboard focus
     // (Tab), so it's clear which panel arrow keys currently affect.
@@ -38,16 +41,21 @@ pub(crate) fn draw_list(f: &mut Frame, app: &App, area: Rect, full: bool) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
+    let rows = app.tree_rows();
     let mut lines: Vec<Line> = Vec::new();
     let height = inner.height as usize;
+    let cur_pos = rows
+        .iter()
+        .position(|(i, _)| *i == app.selected)
+        .unwrap_or(0);
     // simple scroll window around the selection
-    let start = app
-        .selected
-        .saturating_sub(height.saturating_sub(2).max(1) / 2);
-    for (i, issue) in app.issues.iter().enumerate().skip(start).take(height) {
-        lines.push(issue_row(issue, i == app.selected));
+    let start = cur_pos.saturating_sub(height.saturating_sub(2).max(1) / 2);
+    for &(idx, depth) in rows.iter().skip(start).take(height) {
+        lines.push(issue_row(&app.issues[idx], idx == app.selected, depth));
     }
-    // Record geometry so mouse clicks can be mapped back to issues.
+    // Record geometry so mouse clicks can be mapped back to issues (via
+    // `tree_rows` again — `list_start` is a position within it, not a raw
+    // index into `app.issues`).
     app.list_area.set(inner);
     app.list_start.set(start);
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
@@ -77,7 +85,11 @@ pub(crate) fn draw_quick_view(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(block, area);
 
     let lines: Vec<Line> = if let Some(detail) = app.quick_view_detail() {
-        crate::render::issue_detail_lines(detail).lines
+        let mut rendered = crate::render::issue_detail_lines(detail);
+        if let Some(target) = rendered.links.get(app.link_index) {
+            crate::render::highlight_target(&mut rendered.lines, target);
+        }
+        rendered.lines
     } else {
         // Not cached yet: show what we know from the summary row while the
         // full detail loads in the background.
@@ -130,9 +142,11 @@ pub(crate) fn draw_quick_view(f: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-/// A single row in the work list. Also reused by the search results list and
-/// the swimlane board's card summaries.
-pub(crate) fn issue_row(issue: &IssueSummary, selected: bool) -> Line<'static> {
+/// A single row in the work list. Also reused by the search results list
+/// (always at `depth` 0) and the swimlane board's card summaries. `depth`
+/// nests a row under its parent in the tree view mode (see `app::tree`);
+/// pass 0 for the flat list.
+pub(crate) fn issue_row(issue: &IssueSummary, selected: bool, depth: usize) -> Line<'static> {
     let cursor = if selected { "▌" } else { " " };
     let cursor_style = if selected {
         Style::default().fg(ACCENT2)
@@ -164,6 +178,15 @@ pub(crate) fn issue_row(issue: &IssueSummary, selected: bool) -> Line<'static> {
         Style::default().fg(MUTED)
     };
 
+    let indent = if depth > 0 {
+        Span::styled(
+            format!("{}└ ", "  ".repeat(depth - 1)),
+            Style::default().fg(MUTED),
+        )
+    } else {
+        Span::raw("")
+    };
+
     Line::from(vec![
         Span::styled(cursor.to_string(), cursor_style),
         Span::styled(
@@ -171,6 +194,7 @@ pub(crate) fn issue_row(issue: &IssueSummary, selected: bool) -> Line<'static> {
             priority_style(&issue.priority),
         ),
         Span::raw(" "),
+        indent,
         Span::styled(format!("{:<8}", issue.key), key_style),
         Span::styled(
             format!("{:<11}", status_short(&issue.status)),

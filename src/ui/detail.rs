@@ -22,7 +22,10 @@ pub(crate) fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
     app.detail_area.set(inner);
     f.render_widget(block, area);
 
-    let rendered = crate::render::issue_detail_lines(detail);
+    let mut rendered = crate::render::issue_detail_lines(detail);
+    if let Some(target) = rendered.links.get(app.link_index) {
+        crate::render::highlight_target(&mut rendered.lines, target);
+    }
     let para = Paragraph::new(ratatui::text::Text::from(rendered.lines))
         .wrap(Wrap { trim: false })
         .scroll((app.detail_scroll, 0));

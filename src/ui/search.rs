@@ -78,7 +78,7 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
             }
             SearchRow::Match(idx) => {
                 if let Some(issue) = app.all_issues.get(*idx) {
-                    lines.push(issue_row(issue, selected));
+                    lines.push(issue_row(issue, selected, 0));
                 }
             }
         }

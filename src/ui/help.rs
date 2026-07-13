@@ -28,6 +28,10 @@ pub(crate) fn draw_help_overlay(f: &mut Frame, area: Rect) {
         ("s / S", "cycle sort / flip direction"),
         ("f", "cycle status filter"),
         ("v", "toggle quick-view panel"),
+        (
+            "T",
+            "toggle parent ↔ child tree view (nests children under parents)",
+        ),
         ("tab", "focus list ↔ quick view (enables arrow scroll)"),
         ("b", "swimlane board (Kanban-style, grouped by epic)"),
         ("t", "change status (in an issue)"),
@@ -35,6 +39,11 @@ pub(crate) fn draw_help_overlay(f: &mut Frame, area: Rect) {
         ("c", "add a comment (in an issue or quick view)"),
         ("] / [", "jump to comments section / back to top"),
         ("n / p", "next / previous comment"),
+        ("{ / }", "cycle highlighted in-body link (issue key / URL)"),
+        (
+            "⏎ (on a link)",
+            "open it — jump to the issue, or open the URL",
+        ),
         ("F", "map a custom field (e.g. Acceptance Criteria)"),
         ("V", "switch view (My Work / All Project Issues / teammate)"),
         ("a", "about panel"),
