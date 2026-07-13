@@ -233,7 +233,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
 
 // ── Footer ───────────────────────────────────────────────────────────────────
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
-    use crate::app::{EditTarget, Screen};
+    use crate::app::{EditTarget, ListFocus, Screen};
     let keys: String = match app.screen {
         Screen::Welcome => match app.onboarding.welcome_phase {
             crate::app::WelcomePhase::Intro => {
@@ -252,7 +252,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
             };
             format!(
                 "↑/↓ scroll · t transition · e edit · c comment · ]/[ comments/top · \
-                 n/p next/prev comment · {{/}} cycle links · ⏎ open link · esc{history} back · a about · ? help · q quit"
+                 n/p next/prev comment · {{/}} cycle links · ⏎ open link · r refresh · esc{history} back · a about · ? help · q quit"
             )
         }
         Screen::Preview => match app.edit_target {
@@ -270,11 +270,18 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         }
         Screen::About => "esc/← back · ? help · q quit".into(),
         Screen::Home | Screen::List if app.quick_view => {
-            "↑/↓ move · →/⏎ open · tab focus quick view · c comment · ]/[ comments/top · \
-             n/p next/prev comment · {/} cycle links · ⏎ open link (focused) · b board · / search · V switch view · ? help · q quit"
-                .into()
+            let refresh = if app.list_focus == ListFocus::QuickView {
+                "r refresh focused issue"
+            } else {
+                "r refresh list"
+            };
+            format!(
+                "↑/↓ move · →/⏎ open · tab focus quick view · c comment · ]/[ comments/top · \
+                 n/p next/prev comment · {{/}} cycle links · ⏎ open link (focused) · {refresh} · \
+                 b board · / search · V switch view · ? help · q quit"
+            )
         }
-        _ => "↑/↓ move · →/⏎ open · s sort · f filter · v quick · T tree view · b board · / search · V switch view · ? help · q quit".into(),
+        _ => "↑/↓ move · →/⏎ open · s sort · f filter · v quick · T tree view · r refresh · b board · / search · V switch view · ? help · q quit".into(),
     };
     let keys = keys.as_str();
     let block = Block::default()

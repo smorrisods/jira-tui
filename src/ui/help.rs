@@ -54,7 +54,10 @@ pub(crate) fn draw_help_overlay(f: &mut Frame, area: Rect) {
         ("m", "toggle mouse mode"),
         ("J", "toggle Jax companion 🦦"),
         ("y / Y", "copy issue key / URL"),
-        ("r", "refresh from source"),
+        (
+            "r",
+            "refresh — the list, or the open issue/focused quick view",
+        ),
         ("? / q", "toggle help / quit"),
     ];
     let lines: Vec<Line> = rows
