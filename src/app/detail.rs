@@ -22,6 +22,7 @@ impl App {
     /// navigates to `Screen::Detail` once it lands — see `dispatch_detail_fetch`.
     pub fn open_by_key(&mut self, key: &str) {
         self.detail_scroll = 0;
+        self.link_index = 0;
         if !matches!(self.source, Source::Live { .. }) {
             let detail = self.load_detail(key);
             self.detail_cache.insert(key.to_string(), detail.clone());

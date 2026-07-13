@@ -7,24 +7,24 @@ use crate::domain::IssueDetail;
 use super::{App, Screen};
 
 impl App {
-    /// The detail currently shown for comment purposes: the open issue on
-    /// the Detail screen, or the quick-view panel's cached detail everywhere
-    /// else (Home/List).
-    fn active_comment_detail(&self) -> Option<&IssueDetail> {
+    /// The detail currently shown for comment/link purposes: the open issue
+    /// on the Detail screen, or the quick-view panel's cached detail
+    /// everywhere else (Home/List). Shared with `app::links`.
+    pub(crate) fn active_comment_detail(&self) -> Option<&IssueDetail> {
         match self.screen {
             Screen::Detail => self.detail.as_ref(),
             _ => self.quick_view_detail(),
         }
     }
 
-    fn current_scroll(&self) -> u16 {
+    pub(crate) fn current_scroll(&self) -> u16 {
         match self.screen {
             Screen::Detail => self.detail_scroll,
             _ => self.quick_view_scroll,
         }
     }
 
-    fn set_scroll(&mut self, value: u16) {
+    pub(crate) fn set_scroll(&mut self, value: u16) {
         match self.screen {
             Screen::Detail => self.detail_scroll = value,
             _ => self.quick_view_scroll = value,

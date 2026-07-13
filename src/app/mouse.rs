@@ -55,13 +55,42 @@ impl App {
     }
 
     /// Map a screen row to an issue index within the recorded list area.
+    /// `list_start` is a position within `tree_rows()` (which is just
+    /// `0..issues.len()` in `Flat` mode), not a raw index into
+    /// `self.issues` — see `ui::list::draw_list`.
     pub fn list_index_at(&self, y: u16) -> Option<usize> {
         let area = self.list_area.get();
         if area.height == 0 || y < area.y || y >= area.y + area.height {
             return None;
         }
-        let idx = self.list_start.get() + (y - area.y) as usize;
-        (idx < self.issues.len()).then_some(idx)
+        let pos = self.list_start.get() + (y - area.y) as usize;
+        self.tree_rows().get(pos).map(|(idx, _)| *idx)
+    }
+
+    /// Resolve a screen coordinate to the index of a navigable link (issue
+    /// key/URL) under the cursor, in the full Detail screen or the
+    /// quick-view panel. Best-effort: it maps a screen row directly to a
+    /// rendered line index via `detail_scroll`/`quick_view_scroll` without
+    /// accounting for line-wrapping, so it's most reliable on short field
+    /// lines (`parent:`, the links section) rather than long wrapped
+    /// description/comment text — those are still reachable via `{`/`}`
+    /// keyboard cycling regardless of wrap.
+    pub fn link_at(&self, x: u16, y: u16) -> Option<usize> {
+        let (area, scroll) = if self.screen == Screen::Detail {
+            (self.detail_area.get(), self.detail_scroll)
+        } else if self.point_in_quick_view(x, y) {
+            (self.quick_view_area.get(), self.quick_view_scroll)
+        } else {
+            return None;
+        };
+        if !Self::point_in(area, x, y) {
+            return None;
+        }
+        let line = scroll as usize + (y - area.y) as usize;
+        let col = (x - area.x) as usize;
+        self.active_links()
+            .iter()
+            .position(|t| t.line == line && col >= t.start && col < t.end)
     }
 
     pub fn mouse_down(&mut self, y: u16) {
@@ -81,17 +110,21 @@ impl App {
         }
     }
 
-    pub fn mouse_up(&mut self, y: u16) {
+    pub fn mouse_up(&mut self, x: u16, y: u16) {
         if !self.mouse.selecting {
             return;
         }
         self.mouse.selecting = false;
         self.mouse.sel_end_y = y;
         if self.mouse.sel_start_y == self.mouse.sel_end_y {
-            // A click, not a drag: open the issue under the cursor.
+            // A click, not a drag: open the issue under the cursor, or —
+            // in the Detail screen/quick-view panel — the link under it.
             if matches!(self.screen, Screen::Home | Screen::List) && self.list_index_at(y).is_some()
             {
                 self.open_detail();
+            } else if let Some(idx) = self.link_at(x, y) {
+                self.link_index = idx;
+                self.open_highlighted_link();
             }
         } else {
             let a = self.mouse.sel_start_y.min(self.mouse.sel_end_y);
