@@ -7,12 +7,23 @@
 #![cfg(feature = "mcp")]
 
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::mpsc::{self, Receiver};
+use std::time::Duration;
+
+/// How long to wait for a single line of response before treating the
+/// server as hung. Generous, since CI runners can be slow, but bounded so a
+/// regression that hangs the server fails the test instead of the whole
+/// job (and, via `Drop`, leaves an orphaned `jira-mcp` process behind).
+const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
 struct McpProcess {
     child: Child,
     stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    // A background thread owns stdout and forwards complete lines here, so
+    // `send` can wait on a `recv_timeout` instead of blocking forever on
+    // `read_line` if the server hangs or exits without responding.
+    lines: Receiver<String>,
     next_id: u64,
 }
 
@@ -26,10 +37,23 @@ impl McpProcess {
             .expect("failed to spawn jira-mcp");
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in stdout.lines() {
+                match line {
+                    Ok(line) => {
+                        if tx.send(line).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
         Self {
             child,
             stdin,
-            stdout,
+            lines: rx,
             next_id: 1,
         }
     }
@@ -46,8 +70,12 @@ impl McpProcess {
         writeln!(self.stdin, "{msg}").unwrap();
         self.stdin.flush().unwrap();
 
-        let mut line = String::new();
-        self.stdout.read_line(&mut line).unwrap();
+        let line = self
+            .lines
+            .recv_timeout(RESPONSE_TIMEOUT)
+            .unwrap_or_else(|_| {
+                panic!("jira-mcp did not respond to `{method}` within {RESPONSE_TIMEOUT:?}")
+            });
         Some(serde_json::from_str(&line).expect("response should be valid JSON"))
     }
 
