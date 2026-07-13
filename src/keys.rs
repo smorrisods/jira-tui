@@ -159,6 +159,18 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('?') => app.show_help = true,
         KeyCode::Char('a') => app.screen = Screen::About,
         KeyCode::Char('g') => app.screen = Screen::Home,
+        // `r` refreshes whatever's actually being looked at: the open
+        // issue in Detail, or the quick-view panel once it has keyboard
+        // focus (mirroring the `Enter`-opens-link guard below); otherwise
+        // it refreshes the issue list, same as always.
+        KeyCode::Char('r')
+            if app.screen == Screen::Detail
+                || (matches!(app.screen, Screen::Home | Screen::List)
+                    && app.quick_view
+                    && app.list_focus == app::ListFocus::QuickView) =>
+        {
+            app.refresh_detail();
+        }
         KeyCode::Char('r') => app.refresh(),
         KeyCode::Char('m') => toggle_mouse(app),
         KeyCode::Char('b') if matches!(app.screen, Screen::Home | Screen::List) => app.open_board(),

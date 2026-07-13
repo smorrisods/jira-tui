@@ -60,6 +60,48 @@ impl App {
         self.dispatch_detail_fetch(key.to_string(), true);
     }
 
+    /// Re-fetch the currently viewed (Detail screen) or quick-viewed issue's
+    /// full detail — description, comments, transitions, links — picking up
+    /// changes made outside the TUI (e.g. a comment added via the Jira web
+    /// UI, another tool, or a teammate) that the session cache wouldn't
+    /// otherwise reflect. There's no push/webhook-based live-watch of the
+    /// open issue, so this is a manual "check again" bound to `r` (which
+    /// otherwise refreshes the issue *list*) whenever Detail or a
+    /// keyboard-focused quick view is showing something to refresh.
+    ///
+    /// Deliberately bypasses `open_by_key`: refreshing the same issue is not
+    /// a navigation and must not push/clear the back/forward link-history
+    /// stacks (see `app::history`).
+    pub fn refresh_detail(&mut self) {
+        let key = match self.screen {
+            Screen::Detail => self.detail.as_ref().map(|d| d.key.clone()),
+            _ if self.quick_view => self.selected_issue().map(|i| i.key.clone()),
+            _ => None,
+        };
+        let Some(key) = key else {
+            return;
+        };
+
+        self.detail_cache.remove(&key);
+        if !matches!(self.source, Source::Live { .. }) {
+            let detail = self.load_detail(&key);
+            self.detail_cache.insert(key.clone(), detail.clone());
+            if self.screen == Screen::Detail {
+                self.detail = Some(detail);
+            }
+            self.status = format!("refreshed {key}");
+            self.flash(format!("↻ refreshed {key}"));
+            return;
+        }
+
+        // `navigate` only controls whether `self.detail`/`detail_scroll`
+        // get updated once the fetch resolves (see `AppEvent::DetailLoaded`)
+        // — set it when we're actually viewing this issue in Detail, and
+        // leave it unset for a quick-view-only refresh, where updating
+        // `detail_cache` is all `quick_view_detail` needs.
+        self.dispatch_detail_fetch(key, self.screen == Screen::Detail);
+    }
+
     /// Fetch an issue's full detail: live REST when connected, otherwise the
     /// offline demo detail. Used by both `open_by_key` and the quick-view
     /// panel's lazy loader, so it's crate-visible rather than file-private.
