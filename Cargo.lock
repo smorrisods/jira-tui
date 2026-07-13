@@ -1128,6 +1128,7 @@ dependencies = [
  "clap_mangen",
  "crossterm",
  "dirs",
+ "libc",
  "mockito",
  "ratatui",
  "rmcp",
