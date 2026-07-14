@@ -68,6 +68,8 @@ pub struct App {
     pub issues: Vec<IssueSummary>,
     pub selected: usize,
     pub screen: Screen,
+    /// The screen to restore when closing the About view.
+    pub about_return_screen: Screen,
     pub detail: Option<IssueDetail>,
     pub detail_scroll: u16,
     pub source: Source,
@@ -248,6 +250,14 @@ pub struct App {
 }
 
 impl App {
+    /// Open About while remembering the current screen for back-navigation.
+    pub fn open_about(&mut self) {
+        if self.screen != Screen::About {
+            self.about_return_screen = self.screen;
+        }
+        self.screen = Screen::About;
+    }
+
     pub fn new(force_demo: bool) -> Self {
         let git = GitContext::detect();
         let (issues, source, status) = load_issues(force_demo);
@@ -263,6 +273,7 @@ impl App {
             } else {
                 Screen::Welcome
             },
+            about_return_screen: Screen::Home,
             detail: None,
             detail_scroll: 0,
             source,

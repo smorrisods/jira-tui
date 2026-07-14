@@ -173,7 +173,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
 
     match key.code {
         KeyCode::Char('?') => app.show_help = true,
-        KeyCode::Char('a') => app.screen = Screen::About,
+        KeyCode::Char('a') => app.open_about(),
         KeyCode::Char('g') => app.screen = Screen::Home,
         // `r` refreshes whatever's actually being looked at: the open
         // issue in Detail, or the quick-view panel once it has keyboard
@@ -466,7 +466,8 @@ fn back_or_quit(app: &mut App) {
         Screen::Preview | Screen::Edit => app.cancel_edit(),
         Screen::Search => app.close_search(),
         Screen::FieldMapping => app.close_field_mapping(),
-        Screen::List | Screen::Detail | Screen::About | Screen::Board => app.screen = Screen::Home,
+        Screen::About => app.screen = app.about_return_screen,
+        Screen::List | Screen::Detail | Screen::Board => app.screen = Screen::Home,
     }
 }
 
@@ -480,6 +481,30 @@ mod tests {
         let mut app = App::new(true);
         app.screen = Screen::Home;
         app
+    }
+
+    #[test]
+    fn about_returns_to_the_screen_where_it_was_opened() {
+        for previous_screen in [Screen::Home, Screen::List, Screen::Detail] {
+            let mut app = demo_app();
+            app.screen = previous_screen;
+
+            handle_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+            );
+            assert_eq!(app.screen, Screen::About);
+
+            // Re-opening About must not replace the original return target.
+            handle_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+            );
+            handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+
+            assert_eq!(app.screen, previous_screen);
+            assert!(!app.should_quit);
+        }
     }
 
     /// Regression test: the mouse wheel must always follow the pointer
