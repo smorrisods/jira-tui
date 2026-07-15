@@ -3,8 +3,10 @@
 //! `App` is one struct whose behaviour is split across focused submodules —
 //! sorting/filtering, the quick-view panel, search, the swimlane board,
 //! transitions, editing, onboarding, and mouse handling — each an `impl App`
-//! block in its own file. This module holds the struct definition, its
-//! constructor, small cross-cutting helpers, and the top-level data loader.
+//! block in its own file. This module holds the struct definition and its
+//! constructor; `loader` carries the top-level data loader (and the cache
+//! it sits in front of), and `query` carries the small cross-cutting state
+//! helpers (selection, window title, toasts, at-a-glance counts).
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -12,7 +14,7 @@ use std::collections::HashMap;
 use ratatui::layout::Rect;
 
 use crate::config::{self, Settings};
-use crate::domain::{demo_issues, AssignableUser, IssueDetail, IssueSummary, Source, ViewKind};
+use crate::domain::{AssignableUser, IssueDetail, IssueSummary, Source, ViewKind};
 use crate::git::GitContext;
 
 mod assign;
@@ -24,8 +26,10 @@ mod edit;
 mod field_mapping;
 mod history;
 mod links;
+mod loader;
 mod mouse;
 mod onboarding;
+mod query;
 mod quick_view;
 mod search;
 mod sort_filter;
@@ -46,6 +50,8 @@ pub use onboarding::{Field, OnboardingState, WelcomePhase};
 pub use search::{SearchRow, SearchState};
 pub use sort_filter::SortKey;
 pub use tree::ListViewMode;
+
+use loader::{load_issues, load_issues_for};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Screen {
@@ -357,212 +363,4 @@ impl App {
 
         app
     }
-
-    pub fn selected_issue(&self) -> Option<&IssueSummary> {
-        self.issues.get(self.selected)
-    }
-
-    /// The terminal window title for the app's current state: the key and
-    /// summary of the issue actually being viewed (full detail, its preview
-    /// or edit flow, or the quick-view panel), falling back to a plain
-    /// `jira-tui` outside those screens. Pure state → `String`; the run loop
-    /// is responsible for actually issuing a `SetTitle` command only when
-    /// this changes, so it stays testable without a real terminal.
-    pub fn window_title(&self) -> String {
-        const BASE: &str = "jira-tui";
-        let issue = match self.screen {
-            Screen::Detail | Screen::Preview | Screen::Edit => self
-                .detail
-                .as_ref()
-                .map(|d| (d.key.as_str(), d.summary.as_str())),
-            Screen::List if self.quick_view => self
-                .selected_issue()
-                .map(|i| (i.key.as_str(), i.summary.as_str())),
-            _ => None,
-        };
-        match issue {
-            Some((key, summary)) => format!("{key}: {summary} — {BASE}"),
-            None => BASE.to_string(),
-        }
-    }
-
-    /// Show a transient toast for roughly 1.5s (tied to the animation tick).
-    pub fn flash(&mut self, msg: impl Into<String>) {
-        self.flash_msg = msg.into();
-        self.flash_until = self.tick + 18;
-    }
-
-    /// The active toast message, if one is currently showing.
-    pub fn active_flash(&self) -> Option<&str> {
-        if self.tick < self.flash_until && !self.flash_msg.is_empty() {
-            Some(&self.flash_msg)
-        } else {
-            None
-        }
-    }
-
-    /// The Jira URL for the selected issue, when we know the site.
-    pub fn selected_issue_url(&self) -> Option<String> {
-        let issue = self.selected_issue()?;
-        let site = match &self.source {
-            Source::Live { site, .. } => site.clone(),
-            // Demo data has no real Jira site behind it; use an obviously
-            // fake placeholder host rather than a real organization's Jira.
-            _ => "demo.atlassian.net".to_string(),
-        };
-        Some(format!("https://{site}/browse/{}", issue.key))
-    }
-
-    pub fn move_selection(&mut self, delta: isize) {
-        if self.issues.is_empty() {
-            return;
-        }
-        let rows = self.tree_rows();
-        let cur_pos = rows
-            .iter()
-            .position(|(i, _)| *i == self.selected)
-            .unwrap_or(0);
-        let mut pos = cur_pos as isize + delta;
-        pos = pos.clamp(0, rows.len() as isize - 1);
-        self.selected = rows[pos as usize].0;
-        self.quick_view_scroll = 0;
-        self.link_index = 0;
-    }
-
-    pub fn assigned_to_me(&self) -> Vec<&IssueSummary> {
-        self.all_issues
-            .iter()
-            .filter(|i| i.assignee.is_some() && i.status != "Done")
-            .collect()
-    }
-
-    pub fn blocked(&self) -> Vec<&IssueSummary> {
-        self.all_issues.iter().filter(|i| i.blocked).collect()
-    }
-
-    /// Reload the current view. Demo/cache-only sessions resolve inline
-    /// (there's no network round-trip worth a spinner for); a genuine live
-    /// fetch dispatches onto the runtime instead of blocking the render
-    /// thread — see `async_ops::dispatch_load`.
-    pub fn refresh(&mut self) {
-        let force_demo = matches!(self.source, Source::Demo);
-        let kind = self.current_view.clone();
-        if force_demo {
-            let (issues, source, status) = load_issues_for(&kind, force_demo);
-            self.all_issues = issues;
-            self.source = source;
-            self.status = format!("↻ {status}");
-            self.recompute_view();
-            return;
-        }
-        let generation = self.bump_generation();
-        self.loading = true;
-        self.status = format!("↻ loading {}…", kind.label());
-        let tx = self.events_tx.clone();
-        async_ops::dispatch_refresh(tx, generation, kind, force_demo);
-    }
-}
-
-/// Open the on-disk cache for the current site, running the one-time
-/// legacy `my-work.json` import along the way — unless caching is
-/// disabled (`cache_enabled` setting / `--no-cache` / `JIRA_NO_CACHE`), or
-/// the cache can't be opened at all (treated the same as "no cache
-/// available", exactly like a missing/corrupt `my-work.json` always was).
-#[cfg(feature = "live")]
-fn open_cache_for_site(cfg: &crate::jira::Config) -> Option<(crate::cache::Cache, i64)> {
-    if !crate::config::Settings::load().cache_enabled {
-        return None;
-    }
-    let mut cache = crate::cache::Cache::open().ok()?;
-    let site_id = cache.site_id(&cfg.base_url).ok()?;
-    cache.migrate_legacy_json(site_id, crate::jira::MY_WORK_JQL);
-    Some((cache, site_id))
-}
-
-/// The issues to show offline for a given view. `MyWork`/`AllProject` both
-/// show the full baked-in demo set (the demo dataset stands in for "the
-/// whole project" — there's no offline notion of a distinct "my" subset);
-/// `Teammate` filters it down to that teammate's assigned issues, so the
-/// view picker is meaningfully explorable with zero credentials.
-fn demo_view_for(view: &ViewKind) -> Vec<IssueSummary> {
-    match view {
-        ViewKind::MyWork | ViewKind::AllProject => demo_issues(),
-        ViewKind::Teammate(name) => demo_issues()
-            .into_iter()
-            .filter(|i| i.assignee.as_deref() == Some(name.as_str()))
-            .collect(),
-    }
-}
-
-fn load_issues(force_demo: bool) -> (Vec<IssueSummary>, Source, String) {
-    load_issues_for(&ViewKind::MyWork, force_demo)
-}
-
-/// Fetch (or fall back to demo/cached data for) whichever view is active.
-/// Every view (My Work, All Project Issues, a teammate's work) gets its own
-/// durable on-disk SQLite cache entry (`ViewKind::cache_kind`), so switching
-/// views doesn't always re-hit the API and still has an offline fallback.
-fn load_issues_for(view: &ViewKind, force_demo: bool) -> (Vec<IssueSummary>, Source, String) {
-    if !force_demo {
-        #[cfg(feature = "live")]
-        {
-            if let Some(cfg) = crate::jira::Config::load() {
-                let user = crate::jira::whoami(&cfg).unwrap_or_else(|_| "me".into());
-                let mut cache = open_cache_for_site(&cfg);
-                let jql = crate::jira::jql_for(view, &cfg.project);
-                let kind = view.cache_kind();
-                match crate::jira::search_issues(&cfg, &jql) {
-                    Ok(issues) if !issues.is_empty() => {
-                        let host = cfg.site_host();
-                        let n = issues.len();
-                        if let Some((cache, site_id)) = &mut cache {
-                            let _ = cache.save_view(*site_id, &kind, &view.label(), &jql, &issues);
-                        }
-                        // search_issues now pages until Jira reports
-                        // `isLast`, but still stops at SEARCH_RESULTS_CAP so
-                        // a very large project can't page forever — flag it
-                        // when that cap was actually hit.
-                        let status = if n >= crate::jira::SEARCH_RESULTS_CAP {
-                            format!("Loaded {n} issues from Jira (capped at {n}; more may exist)")
-                        } else {
-                            format!("Loaded {n} issues from Jira")
-                        };
-                        return (issues, Source::Live { site: host, user }, status);
-                    }
-                    Ok(_) => {
-                        return (
-                            demo_view_for(view),
-                            Source::Demo,
-                            format!("No issues found for {} — showing sample data", view.label()),
-                        );
-                    }
-                    Err(e) => {
-                        // Prefer the last cached list over sample data offline.
-                        let cached = cache
-                            .as_ref()
-                            .and_then(|(cache, site_id)| cache.load_view(*site_id, &kind).ok())
-                            .flatten();
-                        if let Some(cached) = cached {
-                            let n = cached.len();
-                            return (
-                                cached,
-                                Source::Cache { user },
-                                format!("Jira unreachable ({e}) — showing {n} cached issues"),
-                            );
-                        }
-                        return (
-                            demo_view_for(view),
-                            Source::Demo,
-                            format!("Jira unreachable ({e}) — showing sample data"),
-                        );
-                    }
-                }
-            }
-        }
-    }
-    (
-        demo_view_for(view),
-        Source::Demo,
-        "Offline demo — set JIRA_EMAIL + token for live mode".into(),
-    )
 }
