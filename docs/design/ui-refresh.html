@@ -1,0 +1,1032 @@
+<title>jira-tui · UI refresh proposal</title>
+<style>
+  /* ---------- page tokens (both themes) ---------- */
+  :root {
+    --page-bg: #eef1f1;
+    --page-ink: #1c2429;
+    --page-muted: #5b6a72;
+    --page-edge: #ccd6d8;
+    --page-card: #ffffff;
+    --page-accent: #0e7c80;
+    --page-maple: #c05a21;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --page-bg: #0b0e11;
+      --page-ink: #d3dce1;
+      --page-muted: #8a99a1;
+      --page-edge: #232c33;
+      --page-card: #11161b;
+      --page-accent: #62d8d3;
+      --page-maple: #e8834a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --page-bg: #0b0e11;
+    --page-ink: #d3dce1;
+    --page-muted: #8a99a1;
+    --page-edge: #232c33;
+    --page-card: #11161b;
+    --page-accent: #62d8d3;
+    --page-maple: #e8834a;
+  }
+  :root[data-theme="light"] {
+    --page-bg: #eef1f1;
+    --page-ink: #1c2429;
+    --page-muted: #5b6a72;
+    --page-edge: #ccd6d8;
+    --page-card: #ffffff;
+    --page-accent: #0e7c80;
+    --page-maple: #c05a21;
+  }
+
+  /* ---------- terminal tokens (deliberately one dark world) ---------- */
+  :root {
+    --t-bg: #0e141b;
+    --t-panel: #121a23;
+    --t-panel2: #17212c;
+    --t-edge: #2a3642;
+    --t-ink: #c9d4dc;
+    --t-muted: #77838f;
+    --t-faint: #4a5763;
+    --t-cyan: #62d8d3;
+    --t-orchid: #c79bf0;
+    --t-maple: #e8834a;
+    --t-fern: #8fcb7a;
+    --t-amber: #e3b564;
+    --t-ember: #e5716b;
+    --t-blue: #6fb3e0;
+    --mono: ui-monospace, "JetBrains Mono", "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+
+  body {
+    background: var(--page-bg);
+    color: var(--page-ink);
+    font-family: var(--sans);
+    line-height: 1.55;
+    margin: 0;
+    padding: 2.5rem 1.25rem 5rem;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+
+  /* ---------- pitch header ---------- */
+  .pitch { margin-bottom: 2rem; max-width: 68ch; }
+  .pitch .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--page-maple);
+    margin: 0 0 0.5rem;
+  }
+  .pitch h1 {
+    font-family: var(--mono);
+    font-size: clamp(1.5rem, 3.2vw, 2.1rem);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0 0 0.75rem;
+    text-wrap: balance;
+  }
+  .pitch h1 .dim { color: var(--page-muted); font-weight: 400; }
+  .pitch p { margin: 0 0 0.75rem; color: var(--page-muted); }
+  .pitch strong { color: var(--page-ink); }
+
+  /* ---------- palette strip ---------- */
+  .swatches { display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 1.25rem 0 0; }
+  .sw {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    display: flex; align-items: center; gap: 0.45rem;
+    border: 1px solid var(--page-edge);
+    border-radius: 999px;
+    padding: 0.25rem 0.7rem 0.25rem 0.35rem;
+    background: var(--page-card);
+    color: var(--page-muted);
+  }
+  .sw i { width: 0.95rem; height: 0.95rem; border-radius: 50%; display: inline-block; }
+
+  /* ---------- tabs ---------- */
+  .tabs {
+    display: flex; flex-wrap: wrap; gap: 0.4rem;
+    margin: 2rem 0 0.9rem;
+    font-family: var(--mono);
+  }
+  .tabs button {
+    font: inherit; font-size: 0.78rem;
+    background: transparent;
+    color: var(--page-muted);
+    border: 1px solid var(--page-edge);
+    border-radius: 6px 6px 0 0;
+    border-bottom: none;
+    padding: 0.45rem 0.85rem;
+    cursor: pointer;
+  }
+  .tabs button .n { color: var(--page-maple); margin-right: 0.4em; }
+  .tabs button:hover { color: var(--page-ink); }
+  .tabs button:focus-visible { outline: 2px solid var(--page-accent); outline-offset: 2px; }
+  .tabs button.active {
+    background: var(--t-bg);
+    color: var(--t-cyan);
+    border-color: var(--t-bg);
+  }
+
+  /* ---------- terminal frame ---------- */
+  .term-outer {
+    background: var(--t-bg);
+    border-radius: 10px;
+    border: 1px solid var(--page-edge);
+    box-shadow: 0 18px 50px rgba(0,0,0,0.28);
+    overflow: hidden;
+  }
+  .titlebar {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.55rem 0.9rem;
+    border-bottom: 1px solid var(--t-edge);
+    font-family: var(--mono); font-size: 0.7rem; color: var(--t-faint);
+  }
+  .titlebar .dot { width: 0.7rem; height: 0.7rem; border-radius: 50%; background: var(--t-edge); }
+  .titlebar .tname { margin-left: 0.5rem; }
+  .term-scroll { overflow-x: auto; }
+  .term {
+    position: relative;
+    min-width: 900px;
+    min-height: 580px;
+    padding: 0.8rem 0.9rem;
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.5;
+    color: var(--t-ink);
+    display: flex; flex-direction: column;
+  }
+
+  .screen { display: none; flex: 1; flex-direction: column; gap: 0.7rem; min-height: 0; }
+  .screen.active { display: flex; }
+
+  /* ---------- shared chrome ---------- */
+  .thead, .tfoot {
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+    padding: 0.45rem 0.9rem;
+    border: 1px solid var(--t-edge);
+    border-radius: 8px;
+    background: var(--t-panel);
+    flex-wrap: wrap;
+  }
+  .brand b { color: var(--t-cyan); }
+  .brand i { color: var(--t-orchid); font-style: normal; }
+  .crumb { color: var(--t-muted); }
+  .crumb .here { color: var(--t-ink); font-weight: 600; }
+  .crumb .sep { color: var(--t-faint); padding: 0 0.35em; }
+  .hgroup { display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap; }
+  .git { color: var(--t-blue); }
+  .git .lk { color: var(--t-amber); font-weight: 700; }
+  .sync {
+    display: inline-flex; align-items: center; gap: 0.4em;
+    color: var(--t-muted); font-size: 0.72rem;
+    border: 1px solid var(--t-edge); border-radius: 999px; padding: 0.05rem 0.6rem;
+  }
+  .sync .led { width: 0.5em; height: 0.5em; border-radius: 50%; background: var(--t-fern); }
+
+  .tfoot { font-size: 0.72rem; color: var(--t-muted); }
+  .hints { display: flex; flex-wrap: wrap; gap: 1.1rem; align-items: center; }
+  .hg { display: inline-flex; align-items: center; gap: 0.45em; white-space: nowrap; }
+  .hg .gl {
+    color: var(--t-faint); text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.62rem;
+    margin-right: 0.15em;
+  }
+  kbd {
+    font-family: var(--mono); font-size: 0.68rem;
+    color: var(--t-cyan);
+    border: 1px solid var(--t-edge); border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 0 0.35em;
+    background: var(--t-panel2);
+  }
+  .tfoot .status { color: var(--t-faint); }
+
+  /* ---------- panels ---------- */
+  .panel {
+    position: relative;
+    border: 1px solid var(--t-edge);
+    border-radius: 8px;
+    background: var(--t-panel);
+    padding: 0.9rem;
+  }
+  .panel-title {
+    position: absolute; top: -0.72em; left: 0.8rem;
+    background: var(--t-bg);
+    padding: 0 0.5em;
+    font-size: 0.7rem; font-weight: 700;
+    color: var(--t-cyan);
+    letter-spacing: 0.02em;
+  }
+  .panel-title.orchid { color: var(--t-orchid); }
+  .panel-title .cnt { color: var(--t-faint); font-weight: 400; }
+  .panel.focused { border-color: var(--t-cyan); }
+
+  /* ---------- chips ---------- */
+  .chip {
+    display: inline-block;
+    font-size: 0.68rem; font-weight: 700;
+    border-radius: 4px;
+    padding: 0 0.5em;
+    line-height: 1.6;
+    white-space: nowrap;
+  }
+  .c-todo    { color: #a8b6c2; background: rgba(168,182,194,0.14); }
+  .c-prog    { color: var(--t-cyan); background: rgba(98,216,211,0.13); }
+  .c-review  { color: var(--t-orchid); background: rgba(199,155,240,0.14); }
+  .c-done    { color: var(--t-fern); background: rgba(143,203,122,0.14); }
+  .c-story   { color: var(--t-fern); background: rgba(143,203,122,0.12); }
+  .c-bug     { color: var(--t-ember); background: rgba(229,113,107,0.13); }
+  .c-task    { color: var(--t-blue); background: rgba(111,179,224,0.13); }
+  .c-epic    { color: var(--t-orchid); background: rgba(199,155,240,0.14); }
+  .c-label   { color: var(--t-amber); background: rgba(227,181,100,0.12); }
+  .c-blocked { color: var(--t-ember); background: rgba(229,113,107,0.18); }
+
+  .pr { font-weight: 700; }
+  .pr-highest { color: var(--t-ember); }
+  .pr-high { color: var(--t-maple); }
+  .pr-med { color: var(--t-amber); }
+  .pr-low { color: var(--t-blue); }
+
+  /* ---------- list ---------- */
+  .lst { display: flex; flex-direction: column; }
+  .lst-head, .lrow {
+    display: grid;
+    grid-template-columns: 1.1rem 5rem 4.6rem 6.6rem 1fr 7.5rem 5.5rem;
+    gap: 0.7rem; align-items: center;
+    padding: 0.18rem 0.5rem;
+  }
+  .lst-head {
+    color: var(--t-faint); font-size: 0.65rem;
+    text-transform: uppercase; letter-spacing: 0.1em;
+    border-bottom: 1px solid var(--t-edge);
+    margin-bottom: 0.3rem; padding-bottom: 0.35rem;
+  }
+  .lrow { border-radius: 5px; color: var(--t-muted); }
+  .lrow .key { color: var(--t-cyan); }
+  .lrow .sum { color: var(--t-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lrow .who, .lrow .upd { font-size: 0.72rem; }
+  .lrow.sel {
+    background: rgba(232,131,74,0.10);
+    box-shadow: inset 3px 0 0 var(--t-maple);
+    color: var(--t-ink);
+  }
+  .lrow.sel .sum { font-weight: 700; }
+  .lrow .tree { color: var(--t-faint); }
+  .flag { color: var(--t-ember); font-size: 0.7rem; font-weight: 700; }
+
+  .who .av {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.35em; height: 1.35em; border-radius: 50%;
+    font-size: 0.6rem; font-weight: 700;
+    margin-right: 0.4em;
+    background: rgba(111,179,224,0.2); color: var(--t-blue);
+  }
+  .who .av.me { background: rgba(232,131,74,0.2); color: var(--t-maple); }
+
+  /* ---------- home ---------- */
+  .home-grid { display: grid; grid-template-columns: 290px 1fr; gap: 0.9rem; flex: 1; min-height: 0; }
+  .rail { display: flex; flex-direction: column; gap: 0.9rem; }
+  .kv { display: grid; grid-template-columns: 5.2rem 1fr; gap: 0.15rem 0.6rem; font-size: 0.76rem; }
+  .kv dt { color: var(--t-faint); margin: 0; }
+  .kv dd { margin: 0; color: var(--t-ink); }
+  .kv dd.branch { color: var(--t-blue); }
+  .statline { display: flex; justify-content: space-between; align-items: center; padding: 0.14rem 0; font-size: 0.78rem; color: var(--t-muted); }
+  .statline b { font-size: 0.9rem; }
+  .n-ok { color: var(--t-fern); } .n-warn { color: var(--t-ember); } .n-info { color: var(--t-cyan); }
+  .bar { height: 4px; border-radius: 2px; background: var(--t-panel2); margin: 0.15rem 0 0.45rem; overflow: hidden; }
+  .bar i { display: block; height: 100%; border-radius: 2px; }
+  .recent { font-size: 0.75rem; color: var(--t-muted); display: flex; flex-direction: column; gap: 0.25rem; }
+  .recent .key { color: var(--t-cyan); margin-right: 0.5em; }
+  .tip { font-size: 0.72rem; color: var(--t-faint); font-style: italic; margin-top: 0.4rem; }
+
+  /* ---------- quick view ---------- */
+  .qv-grid { display: grid; grid-template-columns: 1fr 15rem; gap: 1.2rem; }
+  .qv-meta { display: grid; grid-template-columns: 4.6rem 1fr; gap: 0.2rem 0.6rem; font-size: 0.74rem; align-content: start; }
+  .qv-meta dt { color: var(--t-faint); margin: 0; }
+  .qv-meta dd { margin: 0; color: var(--t-ink); }
+  .desc { color: var(--t-muted); font-size: 0.78rem; }
+  .desc p { margin: 0 0 0.5rem; }
+  .desc code { color: var(--t-amber); background: var(--t-panel2); border-radius: 3px; padding: 0 0.3em; }
+  .desc .h { color: var(--t-ink); font-weight: 700; }
+  .fade { color: var(--t-faint); }
+
+  /* ---------- detail ---------- */
+  .det-head { display: flex; align-items: baseline; gap: 0.8rem; flex-wrap: wrap; }
+  .det-head .dkey { color: var(--t-cyan); font-weight: 700; font-size: 0.95rem; }
+  .det-head h2 { font-size: 1.02rem; margin: 0; color: var(--t-ink); font-weight: 700; }
+  .det-grid { display: grid; grid-template-columns: 1fr 17.5rem; gap: 0.9rem; flex: 1; min-height: 0; align-items: start; }
+  .det-main { display: flex; flex-direction: column; gap: 0.9rem; }
+  .adf h4 { color: var(--t-ink); font-size: 0.82rem; margin: 0 0 0.4rem; }
+  .adf p, .adf li { color: var(--t-muted); font-size: 0.78rem; margin: 0 0 0.45rem; }
+  .adf ul { margin: 0 0 0.5rem; padding-left: 1.2rem; }
+  .adf code { color: var(--t-amber); background: var(--t-panel2); border-radius: 3px; padding: 0 0.3em; }
+  .adf a { color: var(--t-cyan); text-decoration: underline; text-underline-offset: 2px; }
+  .adf a.lit { background: var(--t-cyan); color: var(--t-bg); text-decoration: none; border-radius: 2px; padding: 0 2px; }
+  .ac li { list-style: none; position: relative; padding-left: 1.4rem; }
+  .ac li::before { content: "☐"; position: absolute; left: 0; color: var(--t-faint); }
+  .ac li.ok::before { content: "☑"; color: var(--t-fern); }
+  .flow { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.72rem; color: var(--t-faint); }
+  .flow .st { border: 1px dashed var(--t-edge); border-radius: 4px; padding: 0 0.5em; color: var(--t-muted); }
+  .flow .st.cur { border-style: solid; border-color: var(--t-orchid); color: var(--t-orchid); font-weight: 700; }
+  .comment { border-left: 2px solid var(--t-edge); padding: 0.1rem 0 0.1rem 0.8rem; margin-bottom: 0.8rem; }
+  .comment .chead { font-size: 0.74rem; margin-bottom: 0.2rem; }
+  .comment .chead b { color: var(--t-ink); }
+  .comment .chead span { color: var(--t-faint); }
+  .comment p { color: var(--t-muted); font-size: 0.78rem; margin: 0; }
+  .side { display: flex; flex-direction: column; gap: 0.9rem; }
+  .side .kv { grid-template-columns: 5.4rem 1fr; }
+  .child { display: flex; align-items: center; gap: 0.5rem; font-size: 0.74rem; padding: 0.15rem 0; color: var(--t-muted); }
+  .child .key { color: var(--t-cyan); }
+  .linkrow { font-size: 0.74rem; padding: 0.12rem 0; color: var(--t-muted); }
+  .linkrow .rel { color: var(--t-ember); }
+  .linkrow .key { color: var(--t-cyan); }
+
+  /* ---------- board ---------- */
+  .board { flex: 1; display: flex; flex-direction: column; gap: 0.6rem; min-height: 0; }
+  .bcols { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.7rem; }
+  .bcol-h {
+    display: flex; align-items: baseline; gap: 0.5em;
+    font-size: 0.72rem; font-weight: 700;
+    padding: 0.3rem 0.5rem;
+    border-bottom: 2px solid var(--t-edge);
+  }
+  .bcol-h .cnt { color: var(--t-faint); font-weight: 400; }
+  .bcol-h .wip { margin-left: auto; color: var(--t-amber); font-weight: 400; font-size: 0.65rem; }
+  .lane-h { font-size: 0.74rem; color: var(--t-orchid); font-weight: 700; margin: 0.35rem 0 0.1rem; }
+  .lane-h .cnt { color: var(--t-faint); font-weight: 400; }
+  .bcell { display: flex; flex-direction: column; gap: 0.5rem; min-height: 2rem; }
+  .bcard {
+    border: 1px solid var(--t-edge); border-radius: 6px;
+    background: var(--t-panel);
+    padding: 0.45rem 0.6rem;
+    font-size: 0.74rem;
+  }
+  .bcard .top { display: flex; align-items: center; gap: 0.5em; margin-bottom: 0.25rem; }
+  .bcard .key { color: var(--t-cyan); font-weight: 700; }
+  .bcard .sum { color: var(--t-ink); display: block; margin-bottom: 0.35rem; }
+  .bcard .foot { display: flex; align-items: center; gap: 0.5em; }
+  .bcard.sel { border-color: var(--t-maple); background: rgba(232,131,74,0.08); box-shadow: inset 3px 0 0 var(--t-maple); }
+  .ghost { border-style: dashed; color: var(--t-faint); text-align: center; padding: 0.4rem; font-size: 0.7rem; background: transparent; }
+
+  /* ---------- welcome ---------- */
+  .welcome { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.6rem; text-align: center; }
+  .welcome pre { margin: 0 0 0.3rem; color: var(--t-cyan); font-size: 0.9rem; line-height: 1.35; }
+  .welcome pre .face { color: var(--t-orchid); font-weight: 700; }
+  .welcome h2 { margin: 0; font-size: 1.05rem; color: var(--t-ink); }
+  .welcome .sub { color: var(--t-muted); font-size: 0.8rem; margin: 0 0 0.9rem; }
+  .paths { display: grid; grid-template-columns: repeat(3, 15rem); gap: 0.8rem; }
+  .path {
+    border: 1px solid var(--t-edge); border-radius: 8px;
+    background: var(--t-panel);
+    padding: 0.8rem; text-align: left;
+    display: flex; flex-direction: column; gap: 0.3rem;
+  }
+  .path.rec { border-color: var(--t-maple); }
+  .path .ph { display: flex; align-items: center; gap: 0.6em; font-weight: 700; color: var(--t-ink); font-size: 0.8rem; }
+  .path p { margin: 0; font-size: 0.72rem; color: var(--t-muted); }
+  .path .badge { margin-left: auto; font-size: 0.6rem; color: var(--t-maple); text-transform: uppercase; letter-spacing: 0.1em; font-weight: 400; }
+
+  /* ---------- palette modal ---------- */
+  .dimmed { opacity: 0.35; pointer-events: none; }
+  .modal-wrap { position: absolute; inset: 0; display: flex; align-items: flex-start; justify-content: center; padding-top: 5.5rem; }
+  .modal {
+    width: 34rem;
+    border: 1px solid var(--t-cyan);
+    border-radius: 8px;
+    background: var(--t-panel);
+    box-shadow: 0 14px 40px rgba(0,0,0,0.5);
+    padding: 0.7rem;
+  }
+  .modal .inp {
+    display: flex; align-items: center; gap: 0.5em;
+    border: 1px solid var(--t-edge); border-radius: 6px;
+    background: var(--t-bg);
+    padding: 0.35rem 0.6rem;
+    margin-bottom: 0.6rem;
+    color: var(--t-ink);
+  }
+  .modal .inp .pr0 { color: var(--t-orchid); font-weight: 700; }
+  .caret { display: inline-block; width: 2px; height: 1em; background: var(--t-cyan); vertical-align: text-bottom; animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .cmd { display: flex; align-items: center; gap: 0.7em; padding: 0.3rem 0.55rem; border-radius: 5px; font-size: 0.78rem; color: var(--t-muted); }
+  .cmd .ico { width: 1.4em; text-align: center; color: var(--t-faint); }
+  .cmd b { color: var(--t-ink); font-weight: 400; }
+  .cmd b mark { background: none; color: var(--t-cyan); font-weight: 700; }
+  .cmd kbd { margin-left: auto; }
+  .cmd.sel { background: rgba(232,131,74,0.12); box-shadow: inset 3px 0 0 var(--t-maple); }
+  .cmd.sel b { font-weight: 700; }
+  .cmd-sec { font-size: 0.62rem; color: var(--t-faint); text-transform: uppercase; letter-spacing: 0.12em; padding: 0.45rem 0.55rem 0.15rem; }
+
+  /* ---------- jax companion ---------- */
+  #jax {
+    position: absolute; right: 1.4rem; bottom: 4.2rem;
+    width: 15rem;
+    border: 1px solid var(--t-orchid);
+    border-radius: 8px;
+    background: var(--t-panel);
+    padding: 0.5rem 0.7rem 0.4rem;
+    cursor: pointer;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+    user-select: none;
+  }
+  #jax:focus-visible { outline: 2px solid var(--t-cyan); outline-offset: 2px; }
+  #jax .jtitle {
+    position: absolute; top: -0.72em; left: 0.7rem;
+    background: var(--t-panel);
+    padding: 0 0.5em;
+    font-size: 0.68rem; font-weight: 700; color: var(--t-orchid);
+  }
+  #jax pre { margin: 0; font-size: 0.72rem; line-height: 1.35; color: var(--t-cyan); min-height: 4.4em; }
+  #jax .mood { font-size: 0.62rem; color: var(--t-faint); text-align: right; }
+  .term.no-jax #jax { display: none; }
+
+  /* ---------- notes ---------- */
+  .notes-wrap { margin-top: 1.6rem; }
+  .note { display: none; }
+  .note.active { display: block; }
+  .note h3 { font-family: var(--mono); font-size: 0.95rem; margin: 0 0 0.6rem; }
+  .note h3 .n { color: var(--page-maple); }
+  .note-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; }
+  .nc { background: var(--page-card); border: 1px solid var(--page-edge); border-radius: 8px; padding: 1rem 1.1rem; }
+  .nc h4 { margin: 0 0 0.4rem; font-size: 0.82rem; }
+  .nc p { margin: 0; font-size: 0.82rem; color: var(--page-muted); }
+  .nc code { font-family: var(--mono); font-size: 0.75rem; color: var(--page-accent); }
+
+  .colophon { margin-top: 3rem; font-size: 0.78rem; color: var(--page-muted); max-width: 68ch; }
+  .colophon code { font-family: var(--mono); color: var(--page-accent); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .caret { animation: none; }
+  }
+</style>
+
+<div class="wrap">
+  <header class="pitch">
+    <p class="eyebrow">Design proposal · docs/design</p>
+    <h1>jira-tui <span class="dim">·</span> UI refresh <span class="dim">— six screens, one calmer terminal</span></h1>
+    <p>The app has grown a lot of capability since the first ratatui pass — tree view, boards, comments, links, history — and the chrome hasn't kept up. This proposal keeps the <strong>cyan / magenta identity</strong> and the three-region layout, and adds three things: <strong>structured rows instead of packed strings</strong>, <strong>grouped key hints instead of one long footer</strong>, and a third accent — <strong>maple</strong>, borrowed from Jax's leaf — used only for "you are here": selection, focus, and Jax moments.</p>
+    <p>Jax is not only retained, Jax is promoted. All six scenes stay; the companion gains a mood line and reacts to what you do. Click him below.</p>
+    <div class="swatches">
+      <span class="sw"><i style="background:#0e141b"></i>ground #0E141B</span>
+      <span class="sw"><i style="background:#62d8d3"></i>cyan #62D8D3</span>
+      <span class="sw"><i style="background:#c79bf0"></i>orchid #C79BF0</span>
+      <span class="sw"><i style="background:#e8834a"></i>maple #E8834A · selection &amp; Jax</span>
+      <span class="sw"><i style="background:#8fcb7a"></i>fern #8FCB7A</span>
+      <span class="sw"><i style="background:#e3b564"></i>amber #E3B564</span>
+      <span class="sw"><i style="background:#e5716b"></i>ember #E5716B</span>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="Mockup screens">
+    <button role="tab" data-s="welcome" class="active"><span class="n">1</span>welcome</button>
+    <button role="tab" data-s="home"><span class="n">2</span>home</button>
+    <button role="tab" data-s="list"><span class="n">3</span>list + quick view</button>
+    <button role="tab" data-s="detail"><span class="n">4</span>detail</button>
+    <button role="tab" data-s="board"><span class="n">5</span>board</button>
+    <button role="tab" data-s="palette"><span class="n">6</span>command palette</button>
+  </nav>
+
+  <div class="term-outer">
+    <div class="titlebar">
+      <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      <span class="tname">jira-tui — 120×34 · press 1–6 to switch screens</span>
+    </div>
+    <div class="term-scroll">
+    <div class="term no-jax" id="term">
+
+      <!-- ============ 1 · WELCOME ============ -->
+      <section class="screen active" id="s-welcome">
+        <div class="welcome">
+          <pre id="bigjax">   .------.
+   | <span class="face" id="bigeyes">●  ●</span> |
+   |  <span class="face">‿</span>   |
+   '--++--'
+     /🍁\</pre>
+          <h2>Hi — I'm Jax, your terminal Jira sidekick.</h2>
+          <p class="sub">Pick a way in. You can switch any time — demo mode never goes away.</p>
+          <div class="paths">
+            <div class="path rec">
+              <div class="ph"><kbd>s</kbd> Connect to Jira <span class="badge">recommended</span></div>
+              <p>Site, email, and an API token. The token lives in a <code>0600</code> file — never in config.toml.</p>
+            </div>
+            <div class="path">
+              <div class="ph"><kbd>d</kbd> Explore the demo</div>
+              <p>The full UI on sample data. Zero setup, works offline, nothing to break.</p>
+            </div>
+            <div class="path">
+              <div class="ph"><kbd>w</kbd> Write a config file</div>
+              <p>Scaffold <code>~/.config/jira-tui/config.toml</code> and exit, so you can edit it yourself.</p>
+            </div>
+          </div>
+          <p class="tip">tip: press m any time to turn on mouse support — Shift-drag still selects text natively</p>
+        </div>
+        <footer class="tfoot">
+          <div class="hints">
+            <span class="hg"><kbd>s</kbd> connect</span>
+            <span class="hg"><kbd>d</kbd> demo</span>
+            <span class="hg"><kbd>w</kbd> write config</span>
+            <span class="hg"><kbd>?</kbd> help</span>
+            <span class="hg"><kbd>q</kbd> quit</span>
+          </div>
+          <span class="status">v0.9.0</span>
+        </footer>
+      </section>
+
+      <!-- ============ 2 · HOME ============ -->
+      <section class="screen" id="s-home">
+        <header class="thead">
+          <div class="hgroup">
+            <span class="brand"><b>jira</b><i>-tui</i></span>
+            <span class="crumb"><span class="here">My Work</span><span class="sep">›</span>Home</span>
+          </div>
+          <div class="hgroup">
+            <span class="git">⎇ feat/DS-129-nested-lists <span class="lk">⇢ DS-129</span></span>
+            <span class="sync"><span class="led"></span>live · synced 2m ago</span>
+          </div>
+        </header>
+
+        <div class="home-grid">
+          <div class="rail">
+            <div class="panel">
+              <span class="panel-title">context</span>
+              <dl class="kv">
+                <dt>repo</dt><dd>jira-tui</dd>
+                <dt>branch</dt><dd class="branch">feat/DS-129-nested-lists</dd>
+                <dt>issue</dt><dd><span class="key" style="color:var(--t-cyan)">DS-129</span> <span class="chip c-review">In Review</span></dd>
+              </dl>
+              <p class="tip">⏎ jumps straight to the branch issue</p>
+            </div>
+            <div class="panel">
+              <span class="panel-title orchid">at a glance</span>
+              <div class="statline"><span>assigned to me</span><b class="n-ok">6</b></div>
+              <div class="bar"><i style="width:60%;background:var(--t-fern)"></i></div>
+              <div class="statline"><span>blocked</span><b class="n-warn">1</b></div>
+              <div class="bar"><i style="width:10%;background:var(--t-ember)"></i></div>
+              <div class="statline"><span>in review</span><b class="n-info">2</b></div>
+              <div class="bar"><i style="width:20%;background:var(--t-cyan)"></i></div>
+              <div class="statline"><span>done this week</span><b>4</b></div>
+              <div class="bar"><i style="width:40%;background:var(--t-muted)"></i></div>
+            </div>
+            <div class="panel">
+              <span class="panel-title orchid">recent</span>
+              <div class="recent">
+                <span><span class="key">DS-142</span>Cache teammate views between sessions</span>
+                <span><span class="key">DS-137</span>Board lanes collapse on narrow terminals</span>
+                <span><span class="key">DS-118</span>OSC 52 clipboard fails inside tmux</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel focused">
+            <span class="panel-title">my work <span class="cnt">· updated ↓ · 6</span></span>
+            <div class="lst">
+              <div class="lst-head"><span></span><span>key</span><span>type</span><span>status</span><span>summary</span><span>assignee</span><span>updated</span></div>
+              <div class="lrow sel"><span class="pr pr-med">▪</span><span class="key">DS-129</span><span class="chip c-bug">Bug</span><span class="chip c-review">In Review</span><span class="sum">Round-trip edit drops nested bullet lists</span><span class="who"><span class="av me">SM</span>me</span><span class="upd">12m</span></div>
+              <div class="lrow"><span class="pr pr-high">🔺</span><span class="key">DS-142</span><span class="chip c-story">Story</span><span class="chip c-prog">In Progress</span><span class="sum">Cache teammate views between sessions</span><span class="who"><span class="av me">SM</span>me</span><span class="upd">1h</span></div>
+              <div class="lrow"><span class="pr pr-highest">⏫</span><span class="key">DS-137</span><span class="chip c-bug">Bug</span><span class="chip c-todo">To Do</span><span class="sum">Board lanes collapse on narrow terminals</span><span class="who"><span class="av me">SM</span>me</span><span class="upd">3h <span class="flag">⛔</span></span></div>
+              <div class="lrow"><span class="pr pr-med">▪</span><span class="key">DS-118</span><span class="chip c-task">Task</span><span class="chip c-prog">In Progress</span><span class="sum">OSC 52 clipboard fails inside tmux</span><span class="who"><span class="av me">SM</span>me</span><span class="upd">1d</span></div>
+              <div class="lrow"><span class="pr pr-low">🔻</span><span class="key">DS-104</span><span class="chip c-task">Task</span><span class="chip c-todo">To Do</span><span class="sum">Document field-mapping flow for AC field</span><span class="who"><span class="av me">SM</span>me</span><span class="upd">2d</span></div>
+              <div class="lrow"><span class="pr pr-med">▪</span><span class="key">DS-97</span><span class="chip c-story">Story</span><span class="chip c-done">Done</span><span class="sum">Show children and sub-tasks on Detail</span><span class="who"><span class="av me">SM</span>me</span><span class="upd">4d</span></div>
+            </div>
+          </div>
+        </div>
+
+        <footer class="tfoot">
+          <div class="hints">
+            <span class="hg"><span class="gl">nav</span><kbd>↑↓</kbd> move <kbd>⏎</kbd> open</span>
+            <span class="hg"><span class="gl">view</span><kbd>v</kbd> quick <kbd>s</kbd> sort <kbd>f</kbd> filter <kbd>T</kbd> tree</span>
+            <span class="hg"><span class="gl">go</span><kbd>b</kbd> board <kbd>/</kbd> search <kbd>V</kbd> view</span>
+            <span class="hg"><kbd>?</kbd> all keys</span>
+          </div>
+          <span class="status">6 issues · demo data</span>
+        </footer>
+      </section>
+
+      <!-- ============ 3 · LIST + QUICK VIEW ============ -->
+      <section class="screen" id="s-list">
+        <header class="thead">
+          <div class="hgroup">
+            <span class="brand"><b>jira</b><i>-tui</i></span>
+            <span class="crumb"><span class="here">My Work</span><span class="sep">›</span>List<span class="sep">›</span><span style="color:var(--t-amber)">filter: bugs</span></span>
+          </div>
+          <div class="hgroup">
+            <span class="git">⎇ feat/DS-129-nested-lists <span class="lk">⇢ DS-129</span></span>
+            <span class="sync"><span class="led"></span>live · synced 2m ago</span>
+          </div>
+        </header>
+
+        <div class="panel focused" style="flex:1">
+          <span class="panel-title">my work <span class="cnt">· priority ↓ · bugs · 3 of 6</span></span>
+          <div class="lst">
+            <div class="lst-head"><span></span><span>key</span><span>type</span><span>status</span><span>summary</span><span>assignee</span><span>updated</span></div>
+            <div class="lrow"><span class="pr pr-highest">⏫</span><span class="key">DS-137</span><span class="chip c-bug">Bug</span><span class="chip c-todo">To Do</span><span class="sum">Board lanes collapse on narrow terminals</span><span class="who"><span class="av me">SM</span>me</span><span class="upd">3h <span class="flag">⛔</span></span></div>
+            <div class="lrow sel"><span class="pr pr-med">▪</span><span class="key">DS-129</span><span class="chip c-bug">Bug</span><span class="chip c-review">In Review</span><span class="sum">Round-trip edit drops nested bullet lists</span><span class="who"><span class="av me">SM</span>me</span><span class="upd">12m</span></div>
+            <div class="lrow"><span class="pr pr-med"><span class="tree">└</span></span><span class="key">DS-131</span><span class="chip c-task">Task</span><span class="chip c-done">Done</span><span class="sum">Add regression fixture for 3-level lists</span><span class="who"><span class="av">PT</span>Priya</span><span class="upd">2d</span></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <span class="panel-title orchid">quick view · DS-129 <span class="cnt">· tab to focus · ↑↓ scroll</span></span>
+          <div class="qv-grid">
+            <div class="desc">
+              <p class="h">▪ Round-trip edit drops nested bullet lists</p>
+              <p>Editing a description whose ADF contains a <code>bulletList</code> nested two levels deep, then saving without changes, flattens the inner list. The Markdown intermediate loses one level of indentation on the way out of <code>to_markdown</code>.</p>
+              <p><span class="h">Steps:</span> open DS-2 in demo mode → <code>e</code> → save unchanged → preview shows flattened list.</p>
+              <p class="fade">… ↓ 14 more lines</p>
+            </div>
+            <dl class="qv-meta">
+              <dt>type</dt><dd><span class="chip c-bug">Bug</span></dd>
+              <dt>status</dt><dd><span class="chip c-review">In Review</span></dd>
+              <dt>priority</dt><dd><span class="pr pr-med">▪ Medium</span></dd>
+              <dt>assignee</dt><dd><span class="who"><span class="av me">SM</span></span>Scott Morris</dd>
+              <dt>parent</dt><dd style="color:var(--t-cyan)">DS-90</dd>
+              <dt>labels</dt><dd><span class="chip c-label">adf</span> <span class="chip c-label">editor</span></dd>
+              <dt>updated</dt><dd>12 minutes ago</dd>
+            </dl>
+          </div>
+        </div>
+
+        <footer class="tfoot">
+          <div class="hints">
+            <span class="hg"><span class="gl">nav</span><kbd>↑↓</kbd> move <kbd>⏎</kbd> open <kbd>tab</kbd> focus panel</span>
+            <span class="hg"><span class="gl">view</span><kbd>v</kbd> close quick <kbd>f</kbd> filter: bugs ✕</span>
+            <span class="hg"><span class="gl">act</span><kbd>t</kbd> transition <kbd>y</kbd> copy key</span>
+            <span class="hg"><kbd>?</kbd> all keys</span>
+          </div>
+          <span class="status">row 2 of 3</span>
+        </footer>
+      </section>
+
+      <!-- ============ 4 · DETAIL ============ -->
+      <section class="screen" id="s-detail">
+        <header class="thead">
+          <div class="hgroup">
+            <span class="brand"><b>jira</b><i>-tui</i></span>
+            <span class="crumb"><span class="here">My Work</span><span class="sep">›</span>List<span class="sep">›</span><span class="here">DS-129</span> <span class="fade">· ← 3 back</span></span>
+          </div>
+          <div class="hgroup">
+            <span class="git">⎇ feat/DS-129-nested-lists <span class="lk">⇢ DS-129</span></span>
+            <span class="sync"><span class="led"></span>live · synced 2m ago</span>
+          </div>
+        </header>
+
+        <div class="det-head">
+          <span class="dkey">DS-129</span>
+          <h2>Round-trip edit drops nested bullet lists</h2>
+          <span class="chip c-bug">Bug</span>
+          <span class="chip c-review">In Review</span>
+          <span class="pr pr-med" style="font-size:0.74rem">▪ Medium</span>
+        </div>
+
+        <div class="det-grid">
+          <div class="det-main">
+            <div class="panel">
+              <span class="panel-title">description</span>
+              <div class="adf">
+                <p>Editing a description whose ADF contains a <code>bulletList</code> nested two levels deep, then saving without changes, flattens the inner list. The Markdown intermediate loses one level of indentation in <code>to_markdown</code>, so <code>compile</code> can't rebuild the structure.</p>
+                <ul>
+                  <li>Repro: open DS-2 in demo mode, press <code>e</code>, save unchanged</li>
+                  <li>Preview shows the flattened list — good, the <a href="#" onclick="return false">preview gate</a> catches it before the write</li>
+                  <li>Suspect: indent tracking in <a class="lit" href="#" onclick="return false">src/adf/markdown.rs</a> <span class="fade">(tab-selected link — ⏎ opens)</span></li>
+                </ul>
+                <h4>Acceptance criteria</h4>
+                <ul class="ac">
+                  <li class="ok">Three-level list round-trips byte-identical ADF</li>
+                  <li>Fixture added to <code>tests/render.rs</code></li>
+                  <li>Preview diff shows no change for a no-op edit</li>
+                </ul>
+              </div>
+            </div>
+            <div class="panel">
+              <span class="panel-title orchid">activity <span class="cnt">· 2 comments · n/p to jump</span></span>
+              <div class="comment">
+                <div class="chead"><b>Priya Tran</b> <span>· yesterday 16:42</span></div>
+                <p>Confirmed on live too — it's not demo-data specific. The second <code>listItem</code> level comes back as a sibling, not a child.</p>
+              </div>
+              <div class="comment" style="border-left-color:var(--t-maple)">
+                <div class="chead"><b>Scott Morris</b> <span>· today 09:15</span></div>
+                <p>Fix is up on <code>feat/DS-129-nested-lists</code>. Depth counter was reset per-block instead of per-document. Fixture covers 3 levels + mixed ordered/unordered.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="side">
+            <div class="panel">
+              <span class="panel-title">workflow <span class="cnt">· t to change</span></span>
+              <div class="flow">
+                <span class="st">To Do</span>→<span class="st">In Progress</span>→<span class="st cur">In Review</span>→<span class="st">Done</span>
+              </div>
+            </div>
+            <div class="panel">
+              <span class="panel-title">people &amp; meta</span>
+              <dl class="kv">
+                <dt>assignee</dt><dd><span class="who"><span class="av me">SM</span></span>Scott Morris</dd>
+                <dt>reporter</dt><dd><span class="who"><span class="av">PT</span></span>Priya Tran</dd>
+                <dt>parent</dt><dd style="color:var(--t-cyan)">DS-90 <span class="fade">ADF editor epic</span></dd>
+                <dt>component</dt><dd>adf</dd>
+                <dt>labels</dt><dd><span class="chip c-label">adf</span> <span class="chip c-label">editor</span></dd>
+                <dt>updated</dt><dd>12 minutes ago</dd>
+              </dl>
+            </div>
+            <div class="panel">
+              <span class="panel-title orchid">links</span>
+              <div class="linkrow"><span class="rel">is blocked by</span> <span class="key">DS-118</span> OSC 52 clipboard fails…</div>
+              <div class="linkrow"><span class="rel" style="color:var(--t-fern)">relates to</span> <span class="key">DS-97</span> Show children on Detail</div>
+            </div>
+            <div class="panel">
+              <span class="panel-title orchid">children <span class="cnt">· 1</span></span>
+              <div class="child"><span class="key">DS-131</span><span class="chip c-task">Task</span><span class="chip c-done">Done</span></div>
+            </div>
+          </div>
+        </div>
+
+        <footer class="tfoot">
+          <div class="hints">
+            <span class="hg"><span class="gl">act</span><kbd>t</kbd> transition <kbd>e</kbd> edit <kbd>c</kbd> comment <kbd>A</kbd> assign</span>
+            <span class="hg"><span class="gl">nav</span><kbd>↑↓</kbd> scroll <kbd>n/p</kbd> comments <kbd>{}</kbd> links <kbd>←→</kbd> history</span>
+            <span class="hg"><span class="gl">copy</span><kbd>y</kbd> key <kbd>Y</kbd> url</span>
+            <span class="hg"><kbd>?</kbd> all keys</span>
+          </div>
+          <span class="status">DS-129 · loaded from live</span>
+        </footer>
+      </section>
+
+      <!-- ============ 5 · BOARD ============ -->
+      <section class="screen" id="s-board">
+        <header class="thead">
+          <div class="hgroup">
+            <span class="brand"><b>jira</b><i>-tui</i></span>
+            <span class="crumb"><span class="here">All Project Issues</span><span class="sep">›</span>Board <span class="fade">· by epic</span></span>
+          </div>
+          <div class="hgroup">
+            <span class="git">⎇ feat/DS-129-nested-lists <span class="lk">⇢ DS-129</span></span>
+            <span class="sync"><span class="led"></span>live · synced 2m ago</span>
+          </div>
+        </header>
+
+        <div class="board">
+          <div class="bcols">
+            <div class="bcol-h" style="color:#a8b6c2">To Do <span class="cnt">4</span></div>
+            <div class="bcol-h" style="color:var(--t-cyan)">In Progress <span class="cnt">2</span><span class="wip">wip 3</span></div>
+            <div class="bcol-h" style="color:var(--t-orchid)">In Review <span class="cnt">1</span></div>
+            <div class="bcol-h" style="color:var(--t-fern)">Done <span class="cnt">5</span></div>
+          </div>
+
+          <div class="lane-h">▾ DS-90 · ADF editor <span class="cnt">· 3 issues</span></div>
+          <div class="bcols">
+            <div class="bcell"><div class="bcard ghost">—</div></div>
+            <div class="bcell"></div>
+            <div class="bcell">
+              <div class="bcard sel">
+                <div class="top"><span class="pr pr-med">▪</span><span class="key">DS-129</span><span class="chip c-bug">Bug</span></div>
+                <span class="sum">Round-trip edit drops nested bullet lists</span>
+                <div class="foot"><span class="who"><span class="av me">SM</span></span><span class="fade" style="font-size:0.65rem">12m</span></div>
+              </div>
+            </div>
+            <div class="bcell">
+              <div class="bcard">
+                <div class="top"><span class="pr pr-med">▪</span><span class="key">DS-131</span><span class="chip c-task">Task</span></div>
+                <span class="sum">Regression fixture for 3-level lists</span>
+                <div class="foot"><span class="who"><span class="av">PT</span></span><span class="fade" style="font-size:0.65rem">2d</span></div>
+              </div>
+              <div class="bcard">
+                <div class="top"><span class="pr pr-low">🔻</span><span class="key">DS-97</span><span class="chip c-story">Story</span></div>
+                <span class="sum">Show children on Detail</span>
+                <div class="foot"><span class="who"><span class="av me">SM</span></span><span class="fade" style="font-size:0.65rem">4d</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="lane-h">▾ DS-88 · Board polish <span class="cnt">· 3 issues</span></div>
+          <div class="bcols">
+            <div class="bcell">
+              <div class="bcard">
+                <div class="top"><span class="pr pr-highest">⏫</span><span class="key">DS-137</span><span class="chip c-bug">Bug</span><span class="chip c-blocked">⛔</span></div>
+                <span class="sum">Lanes collapse on narrow terminals</span>
+                <div class="foot"><span class="who"><span class="av me">SM</span></span><span class="fade" style="font-size:0.65rem">3h</span></div>
+              </div>
+              <div class="bcard">
+                <div class="top"><span class="pr pr-med">▪</span><span class="key">DS-140</span><span class="chip c-task">Task</span></div>
+                <span class="sum">Collapse empty lanes by default</span>
+                <div class="foot"><span class="fade" style="font-size:0.65rem">unassigned · 1w</span></div>
+              </div>
+            </div>
+            <div class="bcell">
+              <div class="bcard">
+                <div class="top"><span class="pr pr-high">🔺</span><span class="key">DS-142</span><span class="chip c-story">Story</span></div>
+                <span class="sum">Cache teammate views between sessions</span>
+                <div class="foot"><span class="who"><span class="av me">SM</span></span><span class="fade" style="font-size:0.65rem">1h</span></div>
+              </div>
+            </div>
+            <div class="bcell"></div>
+            <div class="bcell"><div class="bcard ghost">+ 4 done · pgdn</div></div>
+          </div>
+        </div>
+
+        <footer class="tfoot">
+          <div class="hints">
+            <span class="hg"><span class="gl">nav</span><kbd>↑↓</kbd> card <kbd>←→</kbd> column <kbd>pg↕</kbd> lane</span>
+            <span class="hg"><span class="gl">act</span><kbd>⏎</kbd> open <kbd>t</kbd> transition</span>
+            <span class="hg"><span class="gl">go</span><kbd>/</kbd> search <kbd>V</kbd> view <kbd>esc</kbd> back</span>
+          </div>
+          <span class="status">2 lanes · 4 columns</span>
+        </footer>
+      </section>
+
+      <!-- ============ 6 · COMMAND PALETTE ============ -->
+      <section class="screen" id="s-palette">
+        <div class="dimmed" style="flex:1; display:flex; flex-direction:column; gap:0.7rem">
+          <header class="thead">
+            <div class="hgroup">
+              <span class="brand"><b>jira</b><i>-tui</i></span>
+              <span class="crumb"><span class="here">My Work</span><span class="sep">›</span>List</span>
+            </div>
+            <div class="hgroup"><span class="git">⎇ feat/DS-129-nested-lists <span class="lk">⇢ DS-129</span></span></div>
+          </header>
+          <div class="panel" style="flex:1">
+            <span class="panel-title">my work <span class="cnt">· updated ↓ · 6</span></span>
+            <div class="lst">
+              <div class="lrow sel"><span class="pr pr-med">▪</span><span class="key">DS-129</span><span class="chip c-bug">Bug</span><span class="chip c-review">In Review</span><span class="sum">Round-trip edit drops nested bullet lists</span><span class="who">me</span><span class="upd">12m</span></div>
+              <div class="lrow"><span class="pr pr-high">🔺</span><span class="key">DS-142</span><span class="chip c-story">Story</span><span class="chip c-prog">In Progress</span><span class="sum">Cache teammate views between sessions</span><span class="who">me</span><span class="upd">1h</span></div>
+              <div class="lrow"><span class="pr pr-highest">⏫</span><span class="key">DS-137</span><span class="chip c-bug">Bug</span><span class="chip c-todo">To Do</span><span class="sum">Board lanes collapse on narrow terminals</span><span class="who">me</span><span class="upd">3h</span></div>
+            </div>
+          </div>
+          <footer class="tfoot"><div class="hints"><span class="hg"><kbd>esc</kbd> close palette</span></div></footer>
+        </div>
+
+        <div class="modal-wrap">
+          <div class="modal">
+            <div class="inp"><span class="pr0">›</span>tr<span class="caret"></span></div>
+            <div class="cmd-sec">on DS-129</div>
+            <div class="cmd sel"><span class="ico">⇢</span><b><mark>Tr</mark>ansition DS-129 → Done</b><kbd>t</kbd></div>
+            <div class="cmd"><span class="ico">⇢</span><b><mark>Tr</mark>ansition DS-129 → In Progress</b><kbd>t</kbd></div>
+            <div class="cmd-sec">view</div>
+            <div class="cmd"><span class="ico">⊞</span><b>Toggle <mark>tr</mark>ee view</b><kbd>T</kbd></div>
+            <div class="cmd"><span class="ico">⚲</span><b>Sort by… (currently updated ↓)</b><kbd>s</kbd></div>
+            <div class="cmd-sec">app</div>
+            <div class="cmd"><span class="ico">🦦</span><b>Toggle Jax companion</b><kbd>J</kbd></div>
+            <div class="cmd"><span class="ico">↻</span><b>Refresh from Jira</b><kbd>r</kbd></div>
+          </div>
+        </div>
+
+        <footer class="tfoot" style="position:relative; z-index:1">
+          <div class="hints">
+            <span class="hg"><span class="gl">palette</span><kbd>↑↓</kbd> choose <kbd>⏎</kbd> run <kbd>esc</kbd> close</span>
+          </div>
+          <span class="status">every action stays one keystroke away — the palette is the map</span>
+        </footer>
+      </section>
+
+      <!-- ============ JAX COMPANION ============ -->
+      <div id="jax" role="button" tabindex="0" aria-label="Jax the companion — click to make him party">
+        <span class="jtitle" id="jaxcap">jax · 👋 hi!</span>
+        <pre id="jaxart"></pre>
+        <div class="mood" id="jaxmood">mood: happy to see you</div>
+      </div>
+
+    </div>
+    </div>
+  </div>
+
+  <!-- ============ NOTES ============ -->
+  <div class="notes-wrap">
+    <div class="note active" data-s="welcome">
+      <h3><span class="n">1 ·</span> Welcome — Jax makes the pitch</h3>
+      <div class="note-grid">
+        <div class="nc"><h4>Three doors, one recommended</h4><p>The current welcome lists three flat rows. Making them cards with equal weight — and one <em>recommended</em> maple border — answers "which one do I press?" without reading three descriptions. Demo mode is explicitly framed as never going away.</p></div>
+        <div class="nc"><h4>Security note where the decision happens</h4><p>The <code>0600</code> token promise moves into the "Connect" card itself, at the moment the person is deciding whether to paste a token.</p></div>
+        <div class="nc"><h4>Jax unchanged</h4><p>Same box body, same blink, same swappable 🍁/🍂. He earned his spot; the refresh just gives him room to breathe and a real headline instead of a caption.</p></div>
+      </div>
+    </div>
+
+    <div class="note" data-s="home">
+      <h3><span class="n">2 ·</span> Home — a dashboard, not just a split</h3>
+      <div class="note-grid">
+        <div class="nc"><h4>Breadcrumb replaces packed title strings</h4><p>Today the list title concatenates view, sort, filter, and count into one string. The header gets a proper crumb (<code>My Work › Home</code>) and the panel title keeps only sort/filter/count as muted metadata.</p></div>
+        <div class="nc"><h4>Glance stats get bars</h4><p>Counts alone don't scan; a 4px bar under each stat gives proportion at a glance. Blocked stays ember and only draws attention when non-zero.</p></div>
+        <div class="nc"><h4>Grouped footer hints</h4><p>The current footer is one long dot-separated string. Grouping hints under tiny <code>NAV / VIEW / GO</code> labels lets the eye jump to the right cluster, and <code>? all keys</code> takes overflow pressure off.</p></div>
+        <div class="nc"><h4>Recent issues</h4><p>A small "recent" panel (backed by the existing history stack) makes the home screen a place you return to, not just pass through.</p></div>
+      </div>
+    </div>
+
+    <div class="note" data-s="list">
+      <h3><span class="n">3 ·</span> List — columns you can actually scan</h3>
+      <div class="note-grid">
+        <div class="nc"><h4>Real columns with headers</h4><p>Key, type, status, summary, assignee, updated become aligned columns with a one-line header. Status moves from coloured text to a tinted chip — same semantic colours, far easier to scan down.</p></div>
+        <div class="nc"><h4>Maple selection bar</h4><p>Selection changes from a magenta <code>▌</code> glyph to a maple left bar + tint across the whole row — the row reads as selected even in peripheral vision, and magenta stays free for panel identity.</p></div>
+        <div class="nc"><h4>Quick view grows a meta column</h4><p>Instead of re-rendering the full detail into a half-height pane, quick view splits: description excerpt left, compact field grid right. Full detail remains one ⏎ away.</p></div>
+        <div class="nc"><h4>Active filter is visible and dismissable</h4><p><code>filter: bugs</code> appears in the crumb and the footer shows <code>f filter: bugs ✕</code> — state you can see is state you can trust.</p></div>
+      </div>
+    </div>
+
+    <div class="note" data-s="detail">
+      <h3><span class="n">4 ·</span> Detail — content left, facts right</h3>
+      <div class="note-grid">
+        <div class="nc"><h4>Two columns end the long scroll</h4><p>Today everything is one scrolling paragraph stack. Description and activity keep the wide column; people, workflow, labels, links, and children move to a fixed right rail so they're visible without scrolling past the description.</p></div>
+        <div class="nc"><h4>Workflow strip becomes a mini-map</h4><p>The transition strip keeps its <code>→</code> shape but each status gets a dashed outline, with the current one solid orchid — it reads as "you are here on a track", and <code>t</code> still opens the picker.</p></div>
+        <div class="nc"><h4>Comments as anchored cards</h4><p>Each comment gets a left rule (maple for your own), author and time on one line, and <code>n/p</code> jumping preserved. ADF rendering is untouched — this is layout only.</p></div>
+        <div class="nc"><h4>Acceptance criteria as checkboxes</h4><p>When the mapped AC field parses as a list, render ☐/☑ — the field-mapping feature already knows which field this is.</p></div>
+      </div>
+    </div>
+
+    <div class="note" data-s="board">
+      <h3><span class="n">5 ·</span> Board — cards instead of a text grid</h3>
+      <div class="note-grid">
+        <div class="nc"><h4>Bordered cards</h4><p>Cells become small bordered cards: priority + key + type chip on top, summary, assignee + age on the foot. The selected card swaps the <code>Rgb(40,40,80)</code> background for the maple bar used everywhere else.</p></div>
+        <div class="nc"><h4>Columns own their colour</h4><p>Column headers keep status colours and gain counts and an optional amber WIP marker — the only place amber appears on this screen, so it means something.</p></div>
+        <div class="nc"><h4>Lanes stay, empties collapse</h4><p>Epic swimlanes remain the organizing idea; empty cells render a dashed ghost and fully-done lanes can collapse behind <code>pgdn</code>, which fixes most of the narrow-terminal pain.</p></div>
+      </div>
+    </div>
+
+    <div class="note" data-s="palette">
+      <h3><span class="n">6 ·</span> Command palette — proposed, not yet in the app</h3>
+      <div class="note-grid">
+        <div class="nc"><h4>One key to rule the chrome</h4><p>The footer can't keep absorbing new features. A <code>ctrl-k</code> palette lists every action with its key beside it — it's discoverable help that also executes, and it lets footer hints stay short.</p></div>
+        <div class="nc"><h4>Context sections</h4><p>Actions group by scope: <em>on DS-129</em> (transitions, assign, copy), <em>view</em> (sort, filter, tree), <em>app</em> (refresh, Jax, mouse). Transitions listed inline means "move to Done" is two keystrokes from anywhere.</p></div>
+        <div class="nc"><h4>Teaches the fast path</h4><p>Every row shows its direct keybinding, so the palette trains you out of needing it — the same philosophy as the current footer, with room to grow.</p></div>
+      </div>
+    </div>
+  </div>
+
+  <p class="colophon">Built as static HTML mockups for <code>docs/design/</code> — the terminal frame is one deliberate dark world (it's a terminal), while this page adapts to your theme. Everything shown maps to existing ratatui widgets: panels are <code>Block</code> + <code>Rounded</code>, chips are the existing <code>chip()</code> helper with tinted backgrounds, bars and cards are line-level styling. The only new capability proposed is the command palette. Jax approves this message. 🦦🍁</p>
+</div>
+
+<script>
+  (function () {
+    var tabs = document.querySelectorAll('.tabs button');
+    var screens = document.querySelectorAll('.screen');
+    var notes = document.querySelectorAll('.note');
+    var term = document.getElementById('term');
+
+    function show(name) {
+      tabs.forEach(function (t) { t.classList.toggle('active', t.dataset.s === name); });
+      screens.forEach(function (s) { s.classList.toggle('active', s.id === 's-' + name); });
+      notes.forEach(function (n) { n.classList.toggle('active', n.dataset.s === name); });
+      // companion hides on Welcome, exactly like the app
+      term.classList.toggle('no-jax', name === 'welcome');
+    }
+    tabs.forEach(function (t) {
+      t.addEventListener('click', function () { show(t.dataset.s); });
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      var order = ['welcome', 'home', 'list', 'detail', 'board', 'palette'];
+      var i = parseInt(e.key, 10);
+      if (i >= 1 && i <= 6) show(order[i - 1]);
+    });
+
+    /* ---------- Jax ---------- */
+    var scenes = [
+      { cap: 'jax · 👋 hi!', mood: 'mood: happy to see you', frames: [
+        ' .---.\n |●‿●|\n o/\'--\'\n', ' .---.\n |●‿●|\n \\o\'--\'\n'] },
+      { cap: 'jax · 😴 zzz…', mood: 'mood: five more minutes', frames: [
+        '     z\n .---.\n |-‿-|\n  \'--\'', '     Z\n .---.\n |-‿-|\n  \'--\''] },
+      { cap: 'jax · 🤓 reading specs', mood: 'mood: focused', frames: [
+        ' .---.  __\n |◕‿◕| |▌|\n  \'--\'  ‾‾\n // TODO', ' .---.  __\n |◕‿◕| | |\n  \'--\'  ‾‾\n // TODO'] },
+      { cap: 'jax · 🎣 gone fishin’', mood: 'mood: patient', frames: [
+        ' .---. /\n |●‿●|/\n  \'--\'\n~~°~  ~~', ' .---. /\n |●‿●|/\n  \'--\'   ><>\n~~o~  ~~'] },
+      { cap: 'jax · 🎉 woo! 🪅', mood: 'mood: celebrating your merge', frames: [
+        '✦ ˚ ✧\n .---.\n |●‿●| 🪅\n \\\'--\'/', '✧ ˚ ✦\n .---.\n |●‿●| 🪅\n /\'--\'\\'] },
+      { cap: 'jax · 🦦 otter break', mood: 'mood: it’s the little things', frames: [
+        ' .---.\n |●‿●|\n  \'--\'\n  🦦~~', ' .---.\n |●‿●|\n  \'--\'\n     🦦~'] }
+    ];
+    var art = document.getElementById('jaxart');
+    var cap = document.getElementById('jaxcap');
+    var mood = document.getElementById('jaxmood');
+    var scene = 0, frame = 0;
+    var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    function render() {
+      var s = scenes[scene];
+      cap.textContent = s.cap;
+      mood.textContent = s.mood;
+      art.textContent = s.frames[frame % s.frames.length];
+    }
+    render();
+
+    if (!reduced) {
+      setInterval(function () { frame++; render(); }, 700);
+      setInterval(function () { scene = (scene + 1) % scenes.length; frame = 0; render(); }, 5200);
+      // welcome Jax blinks
+      var bigeyes = document.getElementById('bigeyes');
+      setInterval(function () {
+        if (!bigeyes) return;
+        bigeyes.textContent = '-  -';
+        setTimeout(function () { bigeyes.textContent = '●  ●'; }, 180);
+      }, 3400);
+    }
+
+    function pet() {
+      scene = 4; frame = 0; render();
+      mood.textContent = 'mood: ❤ best day ever';
+    }
+    var jax = document.getElementById('jax');
+    jax.addEventListener('click', pet);
+    jax.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pet(); }
+    });
+  })();
+</script>
