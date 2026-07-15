@@ -43,17 +43,8 @@ pub fn list_fields(cfg: &Config) -> Result<Vec<FieldInfo>> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::support::test_config;
     use super::*;
-
-    fn test_config(base_url: String) -> Config {
-        Config {
-            base_url,
-            email: "me@example.com".into(),
-            token: "secret-token".into(),
-            project: "PROJ".into(),
-            acceptance_criteria_field: None,
-        }
-    }
 
     #[test]
     fn list_fields_filters_to_custom_fields_and_sorts_by_name() {

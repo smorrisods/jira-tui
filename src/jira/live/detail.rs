@@ -167,17 +167,8 @@ fn children_of(cfg: &Config, key: &str) -> anyhow::Result<Vec<ChildIssue>> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::support::test_config;
     use super::*;
-
-    fn test_config(base_url: String) -> Config {
-        Config {
-            base_url,
-            email: "me@example.com".into(),
-            token: "secret-token".into(),
-            project: "PROJ".into(),
-            acceptance_criteria_field: None,
-        }
-    }
 
     #[test]
     fn fetch_detail_includes_the_configured_acceptance_criteria_field() {

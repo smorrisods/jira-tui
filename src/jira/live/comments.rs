@@ -63,17 +63,8 @@ fn parse_comment(v: &Value) -> crate::domain::Comment {
 
 #[cfg(test)]
 mod tests {
+    use super::super::support::test_config;
     use super::*;
-
-    fn test_config(base_url: String) -> Config {
-        Config {
-            base_url,
-            email: "me@example.com".into(),
-            token: "secret-token".into(),
-            project: "PROJ".into(),
-            acceptance_criteria_field: None,
-        }
-    }
 
     #[test]
     fn add_comment_sends_the_adf_body_and_parses_the_response() {

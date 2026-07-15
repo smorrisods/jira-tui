@@ -158,18 +158,9 @@ pub fn create_issue(
 
 #[cfg(test)]
 mod tests {
+    use super::super::support::test_config;
     use super::*;
     use crate::domain::AssignableUser;
-
-    fn test_config(base_url: String) -> Config {
-        Config {
-            base_url,
-            email: "me@example.com".into(),
-            token: "secret-token".into(),
-            project: "PROJ".into(),
-            acceptance_criteria_field: None,
-        }
-    }
 
     #[test]
     fn assignable_users_returns_display_names_from_a_single_page() {

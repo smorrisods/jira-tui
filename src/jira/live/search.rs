@@ -100,18 +100,9 @@ pub const SEARCH_RESULTS_CAP: usize = 500;
 
 #[cfg(test)]
 mod tests {
+    use super::super::support::test_config;
     use super::*;
     use crate::domain::Priority;
-
-    fn test_config(base_url: String) -> Config {
-        Config {
-            base_url,
-            email: "me@example.com".into(),
-            token: "secret-token".into(),
-            project: "PROJ".into(),
-            acceptance_criteria_field: None,
-        }
-    }
 
     #[test]
     fn jql_for_builds_the_expected_query_per_view() {

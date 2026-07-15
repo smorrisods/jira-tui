@@ -133,19 +133,24 @@ pub fn whoami(cfg: &Config) -> Result<String> {
         .to_string())
 }
 
+/// Shared by every `jira::live` test file (`search`, `mutations`,
+/// `comments`, `fields`, `detail`, and this one) — `pub(super)` so any
+/// sibling's own `#[cfg(test)] mod tests` can reach it via
+/// `super::support::test_config`, instead of each file carrying its own copy.
+#[cfg(test)]
+pub(super) fn test_config(base_url: String) -> Config {
+    Config {
+        base_url,
+        email: "me@example.com".into(),
+        token: "secret-token".into(),
+        project: "PROJ".into(),
+        acceptance_criteria_field: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn test_config(base_url: String) -> Config {
-        Config {
-            base_url,
-            email: "me@example.com".into(),
-            token: "secret-token".into(),
-            project: "PROJ".into(),
-            acceptance_criteria_field: None,
-        }
-    }
 
     #[test]
     fn whoami_returns_display_name() {
