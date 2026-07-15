@@ -73,15 +73,10 @@ fn selected_issue_url_is_a_browse_link() {
 
 fn issue(key: &str, assignee: Option<&str>, status: &str, blocked: bool) -> IssueSummary {
     IssueSummary {
-        key: key.into(),
-        summary: "test issue".into(),
-        issue_type: "Task".into(),
         status: status.into(),
-        priority: crate::domain::Priority::Medium,
         assignee: assignee.map(String::from),
         blocked,
-        updated: "1h ago".into(),
-        epic: None,
+        ..crate::test_support::sample_issue(key)
     }
 }
 

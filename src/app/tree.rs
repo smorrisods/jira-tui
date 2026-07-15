@@ -104,19 +104,12 @@ fn push_subtree(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{IssueSummary, Priority};
+    use crate::domain::IssueSummary;
 
     fn issue(key: &str, epic: Option<&str>) -> IssueSummary {
         IssueSummary {
-            key: key.into(),
-            summary: format!("summary for {key}"),
-            issue_type: "Task".into(),
-            status: "To Do".into(),
-            priority: Priority::Medium,
-            assignee: None,
-            blocked: false,
-            updated: "now".into(),
             epic: epic.map(String::from),
+            ..crate::test_support::sample_issue(key)
         }
     }
 

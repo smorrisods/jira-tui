@@ -17,7 +17,28 @@
 
 use tokio::sync::{Mutex, MutexGuard};
 
+use crate::domain::{IssueSummary, Priority};
+
 static ENV_LOCK: Mutex<()> = Mutex::const_new(());
+
+/// A minimal `IssueSummary` fixture for tests that only care about a couple
+/// of fields — override the rest with struct-update syntax, e.g.
+/// `IssueSummary { blocked: true, ..sample_issue("DS-1") }`. Shared so
+/// per-module test builders (`app::tree`, `app::tests::list_and_detail`,
+/// …) don't each hand-roll the same nine-field literal.
+pub(crate) fn sample_issue(key: &str) -> IssueSummary {
+    IssueSummary {
+        key: key.to_string(),
+        summary: format!("summary for {key}"),
+        issue_type: "Task".into(),
+        status: "To Do".into(),
+        priority: Priority::Medium,
+        assignee: None,
+        blocked: false,
+        updated: "now".into(),
+        epic: None,
+    }
+}
 
 /// Acquire the shared env-var lock from synchronous test code.
 pub(crate) fn lock_env() -> MutexGuard<'static, ()> {
