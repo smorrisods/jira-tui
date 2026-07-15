@@ -73,6 +73,10 @@ pub struct IssueDetail {
     pub components: Vec<String>,
     pub parent: Option<String>,
     pub links: Vec<IssueLink>,
+    /// This issue's children: an Epic's child stories/tasks, or a
+    /// Story/Task's sub-tasks. The reverse of `parent` — Jira has no single
+    /// field for it (see `jira::live::fetch_detail`).
+    pub children: Vec<ChildIssue>,
     /// Raw ADF description document.
     pub description: Value,
     /// Raw ADF acceptance criteria, fetched from a configurable custom field
@@ -111,6 +115,16 @@ pub struct IssueLink {
     pub relation: String,
     pub key: String,
     pub summary: String,
+}
+
+/// One of `IssueDetail::children` — an Epic's child story/task, or a
+/// Story/Task's sub-task. Lighter than `IssueSummary`: just enough to render
+/// and navigate to the child issue.
+#[derive(Clone, Debug, Serialize)]
+pub struct ChildIssue {
+    pub key: String,
+    pub summary: String,
+    pub status: String,
 }
 
 /// A user assignable to issues in the configured project — carries the
@@ -347,9 +361,10 @@ pub fn demo_assignable_users() -> Vec<AssignableUser> {
 /// a clearly-labelled placeholder that preserves the requested key, rather
 /// than silently substituting a different issue.
 pub fn demo_detail(key: &str) -> IssueDetail {
-    if !demo_issues().iter().any(|i| i.key == key) {
+    let issues = demo_issues();
+    let Some(base) = issues.iter().find(|i| i.key == key).cloned() else {
         return demo_detail_not_found(key);
-    }
+    };
 
     let description = json!({
         "type": "doc",
@@ -405,11 +420,6 @@ pub fn demo_detail(key: &str) -> IssueDetail {
         ]
     });
 
-    let base = demo_issues()
-        .into_iter()
-        .find(|i| i.key == key)
-        .expect("checked above");
-
     IssueDetail {
         key: base.key.clone(),
         summary: base.summary.clone(),
@@ -430,6 +440,15 @@ pub fn demo_detail(key: &str) -> IssueDetail {
             key: "DS-2603".into(),
             summary: "Ship precompiled CSS export for React package".into(),
         }],
+        children: issues
+            .into_iter()
+            .filter(|i| i.epic.as_deref() == Some(key))
+            .map(|i| ChildIssue {
+                key: i.key,
+                summary: i.summary,
+                status: i.status,
+            })
+            .collect(),
         description,
         acceptance_criteria: Some(acceptance),
         transitions: ["To Do", "In Progress", "In Review", "Done"]
@@ -522,6 +541,7 @@ fn demo_detail_not_found(key: &str) -> IssueDetail {
         components: Vec::new(),
         parent: None,
         links: Vec::new(),
+        children: Vec::new(),
         description,
         acceptance_criteria: None,
         transitions: Vec::new(),
