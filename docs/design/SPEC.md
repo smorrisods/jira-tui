@@ -6,7 +6,7 @@ This is the hand-off spec for implementing the UI refresh mocked up in `ui-refre
 
 Everything here is presentation-layer plus a small number of new keybindings and app-state fields. No Jira REST changes are required except where explicitly noted (transitions from the list/board). Suggested phase order, each independently shippable:
 
-1. Theme + chips + selection style (foundation for everything else)
+1. Theme + chips + selection style (foundation for everything else) — this phase also rolls in the fix for issue #38 (About screen always backs out to Home): review that issue in full, it includes the root-cause analysis (`back_or_quit`'s `Screen::About` arm in `src/keys.rs` unconditionally goes Home instead of restoring the screen About was opened from)
 2. Footer hint groups with the no-wrap drop rule
 3. Header breadcrumb + sync pill
 4. List columns, tree guides, view flipping
