@@ -162,6 +162,7 @@ impl App {
         self.loading = false;
         self.all_issues = issues;
         self.source = source;
+        self.last_synced = Some(std::time::Instant::now());
         self.status = format!("↻ {status}");
         self.recompute_view();
     }
@@ -181,6 +182,7 @@ impl App {
         self.loading = false;
         self.all_issues = issues;
         self.source = source;
+        self.last_synced = Some(std::time::Instant::now());
         let label = view.label();
         self.current_view = view;
         self.status = format!("↻ {status}");

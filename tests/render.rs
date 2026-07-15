@@ -2,6 +2,7 @@
 //! and assert the composed screen text, so each screen is exercised in CI.
 
 use jira_tui::app::{App, Screen, WelcomePhase};
+use jira_tui::domain::Source;
 use jira_tui::ui;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -615,5 +616,93 @@ fn footer_renders_at_the_84x46_reference_size() {
     assert!(
         text.contains("all keys"),
         "the board footer's pinned tail should render at the 84-col reference size"
+    );
+}
+
+#[test]
+fn header_breadcrumb_shows_the_current_view_on_home() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    let text = render(&app);
+    assert!(
+        text.contains("My Work"),
+        "Home's breadcrumb should show the current view"
+    );
+}
+
+#[test]
+fn header_breadcrumb_shows_view_and_screen_on_list() {
+    let mut app = demo_app();
+    app.screen = Screen::List;
+    let text = render(&app);
+    assert!(
+        text.contains("My Work") && text.contains("List"),
+        "List's breadcrumb should show both the view and the screen"
+    );
+}
+
+#[test]
+fn header_breadcrumb_shows_the_issue_key_and_back_count_on_detail() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    let text = render(&app);
+    let key = app.detail.as_ref().unwrap().key.clone();
+    assert!(
+        text.contains(&key),
+        "Detail's breadcrumb should show the open issue's key"
+    );
+}
+
+#[test]
+fn header_breadcrumb_shows_the_active_filter() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.cycle_filter();
+    let text = render(&app);
+    assert!(
+        text.contains("filter"),
+        "an active filter should appear as a breadcrumb crumb"
+    );
+}
+
+#[test]
+fn header_sync_pill_shows_demo_in_demo_mode() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    let text = render(&app);
+    assert!(text.contains("demo"), "the sync pill should show demo mode");
+}
+
+#[test]
+fn header_sync_pill_shows_live_and_synced_when_wide() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.source = Source::Live {
+        site: "example.atlassian.net".into(),
+        user: "me".into(),
+    };
+    let text = render(&app);
+    assert!(
+        text.contains("live") && text.contains("synced"),
+        "a wide terminal should show the full sync pill"
+    );
+}
+
+#[test]
+fn header_sync_pill_collapses_to_led_and_short_duration_when_narrow() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.source = Source::Live {
+        site: "example.atlassian.net".into(),
+        user: "me".into(),
+    };
+    let backend = TestBackend::new(70, 20);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(|f| ui::draw(f, &app)).unwrap();
+    let text = dump(terminal.backend().buffer());
+    assert!(
+        !text.contains("synced"),
+        "below the collapse width the pill should drop to just the LED and a short duration"
     );
 }

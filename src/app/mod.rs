@@ -77,6 +77,10 @@ pub struct App {
     pub detail: Option<IssueDetail>,
     pub detail_scroll: u16,
     pub source: Source,
+    /// When `all_issues`/`source` were last loaded for the current view —
+    /// drives the header's sync pill (SPEC.md §2). `None` only briefly,
+    /// before the constructor's own initial load stamps it.
+    pub last_synced: Option<std::time::Instant>,
     pub git: GitContext,
     pub tick: u64,
     pub status: String,
@@ -276,6 +280,7 @@ impl App {
             detail: None,
             detail_scroll: 0,
             source,
+            last_synced: Some(std::time::Instant::now()),
             git,
             tick: 0,
             status,

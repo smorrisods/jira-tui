@@ -18,6 +18,7 @@ impl App {
             let (issues, source, status) = load_issues_for(&kind, force_demo);
             self.all_issues = issues;
             self.source = source;
+            self.last_synced = Some(std::time::Instant::now());
             self.status = format!("↻ {status}");
             self.recompute_view();
             return;
