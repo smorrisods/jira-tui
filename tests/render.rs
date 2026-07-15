@@ -67,8 +67,8 @@ fn detail_screen_shows_an_epics_children() {
     assert_eq!(app.screen, Screen::Detail);
     let text = render(&app);
     assert!(
-        text.contains("child DS-2725"),
-        "an Epic's detail view should list its child issue"
+        text.contains("child DS-2725") && text.contains("Develop"),
+        "an Epic's detail view should list its child issue and type"
     );
 }
 

@@ -569,12 +569,14 @@ fn parse_links(arr: &[Value]) -> Vec<IssueLink> {
 }
 
 /// Parse the `subtasks` field inlined on an issue's own `GET` response —
-/// each entry is a lightweight `{key, fields: {summary, status}}`, cheap
-/// enough that it doesn't need a follow-up request.
+/// each entry is a lightweight `{key, fields: {summary, status, issuetype}}`,
+/// cheap enough that it doesn't need a follow-up request.
 fn parse_subtasks(arr: &[Value]) -> Vec<ChildIssue> {
     arr.iter()
         .map(|s| ChildIssue {
             key: str_field(s, &["key"]).unwrap_or_else(|| "?".into()),
+            issue_type: str_field(s, &["fields", "issuetype", "name"])
+                .unwrap_or_else(|| "Sub-task".into()),
             summary: str_field(s, &["fields", "summary"]).unwrap_or_default(),
             status: str_field(s, &["fields", "status", "name"]).unwrap_or_else(|| "Unknown".into()),
         })
@@ -593,6 +595,7 @@ fn children_of(cfg: &Config, key: &str) -> Result<Vec<ChildIssue>> {
         .into_iter()
         .map(|s| ChildIssue {
             key: s.key,
+            issue_type: s.issue_type,
             summary: s.summary,
             status: s.status,
         })
@@ -1037,7 +1040,8 @@ mod tests {
                                 "key": "DS-2",
                                 "fields": {
                                     "summary": "Sub-task one",
-                                    "status": {"name": "Done"}
+                                    "status": {"name": "Done"},
+                                    "issuetype": {"name": "Sub-task"}
                                 }
                             }
                         ]
@@ -1056,6 +1060,7 @@ mod tests {
         issue_mock.assert();
         assert_eq!(detail.children.len(), 1);
         assert_eq!(detail.children[0].key, "DS-2");
+        assert_eq!(detail.children[0].issue_type, "Sub-task");
         assert_eq!(detail.children[0].summary, "Sub-task one");
         assert_eq!(detail.children[0].status, "Done");
     }
@@ -1109,6 +1114,7 @@ mod tests {
         children_mock.assert();
         assert_eq!(detail.children.len(), 1);
         assert_eq!(detail.children[0].key, "DS-2");
+        assert_eq!(detail.children[0].issue_type, "Story");
         assert_eq!(detail.children[0].summary, "Child story");
         assert_eq!(detail.children[0].status, "To Do");
     }

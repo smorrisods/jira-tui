@@ -133,7 +133,12 @@ pub fn issue_detail_lines(detail: &IssueDetail) -> IssueLines {
             Span::styled("child ", Style::default().fg(ACCENT2)),
             Span::styled(child.key.clone(), Style::default().fg(ACCENT)),
             Span::styled(
-                format!(" · {} · {}", child.status, truncate(&child.summary, 40)),
+                format!(
+                    " · {} · {} · {}",
+                    child.issue_type,
+                    child.status,
+                    truncate(&child.summary, 40)
+                ),
                 Style::default().fg(MUTED),
             ),
         ]));

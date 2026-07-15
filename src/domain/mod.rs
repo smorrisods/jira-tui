@@ -123,6 +123,7 @@ pub struct IssueLink {
 #[derive(Clone, Debug, Serialize)]
 pub struct ChildIssue {
     pub key: String,
+    pub issue_type: String,
     pub summary: String,
     pub status: String,
 }
@@ -445,6 +446,7 @@ pub fn demo_detail(key: &str) -> IssueDetail {
             .filter(|i| i.epic.as_deref() == Some(key))
             .map(|i| ChildIssue {
                 key: i.key,
+                issue_type: i.issue_type,
                 summary: i.summary,
                 status: i.status,
             })
