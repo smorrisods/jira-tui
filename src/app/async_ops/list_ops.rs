@@ -6,6 +6,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::domain::{AssignableUser, IssueDetail, IssueSummary, Source, ViewKind};
 
 use super::super::loader::load_issues_for;
+use super::super::{App, Screen};
 use super::AppEvent;
 
 /// Spawn `load_issues_for(view, force_demo)` off the render thread for a
@@ -144,4 +145,90 @@ fn fetch_detail_blocking(key: &str) -> (IssueDetail, Option<String>) {
         }
     }
     (crate::domain::demo_detail(key), None)
+}
+
+impl App {
+    /// Applies `AppEvent::Refreshed` — see `dispatch_refresh` above.
+    pub(super) fn apply_refreshed(
+        &mut self,
+        generation: u64,
+        issues: Vec<IssueSummary>,
+        source: Source,
+        status: String,
+    ) {
+        if generation != self.generation {
+            return;
+        }
+        self.loading = false;
+        self.all_issues = issues;
+        self.source = source;
+        self.status = format!("↻ {status}");
+        self.recompute_view();
+    }
+
+    /// Applies `AppEvent::ViewSwitched` — see `dispatch_switch_view` above.
+    pub(super) fn apply_view_switched(
+        &mut self,
+        generation: u64,
+        view: ViewKind,
+        issues: Vec<IssueSummary>,
+        source: Source,
+        status: String,
+    ) {
+        if generation != self.generation {
+            return;
+        }
+        self.loading = false;
+        self.all_issues = issues;
+        self.source = source;
+        let label = view.label();
+        self.current_view = view;
+        self.status = format!("↻ {status}");
+        self.selected = 0;
+        self.recompute_view();
+        self.flash(format!("viewing: {label}"));
+    }
+
+    /// Applies `AppEvent::DetailLoaded` — see `dispatch_detail_fetch` above.
+    pub(super) fn apply_detail_loaded(
+        &mut self,
+        generation: u64,
+        key: String,
+        detail: Box<IssueDetail>,
+        status: Option<String>,
+    ) {
+        if generation != self.detail_generation {
+            return;
+        }
+        self.loading = false;
+        // The escalated navigate intent lives on `detail_pending`, not the
+        // event — a fetch dispatched as a cache-only quick-view load can be
+        // "upgraded" by an explicit open before it resolves (see
+        // `dispatch_detail_fetch`).
+        let navigate = self
+            .detail_pending
+            .take()
+            .map(|(_, navigate)| navigate)
+            .unwrap_or(false);
+        if let Some(status) = status {
+            self.status = status;
+        }
+        self.detail_cache.insert(key.clone(), (*detail).clone());
+        if navigate {
+            self.detail_scroll = 0;
+            self.detail = Some(*detail);
+            self.screen = Screen::Detail;
+            if let Some(pos) = self.issues.iter().position(|i| i.key == key) {
+                self.selected = pos;
+            }
+        }
+    }
+
+    /// Applies `AppEvent::TeammatesDiscovered` — see
+    /// `dispatch_teammate_discovery` above.
+    pub(super) fn apply_teammates_discovered(&mut self, users: Vec<AssignableUser>) {
+        let names: Vec<String> = users.iter().map(|u| u.display_name.clone()).collect();
+        self.merge_teammate_names(&names);
+        self.assignable_users = users;
+    }
 }

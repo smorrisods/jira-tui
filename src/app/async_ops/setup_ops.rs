@@ -2,8 +2,11 @@
 
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::domain::{IssueSummary, Source};
+
 #[cfg(feature = "live")]
 use super::super::load_issues;
+use super::super::App;
 use super::AppEvent;
 
 /// Spawn a custom-field lookup off the render thread, sending the result
@@ -85,4 +88,111 @@ pub(crate) fn dispatch_verify_credentials(tx: UnboundedSender<AppEvent>, generat
             status,
         });
     });
+}
+
+impl App {
+    /// Applies `AppEvent::FieldsLoaded` — see `dispatch_field_mapping` above.
+    pub(super) fn apply_fields_loaded(
+        &mut self,
+        generation: u64,
+        origin: super::super::field_mapping::FieldMappingOrigin,
+        result: FieldsFetchResult,
+    ) {
+        use super::super::field_mapping::{build_catalog_and_selection, FieldMappingOrigin};
+        use super::super::Screen;
+
+        if generation != self.field_mapping_generation {
+            return;
+        }
+        self.loading = false;
+        self.field_mapping_pending = false;
+
+        let connected_status = match &origin {
+            FieldMappingOrigin::Direct => None,
+            FieldMappingOrigin::Onboarding { connected_status } => Some(connected_status.clone()),
+        };
+
+        match result {
+            Ok((fields, current_mapping)) if fields.is_empty() => {
+                self.field_mapping.current_mapping = current_mapping;
+                self.status = "No custom fields found on this Jira site.".into();
+                if let Some(status) = connected_status {
+                    self.screen = Screen::Home;
+                    self.status = status;
+                }
+            }
+            Ok((fields, current_mapping)) => {
+                // catalog.len() - 1 for the leading "none" sentinel; clears
+                // the "↻ looking up…" status left by `dispatch_field_mapping`
+                // (unlike most other async ops, the old synchronous code
+                // never set a status on this path, so there's nothing to
+                // "restore" — just something that isn't a stale spinner
+                // message).
+                let count = fields.len();
+                let (catalog, selected) =
+                    build_catalog_and_selection(fields, current_mapping.as_deref());
+                self.field_mapping.catalog = catalog;
+                self.field_mapping.query.clear();
+                self.field_mapping.selected = selected;
+                self.field_mapping.current_mapping = current_mapping;
+                self.screen = Screen::FieldMapping;
+                self.status = format!("Loaded {count} custom fields.");
+            }
+            Err(e) => {
+                self.status = format!("Could not fetch fields: {e}");
+                if let Some(status) = connected_status {
+                    // A transient failure here shouldn't block finishing
+                    // onboarding — but it's easy to forget the field-mapping
+                    // screen exists at all if it silently never appears, so
+                    // leave a toast pointing at `F` rather than just the raw
+                    // error.
+                    self.screen = Screen::Home;
+                    self.status = status;
+                    self.flash("Couldn't look up custom fields — press F to try again");
+                }
+            }
+        }
+    }
+
+    /// Applies `AppEvent::CredentialsVerified` — see
+    /// `dispatch_verify_credentials` above.
+    pub(super) fn apply_credentials_verified(
+        &mut self,
+        generation: u64,
+        issues: Vec<IssueSummary>,
+        source: Source,
+        status: String,
+    ) {
+        use super::super::Screen;
+
+        if generation != self.onboarding_generation {
+            return;
+        }
+        self.loading = false;
+        self.onboarding_pending = false;
+        match source {
+            Source::Live { .. } => {
+                self.all_issues = issues;
+                self.source = source;
+                self.status = status;
+                self.recompute_view();
+                crate::config::mark_onboarded();
+                // Offer to map "Acceptance Criteria" (or another custom
+                // field) now, while we're already talking to Jira. That
+                // lookup dispatches its own async fetch — see
+                // `FieldMappingOrigin::Onboarding`.
+                let connected_status = self.status.clone();
+                if self.open_field_mapping_for_onboarding(connected_status.clone())
+                    == super::super::FieldMappingOutcome::NotAvailable
+                {
+                    self.screen = Screen::Home;
+                    self.status = connected_status;
+                }
+            }
+            _ => {
+                self.onboarding.setup_msg =
+                    "Saved, but Jira did not accept those credentials. Check and retry, or press Esc to continue in demo mode.".into();
+            }
+        }
+    }
 }

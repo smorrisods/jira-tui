@@ -6,7 +6,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::domain::Comment;
 
-use super::super::Screen;
+use super::super::{App, Screen};
 use super::AppEvent;
 
 /// Spawn a workflow transition off the render thread, sending the result
@@ -183,4 +183,128 @@ fn add_comment_blocking(
         created: "just now".into(),
         body: adf.clone(),
     })
+}
+
+impl App {
+    /// Applies `AppEvent::TransitionApplied` — see `dispatch_transition` above.
+    pub(super) fn apply_transition_applied(
+        &mut self,
+        generation: u64,
+        key: String,
+        to: String,
+        error: Option<String>,
+    ) {
+        if generation != self.transition_generation {
+            return;
+        }
+        self.loading = false;
+        self.transition_pending = false;
+        if let Some(e) = error {
+            self.status = format!("transition failed: {e}");
+            return;
+        }
+        if let Some(d) = self.detail.as_mut() {
+            if d.key == key {
+                d.status = to.clone();
+            }
+        }
+        if let Some(sum) = self.issues.iter_mut().find(|i| i.key == key) {
+            sum.status = to.clone();
+        }
+        self.status = format!("moved {key} → {to}");
+        self.flash(format!("✓ moved to {to}"));
+    }
+
+    /// Applies `AppEvent::DescriptionUpdated` — see
+    /// `dispatch_update_description` above.
+    pub(super) fn apply_description_updated(
+        &mut self,
+        generation: u64,
+        key: String,
+        adf: serde_json::Value,
+        error: Option<String>,
+        return_screen: Screen,
+    ) {
+        if generation != self.edit_generation {
+            return;
+        }
+        self.loading = false;
+        self.edit_pending = false;
+        self.screen = return_screen;
+        if let Some(e) = error {
+            self.status = format!("update failed: {e}");
+            return;
+        }
+        if let Some(d) = self.detail.as_mut() {
+            if d.key == key {
+                d.description = adf;
+            }
+        }
+        self.status = format!("updated {key} description");
+        self.flash("✓ description updated");
+    }
+
+    /// Applies `AppEvent::CommentAdded` — see `dispatch_add_comment` above.
+    pub(super) fn apply_comment_added(
+        &mut self,
+        generation: u64,
+        key: String,
+        result: Result<Comment, String>,
+        return_screen: Screen,
+    ) {
+        if generation != self.edit_generation {
+            return;
+        }
+        self.loading = false;
+        self.edit_pending = false;
+        self.screen = return_screen;
+        let comment = match result {
+            Ok(c) => c,
+            Err(e) => {
+                self.status = format!("comment failed: {e}");
+                return;
+            }
+        };
+        if let Some(d) = self.detail.as_mut() {
+            if d.key == key {
+                d.comments.push(comment.clone());
+            }
+        }
+        if let Some(cached) = self.detail_cache.get_mut(&key) {
+            cached.comments.push(comment);
+        }
+        self.status = format!("added comment to {key}");
+        self.flash("✓ comment added");
+    }
+
+    /// Applies `AppEvent::AssigneeApplied` — see `dispatch_assign` above.
+    pub(super) fn apply_assignee_applied(
+        &mut self,
+        generation: u64,
+        key: String,
+        display_name: Option<String>,
+        error: Option<String>,
+    ) {
+        if generation != self.assignee_generation {
+            // A newer picker interaction (or the picker closing and
+            // reopening) superseded this result; drop it silently,
+            // mirroring `apply_transition_applied`'s stale-generation guard.
+            return;
+        }
+        self.loading = false;
+        self.assignee_pending = false;
+        if let Some(e) = error {
+            self.status = format!("assign failed: {e}");
+            return;
+        }
+        self.apply_assignee_locally(&key, display_name.as_deref());
+        self.status = match &display_name {
+            Some(name) => format!("assigned {key} to {name}"),
+            None => format!("unassigned {key}"),
+        };
+        self.flash(match &display_name {
+            Some(name) => format!("✓ assigned to {name}"),
+            None => "✓ unassigned".to_string(),
+        });
+    }
 }
