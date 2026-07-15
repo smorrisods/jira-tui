@@ -1,16 +1,20 @@
 //! Keyboard and mouse event handling: translating input into `App` state
 //! changes. Each screen with bespoke navigation (Welcome, the transition
 //! picker, Preview, Edit, Search, Board) has its own key-handling block;
-//! everything else falls through to the shared `handle_key` match.
+//! everything else falls through to the shared `handle_key` match. Split
+//! into `welcome` (the onboarding key map) and `mouse` (pointer input) —
+//! `handle_key`'s own match stays whole here since it's one connected
+//! dispatch table over screen/modal state.
 
-use crossterm::event::{
-    DisableMouseCapture, EnableMouseCapture, KeyCode, KeyEvent, KeyModifiers, MouseButton,
-    MouseEvent, MouseEventKind,
-};
-use crossterm::execute;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use jira_tui::app::{self, App, Screen};
 use jira_tui::infra;
+
+mod mouse;
+mod welcome;
+
+pub(crate) use mouse::handle_mouse;
 
 pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
     // Global: Ctrl-C always quits.
@@ -35,7 +39,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
 
     // Onboarding has its own key map (including a text-entry form).
     if app.screen == Screen::Welcome {
-        handle_welcome_key(app, key);
+        welcome::handle_welcome_key(app, key);
         return;
     }
 
@@ -188,7 +192,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             app.refresh_detail();
         }
         KeyCode::Char('r') => app.refresh(),
-        KeyCode::Char('m') => toggle_mouse(app),
+        KeyCode::Char('m') => mouse::toggle_mouse(app),
         KeyCode::Char('b') if matches!(app.screen, Screen::Home | Screen::List) => app.open_board(),
         KeyCode::Char('/')
             if matches!(app.screen, Screen::Home | Screen::List | Screen::Detail) =>
@@ -343,81 +347,6 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-fn handle_welcome_key(app: &mut App, key: KeyEvent) {
-    use app::WelcomePhase;
-    match app.onboarding.welcome_phase {
-        WelcomePhase::Intro => match key.code {
-            KeyCode::Char('s') => {
-                app.onboarding.welcome_phase = WelcomePhase::Setup;
-                app.onboarding.setup_msg.clear();
-            }
-            KeyCode::Char('d') | KeyCode::Enter => app.finish_onboarding(),
-            KeyCode::Char('w') => app.write_config_from_welcome(),
-            KeyCode::Char('?') => app.show_help = true,
-            KeyCode::Char('q') | KeyCode::Esc => app.finish_onboarding(),
-            _ => {}
-        },
-        WelcomePhase::Setup => match key.code {
-            KeyCode::Esc => {
-                app.onboarding.welcome_phase = WelcomePhase::Intro;
-                app.onboarding.setup_msg.clear();
-            }
-            KeyCode::Enter => app.submit_credentials(),
-            KeyCode::Tab | KeyCode::Down => app.focus_next(),
-            KeyCode::BackTab | KeyCode::Up => app.focus_prev(),
-            KeyCode::Backspace => app.input_backspace(),
-            KeyCode::Char(c) => app.input_char(c),
-            _ => {}
-        },
-    }
-}
-
-pub(crate) fn handle_mouse(app: &mut App, me: MouseEvent) {
-    // Hold Shift to bypass the app and use the terminal's native selection.
-    if me.modifiers.contains(KeyModifiers::SHIFT) {
-        return;
-    }
-    match me.kind {
-        MouseEventKind::ScrollUp => scroll_at(app, me.column, me.row, -1),
-        MouseEventKind::ScrollDown => scroll_at(app, me.column, me.row, 1),
-        MouseEventKind::Down(MouseButton::Left) => app.mouse_down(me.row),
-        MouseEventKind::Drag(MouseButton::Left) => app.mouse_drag(me.row),
-        MouseEventKind::Up(MouseButton::Left) => app.mouse_up(me.column, me.row),
-        _ => {}
-    }
-}
-
-/// Scroll whichever panel the pointer is physically over. This is deliberately
-/// independent of keyboard `Tab` focus: the mouse always follows the pointer,
-/// while `Tab` + arrow keys is a separate, keyboard-only focus model.
-fn scroll_at(app: &mut App, x: u16, y: u16, delta: isize) {
-    if app.point_in_quick_view(x, y) {
-        app.quick_view_scroll_by(delta);
-        return;
-    }
-    match app.screen {
-        Screen::Home | Screen::List => app.move_selection(delta),
-        Screen::Detail | Screen::Preview => {
-            let new = app.detail_scroll as isize + delta;
-            app.detail_scroll = new.max(0) as u16;
-        }
-        Screen::Board => app.board_scroll_by(delta),
-        _ => {}
-    }
-}
-
-fn toggle_mouse(app: &mut App) {
-    app.mouse.enabled = !app.mouse.enabled;
-    app.mouse.selecting = false;
-    if app.mouse.enabled {
-        let _ = execute!(std::io::stdout(), EnableMouseCapture);
-        app.status = "mouse mode on · click to open · drag to copy · shift-drag = native".into();
-    } else {
-        let _ = execute!(std::io::stdout(), DisableMouseCapture);
-        app.status = "mouse mode off · terminal selection restored".into();
-    }
-}
-
 fn yank_key(app: &mut App) {
     if let Some(issue) = app.selected_issue() {
         let key = issue.key.clone();
@@ -473,8 +402,6 @@ fn back_or_quit(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jira_tui::app::ListFocus;
-    use ratatui::layout::Rect;
 
     fn demo_app() -> App {
         let mut app = App::new(true);
@@ -482,51 +409,41 @@ mod tests {
         app
     }
 
-    /// Regression test: the mouse wheel must always follow the pointer
-    /// position, never the keyboard `Tab` focus. Hovering the list should
-    /// move the list selection even while quick view has keyboard focus.
+    /// CLAUDE.md "what to keep true": help toggles on `?`, and any key
+    /// closes the overlay again rather than being forwarded to the
+    /// underlying screen — coverage gap noticed while splitting this file,
+    /// the overlay's own tests only lived in `tests/render.rs` (what it
+    /// draws), never here (that it actually swallows the next keypress).
     #[test]
-    fn wheel_over_list_ignores_keyboard_focus() {
+    fn help_overlay_swallows_the_first_keypress_then_closes() {
         let mut app = demo_app();
-        app.quick_view = true;
-        app.list_focus = ListFocus::QuickView; // keyboard focus is on quick view
-        app.quick_view_area.set(Rect::new(0, 30, 100, 10)); // panel lives elsewhere
-        app.selected = 0;
-        app.quick_view_scroll = 0;
-
-        // Scroll over the list area (row 5), well outside the quick-view rect.
-        scroll_at(&mut app, 10, 5, 1);
-
-        assert_eq!(app.selected, 1, "wheel over the list should move selection");
-        assert_eq!(
-            app.quick_view_scroll, 0,
-            "quick view must not scroll when the pointer is over the list"
-        );
-    }
-
-    #[test]
-    fn wheel_over_quick_view_scrolls_it_regardless_of_focus() {
-        let mut app = demo_app();
-        app.quick_view = true;
-        app.list_focus = ListFocus::List; // keyboard focus is on the list
-        app.quick_view_area.set(Rect::new(0, 30, 100, 10));
+        app.show_help = true;
         app.selected = 0;
 
-        scroll_at(&mut app, 10, 32, 1); // inside the quick-view rect
+        // A key that would otherwise move the selection must be swallowed.
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('j')));
 
+        assert!(!app.show_help, "help overlay should close on any keypress");
         assert_eq!(
             app.selected, 0,
-            "list selection must not move when the pointer is over quick view"
+            "the swallowed keypress must not also move the selection"
         );
-        assert_eq!(app.quick_view_scroll, 1);
     }
 
     #[test]
-    fn wheel_scrolls_board_when_no_quick_view() {
+    fn esc_from_list_goes_home() {
         let mut app = demo_app();
-        app.open_board();
-        app.board_scroll = 0;
-        scroll_at(&mut app, 5, 5, 1);
-        assert_eq!(app.board_scroll, 1);
+        app.screen = Screen::List;
+        handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
+        assert_eq!(app.screen, Screen::Home);
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn esc_from_home_quits() {
+        let mut app = demo_app();
+        app.screen = Screen::Home;
+        handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
+        assert!(app.should_quit);
     }
 }
