@@ -9,7 +9,7 @@ use ratatui::Frame;
 
 use crate::app::App;
 
-use super::{accent, accent2, card, card_bordered, maple, muted, ok, selection_bg, warn};
+use super::{accent, accent2, card, card_bordered, maple, muted, ok, selected_style, warn};
 
 pub(crate) fn draw_field_mapping(f: &mut Frame, app: &App, area: Rect) {
     let rows = Layout::default()
@@ -73,15 +73,21 @@ pub(crate) fn draw_field_mapping(f: &mut Frame, app: &App, area: Rect) {
             None => id.is_empty(),
         };
         let cursor = if selected { "▌" } else { " " };
-        let cursor_style = if selected {
-            Style::default().fg(maple())
-        } else {
-            Style::default()
-        };
+        let cursor_style = selected_style(
+            if selected {
+                Style::default().fg(maple())
+            } else {
+                Style::default()
+            },
+            selected,
+        );
         let current_marker = if is_current {
             Span::styled(
                 " ✓ current",
-                Style::default().fg(ok()).add_modifier(Modifier::BOLD),
+                selected_style(
+                    Style::default().fg(ok()).add_modifier(Modifier::BOLD),
+                    selected,
+                ),
             )
         } else {
             Span::raw("")
@@ -91,24 +97,32 @@ pub(crate) fn draw_field_mapping(f: &mut Frame, app: &App, area: Rect) {
                 Span::styled(cursor.to_string(), cursor_style),
                 Span::styled(
                     name.clone(),
-                    Style::default().fg(warn()).add_modifier(Modifier::ITALIC),
+                    selected_style(
+                        Style::default().fg(warn()).add_modifier(Modifier::ITALIC),
+                        selected,
+                    ),
                 ),
                 current_marker,
             ]));
             continue;
         }
-        let name_style = if selected {
-            Style::default()
-                .fg(Color::White)
-                .bg(selection_bg())
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::White)
-        };
+        let name_style = selected_style(
+            if selected {
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            },
+            selected,
+        );
         lines.push(Line::from(vec![
             Span::styled(cursor.to_string(), cursor_style),
             Span::styled(name.clone(), name_style),
-            Span::styled(format!("  ({id})"), Style::default().fg(muted())),
+            Span::styled(
+                format!("  ({id})"),
+                selected_style(Style::default().fg(muted()), selected),
+            ),
             current_marker,
         ]));
     }

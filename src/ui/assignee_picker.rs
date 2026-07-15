@@ -10,7 +10,7 @@ use ratatui::Frame;
 
 use crate::app::{App, AssigneeRow};
 
-use super::{accent, accent2, centered_rect_h, maple, muted, selection_bg};
+use super::{accent, accent2, centered_rect_h, maple, muted, selected_style};
 
 pub(crate) fn draw_assignee_picker(f: &mut Frame, app: &App, area: Rect) {
     let rows = &app.assignee_picker.rows;
@@ -72,20 +72,25 @@ pub(crate) fn draw_assignee_picker(f: &mut Frame, app: &App, area: Rect) {
     for (i, row) in rows.iter().enumerate().skip(start).take(visible) {
         let selected = i == app.assignee_picker.selected;
         let cursor = if selected { "▌ " } else { "  " };
-        let style = if selected {
-            Style::default()
-                .fg(Color::White)
-                .bg(selection_bg())
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::Gray)
-        };
+        let style = selected_style(
+            if selected {
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Gray)
+            },
+            selected,
+        );
         let label = match row {
             AssigneeRow::Unassign => "Unassign".to_string(),
             AssigneeRow::User(u) => u.display_name.clone(),
         };
         lines.push(Line::from(vec![
-            Span::styled(cursor.to_string(), Style::default().fg(maple())),
+            Span::styled(
+                cursor.to_string(),
+                selected_style(Style::default().fg(maple()), selected),
+            ),
             Span::styled(label, style),
         ]));
     }

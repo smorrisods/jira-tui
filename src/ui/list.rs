@@ -11,7 +11,8 @@ use crate::domain::IssueSummary;
 
 use super::{
     accent, accent2, card_bordered, chip, danger, maple, muted, priority_colour, priority_glyph,
-    priority_style, selection_bg, status_colour, status_short, status_style, truncate, type_colour,
+    priority_style, selected_style, status_colour, status_short, status_style, truncate,
+    type_colour,
 };
 
 pub(crate) fn draw_list(f: &mut Frame, app: &App, area: Rect, full: bool) {
@@ -148,49 +149,58 @@ pub(crate) fn draw_quick_view(f: &mut Frame, app: &App, area: Rect) {
 /// pass 0 for the flat list.
 pub(crate) fn issue_row(issue: &IssueSummary, selected: bool, depth: usize) -> Line<'static> {
     // One selection language shared with the board and every picker: a
-    // maple bar plus a low-alpha maple tint across the whole row.
-    let row_bg = |style: Style| {
-        if selected {
-            style.bg(selection_bg())
-        } else {
-            style
-        }
-    };
+    // maple bar plus a low-alpha maple tint across the whole row — every
+    // span below runs through `selected_style` so the tint has no gaps.
     let cursor = if selected { "▌" } else { " " };
-    let cursor_style = row_bg(if selected {
-        Style::default().fg(maple())
-    } else {
-        Style::default()
-    });
-    let key_style = row_bg(if selected {
-        Style::default().fg(accent()).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(accent())
-    });
-    let summary_style = row_bg(if selected {
-        Style::default()
-            .fg(Color::White)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(Color::Gray)
-    });
+    let cursor_style = selected_style(
+        if selected {
+            Style::default().fg(maple())
+        } else {
+            Style::default()
+        },
+        selected,
+    );
+    let key_style = selected_style(
+        if selected {
+            Style::default().fg(accent()).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(accent())
+        },
+        selected,
+    );
+    let summary_style = selected_style(
+        if selected {
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Gray)
+        },
+        selected,
+    );
 
     let block_flag = if issue.blocked {
-        Span::styled(" ⛔", row_bg(Style::default().fg(danger())))
+        Span::styled(
+            " ⛔",
+            selected_style(Style::default().fg(danger()), selected),
+        )
     } else {
         Span::raw("")
     };
 
-    let updated_style = row_bg(if selected {
-        Style::default().fg(Color::Gray)
-    } else {
-        Style::default().fg(muted())
-    });
+    let updated_style = selected_style(
+        if selected {
+            Style::default().fg(Color::Gray)
+        } else {
+            Style::default().fg(muted())
+        },
+        selected,
+    );
 
     let indent = if depth > 0 {
         Span::styled(
             format!("{}└ ", "  ".repeat(depth - 1)),
-            row_bg(Style::default().fg(muted())),
+            selected_style(Style::default().fg(muted()), selected),
         )
     } else {
         Span::raw("")
@@ -200,14 +210,14 @@ pub(crate) fn issue_row(issue: &IssueSummary, selected: bool, depth: usize) -> L
         Span::styled(cursor.to_string(), cursor_style),
         Span::styled(
             priority_glyph(&issue.priority),
-            row_bg(priority_style(&issue.priority)),
+            selected_style(priority_style(&issue.priority), selected),
         ),
-        Span::styled(" ", row_bg(Style::default())),
+        Span::styled(" ", selected_style(Style::default(), selected)),
         indent,
         Span::styled(format!("{:<8}", issue.key), key_style),
         Span::styled(
             format!("{:<11}", status_short(&issue.status)),
-            row_bg(status_style(&issue.status)),
+            selected_style(status_style(&issue.status), selected),
         ),
         Span::styled(truncate(&issue.summary, 40), summary_style),
         block_flag,

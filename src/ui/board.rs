@@ -10,7 +10,7 @@ use ratatui::Frame;
 use crate::app::App;
 use crate::domain::IssueSummary;
 
-use super::{accent, accent2, card, maple, muted, selection_bg, status_colour, truncate};
+use super::{accent, accent2, card, maple, muted, selected_style, status_colour, truncate};
 
 pub(crate) fn draw_board(f: &mut Frame, app: &App, area: Rect) {
     let cols = app.board_columns();
@@ -40,9 +40,7 @@ pub(crate) fn draw_board(f: &mut Frame, app: &App, area: Rect) {
     }
 
     let n = cols.len().max(1);
-    let sep_width = n.saturating_sub(1);
-    let col_width = ((inner.width as usize).saturating_sub(sep_width)) / n;
-    let col_width = col_width.max(12);
+    let col_width = board_col_width(inner.width as usize, n);
 
     let mut lines: Vec<Line> = Vec::new();
 
@@ -51,6 +49,7 @@ pub(crate) fn draw_board(f: &mut Frame, app: &App, area: Rect) {
     for (ci, status) in cols.iter().enumerate() {
         let count = app.issues.iter().filter(|i| &i.status == status).count();
         let label = truncate(&format!("{status} ({count})"), col_width);
+        header.push(Span::raw(" ")); // aligns with the selection bar column below
         header.push(Span::styled(
             format!("{label:<col_width$}"),
             Style::default()
@@ -94,19 +93,25 @@ pub(crate) fn draw_board(f: &mut Frame, app: &App, area: Rect) {
                     }
                     None => String::new(),
                 };
-                let mut style = Style::default().fg(if cell.get(row).is_some() {
+                let base_fg = if cell.get(row).is_some() {
                     Color::White
                 } else {
                     muted()
-                });
+                };
+                let mut style = selected_style(Style::default().fg(base_fg), selected);
                 if selected {
-                    style = style.bg(selection_bg()).add_modifier(Modifier::BOLD);
+                    style = style.add_modifier(Modifier::BOLD);
                 }
                 // One selection language shared with the list and pickers:
                 // a leading maple bar, reserved as its own column so
                 // unselected cells stay aligned.
                 let bar = if selected { "▌" } else { " " };
-                spans.push(Span::styled(bar, Style::default().fg(maple())));
+                let bar_style = if selected {
+                    Style::default().fg(maple())
+                } else {
+                    Style::default()
+                };
+                spans.push(Span::styled(bar, bar_style));
                 spans.push(Span::styled(format!("{text:<col_width$}"), style));
                 if ci + 1 < n {
                     spans.push(Span::styled(" │ ", Style::default().fg(muted())));
@@ -119,4 +124,54 @@ pub(crate) fn draw_board(f: &mut Frame, app: &App, area: Rect) {
 
     let para = Paragraph::new(Text::from(lines)).scroll((app.board_scroll, 0));
     f.render_widget(para, inner);
+}
+
+/// Per-column text width, leaving room for the real width of the " │ "
+/// separator between columns and of the leading selection-bar column each
+/// card/header cell reserves (see `bar` above and the header's leading
+/// `Span::raw(" ")`) — both are subtracted from the budget up front so the
+/// header and body rows come out to the same total rendered width instead
+/// of drifting apart. Pure so it's unit-testable against the width formula
+/// callers actually use.
+fn board_col_width(inner_width: usize, n: usize) -> usize {
+    let n = n.max(1);
+    let sep_width = 3 * n.saturating_sub(1);
+    let bar_width = n;
+    (inner_width.saturating_sub(sep_width + bar_width) / n).max(12)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression test: a leading 1-char selection bar used to be prepended
+    /// to every body-row cell without a matching reservation in the width
+    /// budget, so both header and body rows rendered wider than the pane —
+    /// clipped inconsistently since the header (no bar) overflowed less
+    /// than the body (with a bar) did, breaking column alignment between
+    /// them. Every row now reserves the same 1-char lead-in (the header's
+    /// `Span::raw(" ")`, the body's selection bar), so this asserts the
+    /// shared total-row-width formula never exceeds the pane width — unless
+    /// the terminal is so narrow that `col_width`'s 12-char readability
+    /// floor is doing the clamping instead, which (like the pre-existing
+    /// floor itself) is an accepted narrow-terminal tradeoff, not a bug.
+    #[test]
+    fn row_width_never_exceeds_the_pane_when_not_floor_clamped() {
+        for n in 1..=6usize {
+            for inner_width in [40usize, 80, 110, 200] {
+                let sep_width = 3 * n.saturating_sub(1);
+                let bar_width = n;
+                let unclamped = inner_width.saturating_sub(sep_width + bar_width) / n;
+                if unclamped < 12 {
+                    continue; // the readability floor is clamping; overflow is expected here
+                }
+                let col_width = board_col_width(inner_width, n);
+                let total_row_width = n * (1 + col_width) + sep_width;
+                assert!(
+                    total_row_width <= inner_width,
+                    "n={n} inner_width={inner_width}: row width {total_row_width} exceeds pane"
+                );
+            }
+        }
+    }
 }

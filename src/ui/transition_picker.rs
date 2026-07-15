@@ -8,7 +8,7 @@ use ratatui::Frame;
 
 use crate::app::App;
 
-use super::{accent, centered_rect_h, maple, muted, selection_bg};
+use super::{accent, centered_rect_h, maple, muted, selected_style};
 
 pub(crate) fn draw_transition_picker(f: &mut Frame, app: &App, area: Rect) {
     let transitions = match app.detail.as_ref() {
@@ -37,22 +37,30 @@ pub(crate) fn draw_transition_picker(f: &mut Frame, app: &App, area: Rect) {
         let selected = i == app.picker_index;
         let is_current = t.to == current;
         let cursor = if selected { "▌ " } else { "  " };
-        let mut style = if selected {
-            Style::default()
-                .fg(Color::White)
-                .bg(selection_bg())
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::Gray)
-        };
+        let mut style = selected_style(
+            if selected {
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Gray)
+            },
+            selected,
+        );
         if is_current {
             style = style.fg(accent());
         }
         let suffix = if is_current { "  (current)" } else { "" };
         lines.push(Line::from(vec![
-            Span::styled(cursor.to_string(), Style::default().fg(maple())),
+            Span::styled(
+                cursor.to_string(),
+                selected_style(Style::default().fg(maple()), selected),
+            ),
             Span::styled(t.name.clone(), style),
-            Span::styled(suffix.to_string(), Style::default().fg(muted())),
+            Span::styled(
+                suffix.to_string(),
+                selected_style(Style::default().fg(muted()), selected),
+            ),
         ]));
     }
     lines.push(Line::from(""));

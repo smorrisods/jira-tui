@@ -9,7 +9,7 @@ use ratatui::Frame;
 use crate::app::{App, SearchRow};
 
 use super::list::issue_row;
-use super::{accent, accent2, card, card_bordered, maple, muted, selection_bg, warn};
+use super::{accent, accent2, card, card_bordered, maple, muted, selected_style, warn};
 
 pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
     let rows = Layout::default()
@@ -53,33 +53,35 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
     for (i, row) in app.search.rows.iter().enumerate() {
         let selected = i == app.search.selected;
         let cursor = if selected { "▌" } else { " " };
-        let cursor_style = if selected {
-            Style::default().fg(maple())
-        } else {
-            Style::default()
-        };
+        let cursor_style = selected_style(
+            if selected {
+                Style::default().fg(maple())
+            } else {
+                Style::default()
+            },
+            selected,
+        );
         match row {
             SearchRow::Goto(key) => {
-                let row_bg = |style: Style| {
-                    if selected {
-                        style.bg(selection_bg())
-                    } else {
-                        style
-                    }
-                };
                 lines.push(Line::from(vec![
                     Span::styled(cursor.to_string(), cursor_style),
                     Span::styled(
                         "↵ go to ",
-                        row_bg(Style::default().fg(warn()).add_modifier(Modifier::BOLD)),
+                        selected_style(
+                            Style::default().fg(warn()).add_modifier(Modifier::BOLD),
+                            selected,
+                        ),
                     ),
                     Span::styled(
                         key.clone(),
-                        row_bg(Style::default().fg(accent()).add_modifier(Modifier::BOLD)),
+                        selected_style(
+                            Style::default().fg(accent()).add_modifier(Modifier::BOLD),
+                            selected,
+                        ),
                     ),
                     Span::styled(
                         "  (fetch directly, even if it's not in your list)",
-                        row_bg(Style::default().fg(muted())),
+                        selected_style(Style::default().fg(muted()), selected),
                     ),
                 ]));
             }

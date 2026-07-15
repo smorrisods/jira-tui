@@ -117,7 +117,9 @@ pub(crate) fn muted() -> Color {
 // FAINT (tertiary text, tree guides, group labels) isn't added yet — nothing
 // in this phase uses it (tree guides are phase 4, footer group labels are
 // phase 2). Add it alongside whichever phase first needs it.
-/// The Task type chip only — not part of the 8-token palette table.
+/// Not part of the 8-token palette table — shared by the Task type chip and
+/// `priority_colour`'s Low/Lowest arm, the two places that want "a blue"
+/// without it being a named theme concept of its own.
 fn task_blue() -> Color {
     theme_colour((0x6F, 0xB3, 0xE0), Color::Blue)
 }
@@ -137,10 +139,36 @@ fn blend(fg: Color, alpha: f32) -> Color {
     }
 }
 
+/// Pure so the truecolor-vs-fallback branch is unit-testable without
+/// depending on `maple()`'s env-gated, memoized result.
+fn selection_bg_for(maple: Color) -> Color {
+    match maple {
+        rgb @ Color::Rgb(..) => blend(rgb, 0.20),
+        _ => Color::DarkGray,
+    }
+}
+
 /// One selection language shared by the list, board, and pickers: a maple
 /// bar/border plus this low-alpha background tint on the selected row/card.
+/// On a truecolor terminal that's a genuine alpha blend; on a named-colour
+/// terminal `blend()` can't scale `maple()`'s fallback down, and painting a
+/// full-brightness accent colour behind the row's own text would be a loud,
+/// low-contrast mess rather than a subtle tint — so the fallback is a plain
+/// muted grey instead.
 pub(crate) fn selection_bg() -> Color {
-    blend(maple(), 0.20)
+    selection_bg_for(maple())
+}
+
+/// Apply the shared selection background to `style` when `selected` — the
+/// single place every list row, board cell, and picker row should reach for
+/// this instead of re-deriving the same `if selected { .bg(...) }` branch,
+/// so the tint can never have gaps between spans.
+pub(crate) fn selected_style(style: Style, selected: bool) -> Style {
+    if selected {
+        style.bg(selection_bg())
+    } else {
+        style
+    }
 }
 
 pub fn draw(f: &mut Frame, app: &App) {
@@ -459,7 +487,7 @@ pub(crate) fn priority_colour(p: &Priority) -> Color {
     match p {
         Priority::Highest | Priority::High => danger(),
         Priority::Medium => warn(),
-        Priority::Low | Priority::Lowest => Color::Blue,
+        Priority::Low | Priority::Lowest => task_blue(),
     }
 }
 
@@ -477,13 +505,18 @@ pub(crate) fn status_colour(s: &str) -> Color {
     }
 }
 
-/// Type chip colour (SPEC.md §1): Bug/Story/Task/Epic each get a distinct
-/// colour; anything else falls back to the previous uniform `accent2()`.
+/// Type chip colour (SPEC.md §1): Bug/Story/Task each get a distinct
+/// colour; Epic and anything else fall back to the previous uniform
+/// `accent2()` (Epic is listed explicitly, matching the same value the
+/// wildcard already gives it, so the mapping stays legible on its own).
 pub(crate) fn type_colour(issue_type: &str) -> Color {
     match issue_type {
         "Bug" => danger(),
         "Story" => ok(),
         "Task" => task_blue(),
+        // Epic and anything else share this fallback intentionally — Epic
+        // isn't listed as its own arm because clippy (rightly) treats a
+        // wildcard-covered literal arm as redundant.
         _ => accent2(),
     }
 }
@@ -572,5 +605,33 @@ mod tests {
         assert_eq!(type_colour("Task"), task_blue());
         assert_eq!(type_colour("Epic"), accent2());
         assert_eq!(type_colour("Something else"), accent2());
+    }
+
+    #[test]
+    fn priority_colour_low_and_lowest_are_theme_aware() {
+        // Regression test: this arm used to return the bare `Color::Blue`
+        // instead of a theme_colour()-backed function, so it never got the
+        // new alpha-tinted chip() treatment truecolor terminals give every
+        // other priority.
+        assert_eq!(priority_colour(&Priority::Low), task_blue());
+        assert_eq!(priority_colour(&Priority::Lowest), task_blue());
+    }
+
+    /// Regression test: `selection_bg()` used to pass `maple()`'s named
+    /// fallback straight through `blend()` unchanged, so a non-truecolor
+    /// terminal painted a full-brightness `Color::LightRed` background
+    /// behind every selected row instead of a subtle tint.
+    #[test]
+    fn selection_bg_for_falls_back_to_a_muted_grey_on_named_colours() {
+        assert_eq!(selection_bg_for(Color::LightRed), Color::DarkGray);
+        assert_eq!(selection_bg_for(Color::Cyan), Color::DarkGray);
+    }
+
+    #[test]
+    fn selection_bg_for_blends_rgb_maple() {
+        assert_eq!(
+            selection_bg_for(Color::Rgb(0xE8, 0x83, 0x4A)),
+            blend(Color::Rgb(0xE8, 0x83, 0x4A), 0.20)
+        );
     }
 }
