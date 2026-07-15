@@ -6,6 +6,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
+use super::keymap::KEYMAP;
 use super::{centered_rect, ACCENT};
 
 pub(crate) fn draw_help_overlay(f: &mut Frame, area: Rect) {
@@ -19,60 +20,15 @@ pub(crate) fn draw_help_overlay(f: &mut Frame, area: Rect) {
             "  keys  ",
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         ));
-    let rows = [
-        ("↑ / k", "move up"),
-        ("↓ / j", "move down"),
-        ("→ / ⏎", "open selected issue"),
-        ("esc/←/⌫", "back"),
-        ("/", "search or go to an issue by key"),
-        ("s / S", "cycle sort / flip direction"),
-        ("f", "cycle status filter"),
-        ("v", "toggle quick-view panel"),
-        (
-            "T",
-            "toggle parent ↔ child tree view (nests children under parents)",
-        ),
-        ("tab", "focus list ↔ quick view (enables arrow scroll)"),
-        ("b", "swimlane board (Kanban-style, grouped by epic)"),
-        ("t", "change status (in an issue)"),
-        (
-            "A",
-            "assign/unassign (in an issue or quick view) — type to filter, ↑/↓ move",
-        ),
-        ("e / E", "edit description (in-TUI / $EDITOR)"),
-        ("c", "add a comment (in an issue or quick view)"),
-        ("] / [", "jump to comments section / back to top"),
-        ("n / p", "next / previous comment"),
-        ("{ / }", "cycle highlighted in-body link (issue key / URL)"),
-        (
-            "⏎ (on a link)",
-            "open it — jump to the issue, or open the URL",
-        ),
-        (
-            "← / →",
-            "step back/forward through issues followed via links (in an issue)",
-        ),
-        ("F", "map a custom field (e.g. Acceptance Criteria)"),
-        ("V", "switch view (My Work / All Project Issues / teammate)"),
-        ("a", "about panel"),
-        ("m", "toggle mouse mode"),
-        ("J", "toggle Jax companion 🦦"),
-        ("y / Y", "copy issue key / URL"),
-        (
-            "r",
-            "refresh — the list, or the open issue/focused quick view",
-        ),
-        ("? / q", "toggle help / quit"),
-    ];
-    let lines: Vec<Line> = rows
+    let lines: Vec<Line> = KEYMAP
         .iter()
-        .map(|(k, d)| {
+        .map(|hint| {
             Line::from(vec![
                 Span::styled(
-                    format!("  {k:<9}"),
+                    format!("  {:<9}", hint.key),
                     Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(d.to_string(), Style::default().fg(Color::White)),
+                Span::styled(hint.desc.to_string(), Style::default().fg(Color::White)),
             ])
         })
         .collect();

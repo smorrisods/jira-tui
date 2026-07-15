@@ -281,6 +281,10 @@ fn preview_screen_renders_pending_edit() {
     assert!(text.contains("preview"), "preview should be titled");
     assert!(text.contains("Fresh heading"));
     assert!(text.contains("apply"));
+    assert!(
+        text.contains("y/⏎"),
+        "preview copy should mention both y and Enter apply the edit"
+    );
 }
 
 #[test]
@@ -463,5 +467,22 @@ fn board_screen_highlights_selected_card() {
     assert!(
         text.contains("column"),
         "board title should show column count"
+    );
+}
+
+#[test]
+fn help_overlay_shows_audited_keys() {
+    // Regression test for the SPEC.md §10 keybinding audit: `g`, `l`,
+    // PgUp/PgDn, and the board's vim keys were bound in `src/keys.rs` but
+    // missing from the help overlay.
+    let mut app = demo_app();
+    app.show_help = true;
+    let text = render(&app);
+    assert!(text.contains("go to Home"), "`g` should be documented");
+    assert!(text.contains("go to List"), "`l` should be documented");
+    assert!(text.contains("PgUp"), "PgUp/PgDn should be documented");
+    assert!(
+        text.contains("vim-style"),
+        "board vim-key support should be documented"
     );
 }

@@ -26,6 +26,7 @@ mod field_mapping;
 mod help;
 mod home;
 mod jax_companion;
+mod keymap;
 mod list;
 mod preview;
 mod search;
@@ -262,8 +263,8 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
             )
         }
         Screen::Preview => match app.edit_target {
-            EditTarget::Description => "y apply to Jira · esc/← cancel · ↑/↓ scroll".into(),
-            EditTarget::Comment => "y post comment · esc/← cancel · ↑/↓ scroll".into(),
+            EditTarget::Description => "y/⏎ apply to Jira · esc/← cancel · ↑/↓ scroll".into(),
+            EditTarget::Comment => "y/⏎ post comment · esc/← cancel · ↑/↓ scroll".into(),
         },
         Screen::Edit => match app.edit_target {
             EditTarget::Description => "type to edit · ^S preview · esc cancel".into(),
