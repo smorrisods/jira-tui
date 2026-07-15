@@ -486,3 +486,37 @@ fn help_overlay_shows_audited_keys() {
         "board vim-key support should be documented"
     );
 }
+
+#[test]
+fn help_overlay_shows_every_row_without_clipping() {
+    // The popup used to be a fixed 62% of the frame height; once the audit
+    // fixes above grew the row count, the last several rows (including the
+    // overlay's own "? / q toggle help / quit" hint) were clipped off the
+    // bottom with no scroll indicator. The popup is now sized to the row
+    // count instead, so every row — especially the last one — must render.
+    let mut app = demo_app();
+    app.show_help = true;
+    let text = render(&app);
+    assert!(
+        text.contains("? / q") && text.contains("toggle help"),
+        "the last help row (close help/quit) must not be clipped"
+    );
+}
+
+#[test]
+fn help_overlay_key_column_has_a_separator_for_long_keys() {
+    // The key column used to be a fixed 9-char width; keys longer than that
+    // (e.g. "PgUp / PgDn", "h/j/k/l (board)") ran straight into their
+    // description with no separating space.
+    let mut app = demo_app();
+    app.show_help = true;
+    let text = render(&app);
+    assert!(
+        !text.contains("PgDnjump"),
+        "PgUp / PgDn must not glue into its description"
+    );
+    assert!(
+        !text.contains("(board)vim"),
+        "the board vim-key row must not glue into its description"
+    );
+}
