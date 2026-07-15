@@ -31,7 +31,7 @@ pub(crate) fn draw_preview(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(MUTED),
         )),
         Line::from(Span::styled(
-            "Press y to apply, or esc to cancel.",
+            "Press y/⏎ to apply, or esc to cancel.",
             Style::default().fg(WARN).add_modifier(Modifier::BOLD),
         )),
         divider(),

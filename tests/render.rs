@@ -281,6 +281,10 @@ fn preview_screen_renders_pending_edit() {
     assert!(text.contains("preview"), "preview should be titled");
     assert!(text.contains("Fresh heading"));
     assert!(text.contains("apply"));
+    assert!(
+        text.contains("y/⏎"),
+        "preview copy should mention both y and Enter apply the edit"
+    );
 }
 
 #[test]
@@ -463,5 +467,56 @@ fn board_screen_highlights_selected_card() {
     assert!(
         text.contains("column"),
         "board title should show column count"
+    );
+}
+
+#[test]
+fn help_overlay_shows_audited_keys() {
+    // Regression test for the SPEC.md §10 keybinding audit: `g`, `l`,
+    // PgUp/PgDn, and the board's vim keys were bound in `src/keys.rs` but
+    // missing from the help overlay.
+    let mut app = demo_app();
+    app.show_help = true;
+    let text = render(&app);
+    assert!(text.contains("go to Home"), "`g` should be documented");
+    assert!(text.contains("go to List"), "`l` should be documented");
+    assert!(text.contains("PgUp"), "PgUp/PgDn should be documented");
+    assert!(
+        text.contains("vim-style"),
+        "board vim-key support should be documented"
+    );
+}
+
+#[test]
+fn help_overlay_shows_every_row_without_clipping() {
+    // The popup used to be a fixed 62% of the frame height; once the audit
+    // fixes above grew the row count, the last several rows (including the
+    // overlay's own "? / q toggle help / quit" hint) were clipped off the
+    // bottom with no scroll indicator. The popup is now sized to the row
+    // count instead, so every row — especially the last one — must render.
+    let mut app = demo_app();
+    app.show_help = true;
+    let text = render(&app);
+    assert!(
+        text.contains("? / q") && text.contains("toggle help"),
+        "the last help row (close help/quit) must not be clipped"
+    );
+}
+
+#[test]
+fn help_overlay_key_column_has_a_separator_for_long_keys() {
+    // The key column used to be a fixed 9-char width; keys longer than that
+    // (e.g. "PgUp / PgDn", "h/j/k/l (board)") ran straight into their
+    // description with no separating space.
+    let mut app = demo_app();
+    app.show_help = true;
+    let text = render(&app);
+    assert!(
+        !text.contains("PgDnjump"),
+        "PgUp / PgDn must not glue into its description"
+    );
+    assert!(
+        !text.contains("(board)vim"),
+        "the board vim-key row must not glue into its description"
     );
 }

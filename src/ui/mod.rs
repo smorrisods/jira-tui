@@ -26,6 +26,7 @@ mod field_mapping;
 mod help;
 mod home;
 mod jax_companion;
+mod keymap;
 mod list;
 mod preview;
 mod search;
@@ -262,8 +263,8 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
             )
         }
         Screen::Preview => match app.edit_target {
-            EditTarget::Description => "y apply to Jira · esc/← cancel · ↑/↓ scroll".into(),
-            EditTarget::Comment => "y post comment · esc/← cancel · ↑/↓ scroll".into(),
+            EditTarget::Description => "y/⏎ apply to Jira · esc/← cancel · ↑/↓ scroll".into(),
+            EditTarget::Comment => "y/⏎ post comment · esc/← cancel · ↑/↓ scroll".into(),
         },
         Screen::Edit => match app.edit_target {
             EditTarget::Description => "type to edit · ^S preview · esc cancel".into(),
@@ -397,25 +398,6 @@ pub(crate) fn truncate(s: &str, max: usize) -> String {
         let cut: String = s.chars().take(max.saturating_sub(1)).collect();
         format!("{cut}…")
     }
-}
-
-fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(area);
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(vertical[1])[1]
 }
 
 fn centered_rect_h(width_pct: u16, height: u16, area: Rect) -> Rect {
