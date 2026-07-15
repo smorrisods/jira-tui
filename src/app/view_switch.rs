@@ -5,7 +5,8 @@
 
 use crate::domain::{IssueSummary, Source, ViewKind};
 
-use super::{load_issues_for, App};
+use super::loader::load_issues_for;
+use super::App;
 
 impl App {
     /// Open the view picker: My Work, All Project Issues, then one entry per
