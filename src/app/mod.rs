@@ -168,6 +168,10 @@ pub struct App {
     /// quick-view.
     pub edit_return_screen: Screen,
 
+    /// The screen `a` was pressed from, so backing out of About (see #38)
+    /// restores it instead of always landing on Home.
+    pub about_return_screen: Screen,
+
     // Field-mapping discovery (custom field IDs are instance-specific).
     pub field_mapping: FieldMappingState,
 
@@ -313,6 +317,7 @@ impl App {
             edit_target: EditTarget::default(),
             edit_key: None,
             edit_return_screen: Screen::Detail,
+            about_return_screen: Screen::Home,
             field_mapping: FieldMappingState::default(),
             current_view: ViewKind::default(),
             view_picker_open: false,

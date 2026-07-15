@@ -177,7 +177,15 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
 
     match key.code {
         KeyCode::Char('?') => app.show_help = true,
-        KeyCode::Char('a') => app.screen = Screen::About,
+        KeyCode::Char('a') => {
+            // Remember where About was opened from (see #38) so backing out
+            // restores it — but only when not already in About, or a second
+            // `a` press would overwrite that memory with About itself.
+            if app.screen != Screen::About {
+                app.about_return_screen = app.screen;
+            }
+            app.screen = Screen::About;
+        }
         KeyCode::Char('g') => app.screen = Screen::Home,
         // `r` refreshes whatever's actually being looked at: the open
         // issue in Detail, or the quick-view panel once it has keyboard
@@ -395,7 +403,8 @@ fn back_or_quit(app: &mut App) {
         Screen::Preview | Screen::Edit => app.cancel_edit(),
         Screen::Search => app.close_search(),
         Screen::FieldMapping => app.close_field_mapping(),
-        Screen::List | Screen::Detail | Screen::About | Screen::Board => app.screen = Screen::Home,
+        Screen::List | Screen::Detail | Screen::Board => app.screen = Screen::Home,
+        Screen::About => app.screen = app.about_return_screen,
     }
 }
 
@@ -445,5 +454,30 @@ mod tests {
         app.screen = Screen::Home;
         handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
         assert!(app.should_quit);
+    }
+
+    /// Regression test for #38: About used to always back out to Home,
+    /// discarding whatever screen it was opened from.
+    #[test]
+    fn about_from_detail_returns_to_detail_not_home() {
+        let mut app = demo_app();
+        app.screen = Screen::Detail;
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('a')));
+        assert_eq!(app.screen, Screen::About);
+        handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
+        assert_eq!(app.screen, Screen::Detail);
+    }
+
+    /// Re-pressing `a` while already in About must not overwrite the
+    /// remembered return screen with About itself.
+    #[test]
+    fn about_reopened_from_about_does_not_corrupt_return_screen() {
+        let mut app = demo_app();
+        app.screen = Screen::Detail;
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('a')));
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('a')));
+        assert_eq!(app.screen, Screen::About);
+        handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
+        assert_eq!(app.screen, Screen::Detail);
     }
 }
