@@ -25,6 +25,7 @@ mod board;
 mod detail;
 mod editor;
 mod field_mapping;
+mod footer;
 mod help;
 mod home;
 mod jax_companion;
@@ -42,6 +43,7 @@ use board::draw_board;
 use detail::draw_detail;
 use editor::draw_editor;
 use field_mapping::draw_field_mapping;
+use footer::footer_line;
 use help::draw_help_overlay;
 use home::draw_home;
 use jax_companion::draw_jax_companion;
@@ -352,58 +354,9 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
 }
 
 // ── Footer ───────────────────────────────────────────────────────────────────
+/// Group content per screen, the width-measuring drop rule, and rendering
+/// live in `footer` — see its module doc for the no-wrap contract.
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
-    use crate::app::{EditTarget, ListFocus, Screen};
-    let keys: String = match app.screen {
-        Screen::Welcome => match app.onboarding.welcome_phase {
-            crate::app::WelcomePhase::Intro => {
-                "s set up live · d demo · w write config · ? help · q quit".into()
-            }
-            crate::app::WelcomePhase::Setup => {
-                "type to edit · tab next · ⏎ verify & save · esc back".into()
-            }
-        },
-        Screen::Detail => {
-            let history = match (app.can_go_back(), app.can_go_forward()) {
-                (true, true) => " · ←/→ history back/forward",
-                (true, false) => " · ← history back",
-                (false, true) => " · → history forward",
-                (false, false) => "",
-            };
-            format!(
-                "↑/↓ scroll · t transition · A assign · e edit · c comment · ]/[ comments/top · \
-                 n/p next/prev comment · {{/}} cycle links · ⏎ open link · r refresh · esc{history} back · a about · ? help · q quit"
-            )
-        }
-        Screen::Preview => match app.edit_target {
-            EditTarget::Description => "y/⏎ apply to Jira · esc/← cancel · ↑/↓ scroll".into(),
-            EditTarget::Comment => "y/⏎ post comment · esc/← cancel · ↑/↓ scroll".into(),
-        },
-        Screen::Edit => match app.edit_target {
-            EditTarget::Description => "type to edit · ^S preview · esc cancel".into(),
-            EditTarget::Comment => "type your comment · ^S preview · esc cancel".into(),
-        },
-        Screen::Search => "type to filter · ↑/↓ move · ⏎ open · esc cancel".into(),
-        Screen::FieldMapping => "type to search fields · ↑/↓ move · ⏎ map · esc cancel".into(),
-        Screen::Board => {
-            "↑/↓ card · ←/→ column · pgup/pgdn lane · ⏎ open · / search · V switch view · esc/q back".into()
-        }
-        Screen::About => "esc/← back · ? help · q quit".into(),
-        Screen::Home | Screen::List if app.quick_view => {
-            let refresh = if app.list_focus == ListFocus::QuickView {
-                "r refresh focused issue"
-            } else {
-                "r refresh list"
-            };
-            format!(
-                "↑/↓ move · →/⏎ open · tab focus quick view · A assign · c comment · ]/[ comments/top · \
-                 n/p next/prev comment · {{/}} cycle links · ⏎ open link (focused) · {refresh} · \
-                 b board · / search · V switch view · ? help · q quit"
-            )
-        }
-        _ => "↑/↓ move · →/⏎ open · s sort · f filter · v quick · T tree view · r refresh · b board · / search · V switch view · ? help · q quit".into(),
-    };
-    let keys = keys.as_str();
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -413,16 +366,24 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
 
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
+        .constraints([Constraint::Percentage(80), Constraint::Percentage(20)])
         .split(inner);
 
     f.render_widget(
-        Paragraph::new(Line::from(Span::styled(keys, Style::default().fg(muted())))),
+        Paragraph::new(footer_line(app, cols[0].width as usize)),
         cols[0],
     );
+    let prefix = loading_prefix(app);
+    // Truncate with an ellipsis rather than letting the Paragraph hard-clip
+    // mid-word — the status column can carry real error text (e.g. a live
+    // Jira failure reason) that's worth keeping legible even when narrow.
+    let budget = (cols[1].width as usize)
+        .saturating_sub(prefix.chars().count())
+        .saturating_sub(1); // trailing space
+    let status = truncate(&app.status, budget);
     f.render_widget(
         Paragraph::new(Line::from(Span::styled(
-            format!("{}{} ", loading_prefix(app), app.status),
+            format!("{prefix}{status} "),
             Style::default().fg(accent()),
         )))
         .alignment(Alignment::Right),
