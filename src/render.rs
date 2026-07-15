@@ -9,8 +9,8 @@ use ratatui::text::{Line, Span};
 use crate::adf;
 use crate::domain::IssueDetail;
 use crate::ui::{
-    chip, divider, priority_colour, priority_glyph, priority_style, status_colour, truncate,
-    ACCENT, ACCENT2, DANGER, MUTED,
+    accent, accent2, chip, danger, divider, muted, priority_colour, priority_glyph, priority_style,
+    status_colour, truncate, type_colour,
 };
 
 /// Something a navigable span in the rendered detail points to — either
@@ -73,7 +73,7 @@ pub fn issue_detail_lines(detail: &IssueDetail) -> IssueLines {
         ),
     ]));
     lines.push(Line::from(vec![
-        chip(&detail.issue_type, ACCENT2),
+        chip(&detail.issue_type, type_colour(&detail.issue_type)),
         Span::raw(" "),
         chip(&detail.status, status_colour(&detail.status)),
         Span::raw(" "),
@@ -86,13 +86,13 @@ pub fn issue_detail_lines(detail: &IssueDetail) -> IssueLines {
                     .clone()
                     .unwrap_or_else(|| "unassigned".into())
             ),
-            Style::default().fg(MUTED),
+            Style::default().fg(muted()),
         ),
     ]));
     if let Some(reporter) = &detail.reporter {
         lines.push(Line::from(Span::styled(
             format!("reporter: {reporter}"),
-            Style::default().fg(MUTED),
+            Style::default().fg(muted()),
         )));
     }
     if let Some(parent) = &detail.parent {
@@ -100,28 +100,28 @@ pub fn issue_detail_lines(detail: &IssueDetail) -> IssueLines {
         // a Story/Task for sub-tasks — so "parent" rather than "epic" here.
         lines.push(Line::from(Span::styled(
             format!("parent: {parent}"),
-            Style::default().fg(MUTED),
+            Style::default().fg(muted()),
         )));
     }
     if !detail.components.is_empty() {
         lines.push(Line::from(Span::styled(
             format!("components: {}", detail.components.join(", ")),
-            Style::default().fg(MUTED),
+            Style::default().fg(muted()),
         )));
     }
     if !detail.labels.is_empty() {
         lines.push(Line::from(Span::styled(
             format!("labels: {}", detail.labels.join(", ")),
-            Style::default().fg(MUTED),
+            Style::default().fg(muted()),
         )));
     }
     for link in &detail.links {
         lines.push(Line::from(vec![
-            Span::styled(format!("{} ", link.relation), Style::default().fg(DANGER)),
-            Span::styled(link.key.clone(), Style::default().fg(ACCENT)),
+            Span::styled(format!("{} ", link.relation), Style::default().fg(danger())),
+            Span::styled(link.key.clone(), Style::default().fg(accent())),
             Span::styled(
                 format!(" · {}", truncate(&link.summary, 40)),
-                Style::default().fg(MUTED),
+                Style::default().fg(muted()),
             ),
         ]));
     }
@@ -130,15 +130,15 @@ pub fn issue_detail_lines(detail: &IssueDetail) -> IssueLines {
         // a Story/Task's sub-tasks are both just "child" here (see the
         // `parent` comment above for the matching asymmetry).
         lines.push(Line::from(vec![
-            Span::styled("child ", Style::default().fg(ACCENT2)),
-            Span::styled(child.key.clone(), Style::default().fg(ACCENT)),
+            Span::styled("child ", Style::default().fg(accent2())),
+            Span::styled(child.key.clone(), Style::default().fg(accent())),
             Span::raw(" "),
-            chip(&child.issue_type, ACCENT2),
+            chip(&child.issue_type, type_colour(&child.issue_type)),
             Span::raw(" "),
             chip(&child.status, status_colour(&child.status)),
             Span::styled(
                 format!(" · {}", truncate(&child.summary, 40)),
-                Style::default().fg(MUTED),
+                Style::default().fg(muted()),
             ),
         ]));
     }
@@ -153,7 +153,7 @@ pub fn issue_detail_lines(detail: &IssueDetail) -> IssueLines {
         lines.push(divider());
         lines.push(Line::from(Span::styled(
             "Acceptance Criteria",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent()).add_modifier(Modifier::BOLD),
         )));
         lines.extend(adf::render(ac).lines);
     }
@@ -161,10 +161,10 @@ pub fn issue_detail_lines(detail: &IssueDetail) -> IssueLines {
     // Quick transitions strip (preview only — mutation lands in a later phase).
     if !detail.transitions.is_empty() {
         lines.push(divider());
-        let mut strip = vec![Span::styled("transitions  ", Style::default().fg(MUTED))];
+        let mut strip = vec![Span::styled("transitions  ", Style::default().fg(muted()))];
         for (i, t) in detail.transitions.iter().enumerate() {
             let current = t.to == detail.status || t.name == detail.status;
-            let colour = if current { ACCENT } else { Color::White };
+            let colour = if current { accent() } else { Color::White };
             let modifier = if current {
                 Modifier::BOLD | Modifier::UNDERLINED
             } else {
@@ -175,12 +175,12 @@ pub fn issue_detail_lines(detail: &IssueDetail) -> IssueLines {
                 Style::default().fg(colour).add_modifier(modifier),
             ));
             if i + 1 < detail.transitions.len() {
-                strip.push(Span::styled(" → ", Style::default().fg(MUTED)));
+                strip.push(Span::styled(" → ", Style::default().fg(muted())));
             }
         }
         strip.push(Span::styled(
             "   (t to change)",
-            Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
+            Style::default().fg(muted()).add_modifier(Modifier::ITALIC),
         ));
         lines.push(Line::from(strip));
     }
@@ -197,7 +197,7 @@ pub fn issue_detail_lines(detail: &IssueDetail) -> IssueLines {
                 detail.comments.len(),
                 if detail.comments.len() == 1 { "" } else { "s" }
             ),
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent()).add_modifier(Modifier::BOLD),
         )));
         for comment in &detail.comments {
             lines.push(Line::default());
@@ -211,7 +211,7 @@ pub fn issue_detail_lines(detail: &IssueDetail) -> IssueLines {
                 ),
                 Span::styled(
                     format!(" · {}", comment.created),
-                    Style::default().fg(MUTED),
+                    Style::default().fg(muted()),
                 ),
             ]));
             lines.extend(adf::render(&comment.body).lines);

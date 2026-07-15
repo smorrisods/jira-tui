@@ -7,7 +7,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
 use super::keymap::KEYMAP;
-use super::{centered_rect_h, ACCENT};
+use super::{accent, centered_rect_h};
 
 pub(crate) fn draw_help_overlay(f: &mut Frame, area: Rect) {
     // Size the popup to fit every row (clamped to the frame height) rather
@@ -19,10 +19,10 @@ pub(crate) fn draw_help_overlay(f: &mut Frame, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Double)
-        .border_style(Style::default().fg(ACCENT))
+        .border_style(Style::default().fg(accent()))
         .title(Span::styled(
             "  keys  ",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent()).add_modifier(Modifier::BOLD),
         ));
     // Pad the key column to the widest entry (plus a one-space gap) instead
     // of a fixed width, so a key longer than the old hardcoded width
@@ -39,7 +39,7 @@ pub(crate) fn draw_help_overlay(f: &mut Frame, area: Rect) {
             Line::from(vec![
                 Span::styled(
                     format!("  {}{pad}", hint.key),
-                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                    Style::default().fg(accent()).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(hint.desc.to_string(), Style::default().fg(Color::White)),
             ])

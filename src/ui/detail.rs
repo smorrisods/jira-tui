@@ -6,18 +6,18 @@ use ratatui::Frame;
 
 use crate::app::App;
 
-use super::{card, ACCENT};
+use super::{accent, card};
 
 pub(crate) fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
     let Some(detail) = app.detail.as_ref() else {
         f.render_widget(
-            Paragraph::new("No issue loaded").block(card("  detail  ", ACCENT)),
+            Paragraph::new("No issue loaded").block(card("  detail  ", accent())),
             area,
         );
         return;
     };
 
-    let block = card(&format!("  {}  ", detail.key), ACCENT);
+    let block = card(&format!("  {}  ", detail.key), accent());
     let inner = block.inner(area);
     app.detail_area.set(inner);
     f.render_widget(block, area);

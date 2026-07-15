@@ -10,7 +10,7 @@ use ratatui::Frame;
 
 use crate::app::{App, AssigneeRow};
 
-use super::{centered_rect_h, ACCENT, ACCENT2, MUTED};
+use super::{accent, accent2, centered_rect_h, maple, muted, selection_bg};
 
 pub(crate) fn draw_assignee_picker(f: &mut Frame, app: &App, area: Rect) {
     let rows = &app.assignee_picker.rows;
@@ -33,10 +33,10 @@ pub(crate) fn draw_assignee_picker(f: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Double)
-        .border_style(Style::default().fg(ACCENT))
+        .border_style(Style::default().fg(accent()))
         .title(Span::styled(
             "  assign to…  ",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent()).add_modifier(Modifier::BOLD),
         ));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
@@ -45,20 +45,20 @@ pub(crate) fn draw_assignee_picker(f: &mut Frame, app: &App, area: Rect) {
     lines.push(Line::from(vec![
         Span::styled(
             "› ",
-            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent2()).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             app.assignee_picker.query.clone(),
             Style::default().fg(Color::White),
         ),
-        Span::styled("▏", Style::default().fg(ACCENT)),
+        Span::styled("▏", Style::default().fg(accent())),
     ]));
     lines.push(Line::from(""));
 
     if rows.is_empty() {
         lines.push(Line::from(Span::styled(
             "No matching teammates.",
-            Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
+            Style::default().fg(muted()).add_modifier(Modifier::ITALIC),
         )));
     }
     // Simple scroll window around the selection, same shape as `list.rs`'s
@@ -75,6 +75,7 @@ pub(crate) fn draw_assignee_picker(f: &mut Frame, app: &App, area: Rect) {
         let style = if selected {
             Style::default()
                 .fg(Color::White)
+                .bg(selection_bg())
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::Gray)
@@ -84,14 +85,14 @@ pub(crate) fn draw_assignee_picker(f: &mut Frame, app: &App, area: Rect) {
             AssigneeRow::User(u) => u.display_name.clone(),
         };
         lines.push(Line::from(vec![
-            Span::styled(cursor.to_string(), Style::default().fg(ACCENT2)),
+            Span::styled(cursor.to_string(), Style::default().fg(maple())),
             Span::styled(label, style),
         ]));
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "⏎ assign · esc cancel",
-        Style::default().fg(MUTED),
+        Style::default().fg(muted()),
     )));
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
 }

@@ -8,7 +8,7 @@ use ratatui::Frame;
 
 use crate::app::{App, Field, WelcomePhase};
 
-use super::{ACCENT, ACCENT2, MUTED, WARN};
+use super::{accent, accent2, muted, warn};
 
 // ── Welcome / onboarding ─────────────────────────────────────────────────────
 
@@ -18,8 +18,8 @@ fn jax(tick: u64) -> Vec<Line<'static>> {
     let blinking = (tick / 6).is_multiple_of(8);
     let eyes = if blinking { "-  -" } else { "●  ●" };
     let leaf = ['🍁', '🍂'][(tick / 8 % 2) as usize];
-    let body = Style::default().fg(ACCENT);
-    let face = Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD);
+    let body = Style::default().fg(accent());
+    let face = Style::default().fg(accent2()).add_modifier(Modifier::BOLD);
     vec![
         Line::from(Span::styled("   .------.   ", body)),
         Line::from(vec![
@@ -41,10 +41,10 @@ pub(crate) fn draw_welcome(f: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Double)
-        .border_style(Style::default().fg(ACCENT2))
+        .border_style(Style::default().fg(accent2()))
         .title(Span::styled(
             "  welcome to jira-tui  ",
-            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent2()).add_modifier(Modifier::BOLD),
         ));
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -75,7 +75,7 @@ fn draw_welcome_intro(f: &mut Frame, app: &App, area: Rect) {
     lines.push(
         Line::from(Span::styled(
             "You're exploring built-in sample data right now — nothing touches Jira.",
-            Style::default().fg(MUTED),
+            Style::default().fg(muted()),
         ))
         .alignment(Alignment::Center),
     );
@@ -99,7 +99,7 @@ fn draw_welcome_intro(f: &mut Frame, app: &App, area: Rect) {
             Line::from(vec![
                 Span::styled(
                     format!("  [{k}]  "),
-                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                    Style::default().fg(accent()).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
                     format!("{title}  "),
@@ -107,7 +107,7 @@ fn draw_welcome_intro(f: &mut Frame, app: &App, area: Rect) {
                         .fg(Color::White)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(desc.to_string(), Style::default().fg(MUTED)),
+                Span::styled(desc.to_string(), Style::default().fg(muted())),
             ])
             .alignment(Alignment::Center),
         );
@@ -116,7 +116,7 @@ fn draw_welcome_intro(f: &mut Frame, app: &App, area: Rect) {
     lines.push(
         Line::from(Span::styled(
             "Tip: press 'm' any time for mouse mode; hold Shift-drag for native copy.",
-            Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
+            Style::default().fg(muted()).add_modifier(Modifier::ITALIC),
         ))
         .alignment(Alignment::Center),
     );
@@ -135,14 +135,14 @@ fn draw_welcome_setup(f: &mut Frame, app: &App, area: Rect) {
     lines.push(
         Line::from(Span::styled(
             "Set up live access",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent()).add_modifier(Modifier::BOLD),
         ))
         .alignment(Alignment::Center),
     );
     lines.push(
         Line::from(Span::styled(
             "Your token is verified against Jira and saved to ~/.config/jira-tui/token (0600).",
-            Style::default().fg(MUTED),
+            Style::default().fg(muted()),
         ))
         .alignment(Alignment::Center),
     );
@@ -156,9 +156,9 @@ fn draw_welcome_setup(f: &mut Frame, app: &App, area: Rect) {
         };
         let caret = if focused { "▏" } else { " " };
         let label_style = if focused {
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+            Style::default().fg(accent()).add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(MUTED)
+            Style::default().fg(muted())
         };
         let box_style = if focused {
             Style::default().fg(Color::White)
@@ -197,7 +197,7 @@ fn draw_welcome_setup(f: &mut Frame, app: &App, area: Rect) {
         lines.push(
             Line::from(Span::styled(
                 app.onboarding.setup_msg.clone(),
-                Style::default().fg(WARN),
+                Style::default().fg(warn()),
             ))
             .alignment(Alignment::Center),
         );

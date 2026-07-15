@@ -9,7 +9,7 @@ use ratatui::Frame;
 
 use crate::app::App;
 
-use super::{ACCENT, ACCENT2, MUTED};
+use super::{accent, accent2, muted};
 
 /// Draws Jax bottom-aligned within `area`. Callers pass a bounding region that
 /// already excludes anything Jax must not cover (e.g. the quick-view panel),
@@ -26,10 +26,10 @@ pub(crate) fn draw_jax_companion(f: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(ACCENT2))
+        .border_style(Style::default().fg(accent2()))
         .title(Span::styled(
             format!("  jax · {caption}  "),
-            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent2()).add_modifier(Modifier::BOLD),
         ));
     let inner = block.inner(rect);
     f.render_widget(block, rect);
@@ -45,9 +45,9 @@ fn jax_scene(tick: u64) -> (&'static str, Vec<Line<'static>>) {
     let frame = (tick / 3) % 4;
     let blink = (tick / 6).is_multiple_of(9);
     let eyes = if blink { "- ‿ -" } else { "●‿●" };
-    let a = Style::default().fg(ACCENT);
+    let a = Style::default().fg(accent());
     let w = Style::default().fg(Color::White);
-    let m = Style::default().fg(MUTED);
+    let m = Style::default().fg(muted());
 
     let ln = |s: String, st: Style| Line::from(Span::styled(s, st));
 
@@ -118,7 +118,7 @@ fn jax_scene(tick: u64) -> (&'static str, Vec<Line<'static>>) {
             (
                 "🎉 woo! 🪅",
                 vec![
-                    ln(confetti.into(), Style::default().fg(ACCENT2)),
+                    ln(confetti.into(), Style::default().fg(accent2())),
                     ln(" .---.".into(), a),
                     ln(format!(" |{eyes}| 🪅"), w),
                     ln(" \\'--'/".into(), a),

@@ -10,7 +10,7 @@ use ratatui::Frame;
 use crate::app::App;
 use crate::domain::IssueSummary;
 
-use super::{card, status_colour, truncate, ACCENT, ACCENT2, MUTED};
+use super::{accent, accent2, card, maple, muted, selection_bg, status_colour, truncate};
 
 pub(crate) fn draw_board(f: &mut Frame, app: &App, area: Rect) {
     let cols = app.board_columns();
@@ -23,7 +23,7 @@ pub(crate) fn draw_board(f: &mut Frame, app: &App, area: Rect) {
         cols.len(),
         if cols.len() == 1 { "" } else { "s" },
     );
-    let block = card(&title, ACCENT);
+    let block = card(&title, accent());
     let inner = block.inner(area);
     f.render_widget(block, area);
     app.board_area.set(inner);
@@ -32,7 +32,7 @@ pub(crate) fn draw_board(f: &mut Frame, app: &App, area: Rect) {
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 "No issues in the current view.",
-                Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
+                Style::default().fg(muted()).add_modifier(Modifier::ITALIC),
             ))),
             inner,
         );
@@ -58,13 +58,13 @@ pub(crate) fn draw_board(f: &mut Frame, app: &App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ));
         if ci + 1 < n {
-            header.push(Span::styled(" │ ", Style::default().fg(MUTED)));
+            header.push(Span::styled(" │ ", Style::default().fg(muted())));
         }
     }
     lines.push(Line::from(header));
     lines.push(Line::from(Span::styled(
         "─".repeat(inner.width as usize),
-        Style::default().fg(MUTED),
+        Style::default().fg(muted()),
     )));
 
     for (li, lane) in lanes.iter().enumerate() {
@@ -76,7 +76,7 @@ pub(crate) fn draw_board(f: &mut Frame, app: &App, area: Rect) {
 
         lines.push(Line::from(Span::styled(
             format!("▸ {} ({lane_count})", app.board_lane_label(lane)),
-            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent2()).add_modifier(Modifier::BOLD),
         )));
 
         let max_rows = cell_lists.iter().map(|c| c.len()).max().unwrap_or(0).max(1);
@@ -97,16 +97,19 @@ pub(crate) fn draw_board(f: &mut Frame, app: &App, area: Rect) {
                 let mut style = Style::default().fg(if cell.get(row).is_some() {
                     Color::White
                 } else {
-                    MUTED
+                    muted()
                 });
                 if selected {
-                    style = style
-                        .bg(Color::Rgb(40, 40, 80))
-                        .add_modifier(Modifier::BOLD);
+                    style = style.bg(selection_bg()).add_modifier(Modifier::BOLD);
                 }
+                // One selection language shared with the list and pickers:
+                // a leading maple bar, reserved as its own column so
+                // unselected cells stay aligned.
+                let bar = if selected { "▌" } else { " " };
+                spans.push(Span::styled(bar, Style::default().fg(maple())));
                 spans.push(Span::styled(format!("{text:<col_width$}"), style));
                 if ci + 1 < n {
-                    spans.push(Span::styled(" │ ", Style::default().fg(MUTED)));
+                    spans.push(Span::styled(" │ ", Style::default().fg(muted())));
                 }
             }
             lines.push(Line::from(spans));

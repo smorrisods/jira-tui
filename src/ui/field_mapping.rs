@@ -9,7 +9,7 @@ use ratatui::Frame;
 
 use crate::app::App;
 
-use super::{card, card_bordered, ACCENT, ACCENT2, MUTED, OK, WARN};
+use super::{accent, accent2, card, card_bordered, maple, muted, ok, selection_bg, warn};
 
 pub(crate) fn draw_field_mapping(f: &mut Frame, app: &App, area: Rect) {
     let rows = Layout::default()
@@ -18,20 +18,20 @@ pub(crate) fn draw_field_mapping(f: &mut Frame, app: &App, area: Rect) {
         .split(area);
 
     // Query input line.
-    let input_block = card_bordered("  map acceptance criteria field  ", ACCENT, ACCENT);
+    let input_block = card_bordered("  map acceptance criteria field  ", accent(), accent());
     let input_inner = input_block.inner(rows[0]);
     f.render_widget(input_block, rows[0]);
     f.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
                 "› ",
-                Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+                Style::default().fg(accent2()).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 app.field_mapping.query.clone(),
                 Style::default().fg(Color::White),
             ),
-            Span::styled("▏", Style::default().fg(ACCENT)),
+            Span::styled("▏", Style::default().fg(accent())),
         ])),
         input_inner,
     );
@@ -49,7 +49,7 @@ pub(crate) fn draw_field_mapping(f: &mut Frame, app: &App, area: Rect) {
         None => "none".to_string(),
     };
     let results_title = format!("  custom fields — currently: {current_label}  ");
-    let results_block = card(&results_title, ACCENT2);
+    let results_block = card(&results_title, accent2());
     let inner = results_block.inner(rows[1]);
     f.render_widget(results_block, rows[1]);
 
@@ -58,7 +58,7 @@ pub(crate) fn draw_field_mapping(f: &mut Frame, app: &App, area: Rect) {
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 "No custom fields match that search.",
-                Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
+                Style::default().fg(muted()).add_modifier(Modifier::ITALIC),
             ))),
             inner,
         );
@@ -74,14 +74,14 @@ pub(crate) fn draw_field_mapping(f: &mut Frame, app: &App, area: Rect) {
         };
         let cursor = if selected { "▌" } else { " " };
         let cursor_style = if selected {
-            Style::default().fg(ACCENT2)
+            Style::default().fg(maple())
         } else {
             Style::default()
         };
         let current_marker = if is_current {
             Span::styled(
                 " ✓ current",
-                Style::default().fg(OK).add_modifier(Modifier::BOLD),
+                Style::default().fg(ok()).add_modifier(Modifier::BOLD),
             )
         } else {
             Span::raw("")
@@ -91,7 +91,7 @@ pub(crate) fn draw_field_mapping(f: &mut Frame, app: &App, area: Rect) {
                 Span::styled(cursor.to_string(), cursor_style),
                 Span::styled(
                     name.clone(),
-                    Style::default().fg(WARN).add_modifier(Modifier::ITALIC),
+                    Style::default().fg(warn()).add_modifier(Modifier::ITALIC),
                 ),
                 current_marker,
             ]));
@@ -100,6 +100,7 @@ pub(crate) fn draw_field_mapping(f: &mut Frame, app: &App, area: Rect) {
         let name_style = if selected {
             Style::default()
                 .fg(Color::White)
+                .bg(selection_bg())
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::White)
@@ -107,7 +108,7 @@ pub(crate) fn draw_field_mapping(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(vec![
             Span::styled(cursor.to_string(), cursor_style),
             Span::styled(name.clone(), name_style),
-            Span::styled(format!("  ({id})"), Style::default().fg(MUTED)),
+            Span::styled(format!("  ({id})"), Style::default().fg(muted())),
             current_marker,
         ]));
     }
