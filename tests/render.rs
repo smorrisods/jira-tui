@@ -576,7 +576,8 @@ fn footer_shows_grouped_hints_on_a_wide_terminal() {
     // Home should render.
     let backend = TestBackend::new(120, 34);
     let mut terminal = Terminal::new(backend).unwrap();
-    let app = demo_app();
+    let mut app = demo_app();
+    app.screen = Screen::Home;
     terminal.draw(|f| ui::draw(f, &app)).unwrap();
     let text = dump(terminal.backend().buffer());
     assert!(text.contains("NAV"), "the NAV group should render");
@@ -592,7 +593,8 @@ fn footer_never_wraps_and_keeps_all_keys_visible_on_a_narrow_terminal() {
     // always survive, even when nothing else fits.
     let backend = TestBackend::new(40, 40);
     let mut terminal = Terminal::new(backend).unwrap();
-    let app = demo_app();
+    let mut app = demo_app();
+    app.screen = Screen::Home;
     terminal.draw(|f| ui::draw(f, &app)).unwrap();
     let text = dump(terminal.backend().buffer());
     assert!(
