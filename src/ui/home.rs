@@ -9,7 +9,7 @@ use ratatui::Frame;
 
 use crate::app::App;
 
-use super::{card, list::draw_list, ACCENT, ACCENT2, DANGER, MUTED, OK, WARN};
+use super::{accent, accent2, card, danger, list::draw_list, muted, ok, warn};
 
 pub(crate) fn draw_home(f: &mut Frame, app: &App, area: Rect) {
     let cols = Layout::default()
@@ -37,20 +37,23 @@ fn draw_context_panel(f: &mut Frame, app: &App, area: Rect) {
         .unwrap_or_else(|| "none detected".into());
     let ctx = Text::from(vec![
         Line::from(vec![
-            Span::styled("repo    ", Style::default().fg(MUTED)),
+            Span::styled("repo    ", Style::default().fg(muted())),
             Span::styled(repo, Style::default().fg(Color::White)),
         ]),
         Line::from(vec![
-            Span::styled("branch  ", Style::default().fg(MUTED)),
+            Span::styled("branch  ", Style::default().fg(muted())),
             Span::styled(branch, Style::default().fg(Color::Blue)),
         ]),
         Line::from(vec![
-            Span::styled("issue   ", Style::default().fg(MUTED)),
-            Span::styled(key, Style::default().fg(WARN).add_modifier(Modifier::BOLD)),
+            Span::styled("issue   ", Style::default().fg(muted())),
+            Span::styled(
+                key,
+                Style::default().fg(warn()).add_modifier(Modifier::BOLD),
+            ),
         ]),
     ]);
     f.render_widget(
-        Paragraph::new(ctx).block(card("  current context  ", ACCENT)),
+        Paragraph::new(ctx).block(card("  current context  ", accent())),
         rows[0],
     );
 
@@ -59,21 +62,25 @@ fn draw_context_panel(f: &mut Frame, app: &App, area: Rect) {
     let blocked = app.blocked().len();
     let total = app.issues.len();
     let stats = Text::from(vec![
-        stat_line("assigned to me", assigned, OK),
-        stat_line("blocked", blocked, if blocked > 0 { DANGER } else { MUTED }),
-        stat_line("in view", total, ACCENT),
+        stat_line("assigned to me", assigned, ok()),
+        stat_line(
+            "blocked",
+            blocked,
+            if blocked > 0 { danger() } else { muted() },
+        ),
+        stat_line("in view", total, accent()),
         Line::from(""),
         Line::from(Span::styled(
             "next: press ⏎ to open the",
-            Style::default().fg(MUTED),
+            Style::default().fg(muted()),
         )),
         Line::from(Span::styled(
             "highlighted issue",
-            Style::default().fg(MUTED),
+            Style::default().fg(muted()),
         )),
     ]);
     f.render_widget(
-        Paragraph::new(stats).block(card("  at a glance  ", ACCENT2)),
+        Paragraph::new(stats).block(card("  at a glance  ", accent2())),
         rows[1],
     );
 }

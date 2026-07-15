@@ -10,8 +10,9 @@ use crate::app::{App, ListFocus};
 use crate::domain::IssueSummary;
 
 use super::{
-    card_bordered, chip, priority_colour, priority_glyph, priority_style, status_colour,
-    status_short, status_style, truncate, ACCENT, ACCENT2, DANGER, MUTED,
+    accent, accent2, card_bordered, chip, danger, maple, muted, priority_colour, priority_glyph,
+    priority_style, selected_style, status_colour, status_short, status_style, truncate,
+    type_colour,
 };
 
 pub(crate) fn draw_list(f: &mut Frame, app: &App, area: Rect, full: bool) {
@@ -36,8 +37,8 @@ pub(crate) fn draw_list(f: &mut Frame, app: &App, area: Rect, full: bool) {
     // Dim the list's border when the quick-view panel has keyboard focus
     // (Tab), so it's clear which panel arrow keys currently affect.
     let list_focused = !(app.quick_view && app.list_focus == ListFocus::QuickView);
-    let border = if list_focused { ACCENT } else { MUTED };
-    let block = card_bordered(&title, ACCENT, border);
+    let border = if list_focused { accent() } else { muted() };
+    let block = card_bordered(&title, accent(), border);
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -65,10 +66,10 @@ pub(crate) fn draw_list(f: &mut Frame, app: &App, area: Rect, full: bool) {
 /// once loaded into the detail cache (loaded lazily by the app's event loop).
 pub(crate) fn draw_quick_view(f: &mut Frame, app: &App, area: Rect) {
     let focused = app.list_focus == ListFocus::QuickView;
-    let border = if focused { ACCENT2 } else { MUTED };
+    let border = if focused { accent2() } else { muted() };
 
     let Some(issue) = app.selected_issue() else {
-        let block = card_bordered("  quick view  ", ACCENT2, border);
+        let block = card_bordered("  quick view  ", accent2(), border);
         app.quick_view_area.set(block.inner(area));
         f.render_widget(block, area);
         return;
@@ -79,7 +80,7 @@ pub(crate) fn draw_quick_view(f: &mut Frame, app: &App, area: Rect) {
         " · tab to scroll "
     };
     let title = format!("  quick view · {}{hint} ", issue.key);
-    let block = card_bordered(&title, ACCENT2, border);
+    let block = card_bordered(&title, accent2(), border);
     let inner = block.inner(area);
     app.quick_view_area.set(inner);
     f.render_widget(block, area);
@@ -97,15 +98,15 @@ pub(crate) fn draw_quick_view(f: &mut Frame, app: &App, area: Rect) {
             Line::from(vec![
                 Span::styled(
                     format!("{} ", issue.key),
-                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                    Style::default().fg(accent()).add_modifier(Modifier::BOLD),
                 ),
-                chip(&issue.issue_type, ACCENT2),
+                chip(&issue.issue_type, type_colour(&issue.issue_type)),
                 Span::raw(" "),
                 chip(&issue.status, status_colour(&issue.status)),
                 Span::raw(" "),
                 chip(issue.priority.label(), priority_colour(&issue.priority)),
                 if issue.blocked {
-                    Span::styled("  ⛔ blocked", Style::default().fg(DANGER))
+                    Span::styled("  ⛔ blocked", Style::default().fg(danger()))
                 } else {
                     Span::raw("")
                 },
@@ -125,11 +126,11 @@ pub(crate) fn draw_quick_view(f: &mut Frame, app: &App, area: Rect) {
                         .unwrap_or_else(|| "unassigned".into()),
                     issue.updated
                 ),
-                Style::default().fg(MUTED),
+                Style::default().fg(muted()),
             )),
             Line::from(Span::styled(
                 "loading full detail…",
-                Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
+                Style::default().fg(muted()).add_modifier(Modifier::ITALIC),
             )),
         ]
     };
@@ -147,41 +148,59 @@ pub(crate) fn draw_quick_view(f: &mut Frame, app: &App, area: Rect) {
 /// nests a row under its parent in the tree view mode (see `app::tree`);
 /// pass 0 for the flat list.
 pub(crate) fn issue_row(issue: &IssueSummary, selected: bool, depth: usize) -> Line<'static> {
+    // One selection language shared with the board and every picker: a
+    // maple bar plus a low-alpha maple tint across the whole row — every
+    // span below runs through `selected_style` so the tint has no gaps.
     let cursor = if selected { "▌" } else { " " };
-    let cursor_style = if selected {
-        Style::default().fg(ACCENT2)
-    } else {
-        Style::default()
-    };
-    let key_style = if selected {
-        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(ACCENT)
-    };
-    let summary_style = if selected {
-        Style::default()
-            .fg(Color::White)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(Color::Gray)
-    };
+    let cursor_style = selected_style(
+        if selected {
+            Style::default().fg(maple())
+        } else {
+            Style::default()
+        },
+        selected,
+    );
+    let key_style = selected_style(
+        if selected {
+            Style::default().fg(accent()).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(accent())
+        },
+        selected,
+    );
+    let summary_style = selected_style(
+        if selected {
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Gray)
+        },
+        selected,
+    );
 
     let block_flag = if issue.blocked {
-        Span::styled(" ⛔", Style::default().fg(DANGER))
+        Span::styled(
+            " ⛔",
+            selected_style(Style::default().fg(danger()), selected),
+        )
     } else {
         Span::raw("")
     };
 
-    let updated_style = if selected {
-        Style::default().fg(Color::Gray)
-    } else {
-        Style::default().fg(MUTED)
-    };
+    let updated_style = selected_style(
+        if selected {
+            Style::default().fg(Color::Gray)
+        } else {
+            Style::default().fg(muted())
+        },
+        selected,
+    );
 
     let indent = if depth > 0 {
         Span::styled(
             format!("{}└ ", "  ".repeat(depth - 1)),
-            Style::default().fg(MUTED),
+            selected_style(Style::default().fg(muted()), selected),
         )
     } else {
         Span::raw("")
@@ -191,14 +210,14 @@ pub(crate) fn issue_row(issue: &IssueSummary, selected: bool, depth: usize) -> L
         Span::styled(cursor.to_string(), cursor_style),
         Span::styled(
             priority_glyph(&issue.priority),
-            priority_style(&issue.priority),
+            selected_style(priority_style(&issue.priority), selected),
         ),
-        Span::raw(" "),
+        Span::styled(" ", selected_style(Style::default(), selected)),
         indent,
         Span::styled(format!("{:<8}", issue.key), key_style),
         Span::styled(
             format!("{:<11}", status_short(&issue.status)),
-            status_style(&issue.status),
+            selected_style(status_style(&issue.status), selected),
         ),
         Span::styled(truncate(&issue.summary, 40), summary_style),
         block_flag,

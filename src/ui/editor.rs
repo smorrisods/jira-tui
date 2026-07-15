@@ -8,21 +8,21 @@ use ratatui::Frame;
 
 use crate::app::App;
 
-use super::{MUTED, WARN};
+use super::{muted, warn};
 
 pub(crate) fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
     let key = app.detail.as_ref().map(|d| d.key.as_str()).unwrap_or("");
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Double)
-        .border_style(Style::default().fg(WARN))
+        .border_style(Style::default().fg(warn()))
         .title(Span::styled(
             format!("  editing {key} · Markdown  "),
-            Style::default().fg(WARN).add_modifier(Modifier::BOLD),
+            Style::default().fg(warn()).add_modifier(Modifier::BOLD),
         ))
         .title_bottom(Span::styled(
             "  ^S preview · esc cancel  ",
-            Style::default().fg(MUTED),
+            Style::default().fg(muted()),
         ));
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -39,7 +39,7 @@ pub(crate) fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
     for (i, line) in ed.lines.iter().enumerate().skip(scroll).take(height) {
         lines.push(Line::from(vec![
-            Span::styled(format!("{:>3} ", i + 1), Style::default().fg(MUTED)),
+            Span::styled(format!("{:>3} ", i + 1), Style::default().fg(muted())),
             Span::raw(line.clone()),
         ]));
     }

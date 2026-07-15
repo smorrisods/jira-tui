@@ -9,7 +9,7 @@ use ratatui::Frame;
 
 use crate::app::App;
 
-use super::{ACCENT, ACCENT2, MUTED};
+use super::{accent, accent2, muted};
 
 const BANNER: [&str; 6] = [
     "     ██╗██╗██████╗  █████╗   ████████╗██╗   ██╗██╗",
@@ -31,10 +31,10 @@ pub(crate) fn draw_about(f: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Double)
-        .border_style(Style::default().fg(ACCENT2))
+        .border_style(Style::default().fg(accent2()))
         .title(Span::styled(
             "  about  ",
-            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent2()).add_modifier(Modifier::BOLD),
         ));
     let inner = block.inner(area);
     f.render_widget(Clear, area);
@@ -73,14 +73,14 @@ pub(crate) fn draw_about(f: &mut Frame, app: &App, area: Rect) {
     let tagline = TAGLINES[(app.tick / 24 % TAGLINES.len() as u64) as usize];
     lines.push(
         Line::from(vec![
-            Span::styled(format!("{spinner} "), Style::default().fg(ACCENT)),
+            Span::styled(format!("{spinner} "), Style::default().fg(accent())),
             Span::styled(
                 tagline.to_string(),
                 Style::default()
                     .fg(Color::White)
                     .add_modifier(Modifier::ITALIC),
             ),
-            Span::styled(format!(" {spinner}"), Style::default().fg(ACCENT)),
+            Span::styled(format!(" {spinner}"), Style::default().fg(accent())),
         ])
         .alignment(Alignment::Center),
     );
@@ -94,7 +94,7 @@ pub(crate) fn draw_about(f: &mut Frame, app: &App, area: Rect) {
     lines.push(
         Line::from(Span::styled(
             format!("v{}  ·  press esc to return", env!("CARGO_PKG_VERSION")),
-            Style::default().fg(MUTED),
+            Style::default().fg(muted()),
         ))
         .alignment(Alignment::Center),
     );
@@ -131,7 +131,7 @@ fn starfield(tick: u64, width: usize) -> Line<'static> {
             if c == ' ' {
                 Span::raw(" ")
             } else {
-                Span::styled(c.to_string(), Style::default().fg(ACCENT))
+                Span::styled(c.to_string(), Style::default().fg(accent()))
             }
         })
         .collect();

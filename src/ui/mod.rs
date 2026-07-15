@@ -8,6 +8,8 @@
 //! `truncate`, priority/status colouring, centred-rect math) that child
 //! modules use directly as private items of their parent.
 
+use std::sync::OnceLock;
+
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -51,12 +53,123 @@ use view_picker::draw_view_picker;
 use welcome::draw_welcome;
 
 // ── Theme ────────────────────────────────────────────────────────────────────
-pub(crate) const ACCENT: Color = Color::Cyan;
-pub(crate) const ACCENT2: Color = Color::Magenta;
-pub(crate) const MUTED: Color = Color::DarkGray;
-const OK: Color = Color::Green;
-const WARN: Color = Color::Yellow;
-pub(crate) const DANGER: Color = Color::Red;
+//
+// Terminal palettes are indexed colours in practice; the hex values below are
+// truecolor targets, each with a named-colour fallback for terminals that
+// can't do 24-bit colour. Detection defaults to truecolor-capable — most
+// modern terminals (including transparent-background ones like kitty/
+// alacritty/wezterm/iTerm2) support it even when `COLORTERM` is stripped by
+// tmux/ssh — and only opts out for terminals that explicitly say they can't.
+
+/// Pure so it's unit-testable without touching real process env vars or
+/// fighting the memoized `OnceLock` below (which, being process-global, can
+/// only be initialized once per test binary).
+fn detect_truecolor(colorterm: Option<&str>, term: Option<&str>) -> bool {
+    if matches!(colorterm, Some("truecolor") | Some("24bit")) {
+        return true;
+    }
+    // The Linux virtual console and `TERM=dumb` are the only terminals that
+    // reliably can't do 24-bit colour; everything else is assumed capable.
+    !matches!(term, Some("dumb") | Some("linux"))
+}
+
+static TRUECOLOR: OnceLock<bool> = OnceLock::new();
+
+fn truecolor_supported() -> bool {
+    *TRUECOLOR.get_or_init(|| {
+        detect_truecolor(
+            std::env::var("COLORTERM").ok().as_deref(),
+            std::env::var("TERM").ok().as_deref(),
+        )
+    })
+}
+
+fn theme_colour(rgb: (u8, u8, u8), fallback: Color) -> Color {
+    if truecolor_supported() {
+        Color::Rgb(rgb.0, rgb.1, rgb.2)
+    } else {
+        fallback
+    }
+}
+
+pub(crate) fn accent() -> Color {
+    theme_colour((0x62, 0xD8, 0xD3), Color::Cyan)
+}
+pub(crate) fn accent2() -> Color {
+    theme_colour((0xC7, 0x9B, 0xF0), Color::Magenta)
+}
+/// Selection bar/tint, focus, and Jax moments — nothing else.
+pub(crate) fn maple() -> Color {
+    theme_colour((0xE8, 0x83, 0x4A), Color::LightRed)
+}
+fn ok() -> Color {
+    theme_colour((0x8F, 0xCB, 0x7A), Color::Green)
+}
+fn warn() -> Color {
+    theme_colour((0xE3, 0xB5, 0x64), Color::Yellow)
+}
+pub(crate) fn danger() -> Color {
+    theme_colour((0xE5, 0x71, 0x6B), Color::Red)
+}
+pub(crate) fn muted() -> Color {
+    theme_colour((0x77, 0x83, 0x8F), Color::DarkGray)
+}
+// FAINT (tertiary text, tree guides, group labels) isn't added yet — nothing
+// in this phase uses it (tree guides are phase 4, footer group labels are
+// phase 2). Add it alongside whichever phase first needs it.
+/// Not part of the 8-token palette table — shared by the Task type chip and
+/// `priority_colour`'s Low/Lowest arm, the two places that want "a blue"
+/// without it being a named theme concept of its own.
+fn task_blue() -> Color {
+    theme_colour((0x6F, 0xB3, 0xE0), Color::Blue)
+}
+
+/// Alpha-blend an RGB theme colour toward the panel background (assumed
+/// black — no panel in this app sets an explicit background). Named ANSI
+/// colours pass through unchanged: terminals without truecolor have no alpha
+/// compositing available, so blending isn't meaningful there.
+fn blend(fg: Color, alpha: f32) -> Color {
+    match fg {
+        Color::Rgb(r, g, b) => Color::Rgb(
+            (r as f32 * alpha) as u8,
+            (g as f32 * alpha) as u8,
+            (b as f32 * alpha) as u8,
+        ),
+        other => other,
+    }
+}
+
+/// Pure so the truecolor-vs-fallback branch is unit-testable without
+/// depending on `maple()`'s env-gated, memoized result.
+fn selection_bg_for(maple: Color) -> Color {
+    match maple {
+        rgb @ Color::Rgb(..) => blend(rgb, 0.20),
+        _ => Color::DarkGray,
+    }
+}
+
+/// One selection language shared by the list, board, and pickers: a maple
+/// bar/border plus this low-alpha background tint on the selected row/card.
+/// On a truecolor terminal that's a genuine alpha blend; on a named-colour
+/// terminal `blend()` can't scale `maple()`'s fallback down, and painting a
+/// full-brightness accent colour behind the row's own text would be a loud,
+/// low-contrast mess rather than a subtle tint — so the fallback is a plain
+/// muted grey instead.
+pub(crate) fn selection_bg() -> Color {
+    selection_bg_for(maple())
+}
+
+/// Apply the shared selection background to `style` when `selected` — the
+/// single place every list row, board cell, and picker row should reach for
+/// this instead of re-deriving the same `if selected { .bg(...) }` branch,
+/// so the tint can never have gaps between spans.
+pub(crate) fn selected_style(style: Style, selected: bool) -> Style {
+    if selected {
+        style.bg(selection_bg())
+    } else {
+        style
+    }
+}
 
 pub fn draw(f: &mut Frame, app: &App) {
     let root = Layout::default()
@@ -159,12 +272,12 @@ fn draw_toast(f: &mut Frame, msg: &str, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(OK))
+        .border_style(Style::default().fg(ok()))
         .style(Style::default().bg(Color::Rgb(20, 40, 20)));
     f.render_widget(
         Paragraph::new(Line::from(Span::styled(
             msg.to_string(),
-            Style::default().fg(OK).add_modifier(Modifier::BOLD),
+            Style::default().fg(ok()).add_modifier(Modifier::BOLD),
         )))
         .alignment(Alignment::Center)
         .block(block),
@@ -184,24 +297,24 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         .unwrap_or_default();
 
     let left = Line::from(vec![
-        Span::styled(format!(" {spinner} "), Style::default().fg(ACCENT2)),
+        Span::styled(format!(" {spinner} "), Style::default().fg(accent2())),
         Span::styled(
             "jira",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent()).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             "-tui",
-            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent2()).add_modifier(Modifier::BOLD),
         ),
-        Span::styled("  ·  ", Style::default().fg(MUTED)),
-        Span::styled(app.source.label(), Style::default().fg(MUTED)),
+        Span::styled("  ·  ", Style::default().fg(muted())),
+        Span::styled(app.source.label(), Style::default().fg(muted())),
         Span::styled(
             if app.current_view != crate::domain::ViewKind::MyWork {
                 format!("  ·  viewing: {}", app.current_view.label())
             } else {
                 String::new()
             },
-            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent2()).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             if app.mouse.enabled {
@@ -209,7 +322,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
             } else {
                 ""
             },
-            Style::default().fg(OK),
+            Style::default().fg(ok()),
         ),
     ]);
     let right = Line::from(vec![
@@ -217,7 +330,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(format!("⎇ {branch}"), Style::default().fg(Color::Blue)),
         Span::styled(
             ctx_key,
-            Style::default().fg(WARN).add_modifier(Modifier::BOLD),
+            Style::default().fg(warn()).add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
     ])
@@ -226,7 +339,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(MUTED));
+        .border_style(Style::default().fg(muted()));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -294,7 +407,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(MUTED));
+        .border_style(Style::default().fg(muted()));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -304,13 +417,13 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         .split(inner);
 
     f.render_widget(
-        Paragraph::new(Line::from(Span::styled(keys, Style::default().fg(MUTED)))),
+        Paragraph::new(Line::from(Span::styled(keys, Style::default().fg(muted())))),
         cols[0],
     );
     f.render_widget(
         Paragraph::new(Line::from(Span::styled(
             format!("{}{} ", loading_prefix(app), app.status),
-            Style::default().fg(ACCENT),
+            Style::default().fg(accent()),
         )))
         .alignment(Alignment::Right),
         cols[1],
@@ -331,7 +444,7 @@ fn loading_prefix(app: &App) -> String {
 
 // ── Small helpers (visible to all child screen modules) ──────────────────────
 fn card(title: &str, colour: Color) -> Block<'static> {
-    card_bordered(title, colour, MUTED)
+    card_bordered(title, colour, muted())
 }
 
 fn card_bordered(title: &str, title_colour: Color, border_colour: Color) -> Block<'static> {
@@ -347,15 +460,19 @@ fn card_bordered(title: &str, title_colour: Color, border_colour: Color) -> Bloc
         ))
 }
 
+/// Coloured text on a tinted background (the colour at ~14% alpha over the
+/// panel background) on truecolor terminals; a solid block on named-colour
+/// terminals, where alpha compositing isn't available.
 pub(crate) fn chip(text: &str, colour: Color) -> Span<'static> {
-    Span::styled(
-        format!(" {text} "),
-        Style::default().fg(Color::Black).bg(colour),
-    )
+    let style = match colour {
+        Color::Rgb(..) => Style::default().fg(colour).bg(blend(colour, 0.14)),
+        _ => Style::default().fg(Color::Black).bg(colour),
+    };
+    Span::styled(format!(" {text} "), style)
 }
 
 pub(crate) fn divider() -> Line<'static> {
-    Line::from(Span::styled("─".repeat(52), Style::default().fg(MUTED)))
+    Line::from(Span::styled("─".repeat(52), Style::default().fg(muted())))
 }
 
 pub(crate) fn priority_glyph(p: &Priority) -> String {
@@ -368,9 +485,9 @@ pub(crate) fn priority_style(p: &Priority) -> Style {
 
 pub(crate) fn priority_colour(p: &Priority) -> Color {
     match p {
-        Priority::Highest | Priority::High => DANGER,
-        Priority::Medium => WARN,
-        Priority::Low | Priority::Lowest => Color::Blue,
+        Priority::Highest | Priority::High => danger(),
+        Priority::Medium => warn(),
+        Priority::Low | Priority::Lowest => task_blue(),
     }
 }
 
@@ -380,10 +497,27 @@ fn status_short(s: &str) -> String {
 
 pub(crate) fn status_colour(s: &str) -> Color {
     match s {
-        "Done" => OK,
-        "In Progress" | "In Review" => ACCENT,
-        "To Do" | "Backlog" => MUTED,
+        "Done" => ok(),
+        "In Progress" => accent(),
+        "In Review" => accent2(),
+        "To Do" | "Backlog" => muted(),
         _ => Color::White,
+    }
+}
+
+/// Type chip colour (SPEC.md §1): Bug/Story/Task each get a distinct
+/// colour; Epic and anything else fall back to the previous uniform
+/// `accent2()` (Epic is listed explicitly, matching the same value the
+/// wildcard already gives it, so the mapping stays legible on its own).
+pub(crate) fn type_colour(issue_type: &str) -> Color {
+    match issue_type {
+        "Bug" => danger(),
+        "Story" => ok(),
+        "Task" => task_blue(),
+        // Epic and anything else share this fallback intentionally — Epic
+        // isn't listed as its own arm because clippy (rightly) treats a
+        // wildcard-covered literal arm as redundant.
+        _ => accent2(),
     }
 }
 
@@ -405,4 +539,99 @@ fn centered_rect_h(width_pct: u16, height: u16, area: Rect) -> Rect {
     let w = area.width * width_pct / 100;
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     Rect::new(x, y, w, height.min(area.height))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detect_truecolor_trusts_an_explicit_colorterm() {
+        assert!(detect_truecolor(Some("truecolor"), Some("dumb")));
+        assert!(detect_truecolor(Some("24bit"), None));
+    }
+
+    #[test]
+    fn detect_truecolor_opts_out_only_for_known_limited_terminals() {
+        assert!(!detect_truecolor(None, Some("dumb")));
+        assert!(!detect_truecolor(None, Some("linux")));
+    }
+
+    /// The user asked for transparent-terminal setups (often truecolor-
+    /// capable but frequently missing `COLORTERM` under tmux/ssh) to get the
+    /// rich theme by default — including the common CI/dev case where
+    /// neither env var is set at all.
+    #[test]
+    fn detect_truecolor_defaults_on_for_everything_else() {
+        assert!(detect_truecolor(None, None));
+        assert!(detect_truecolor(None, Some("xterm-256color")));
+        assert!(detect_truecolor(Some("unknown"), Some("screen")));
+    }
+
+    #[test]
+    fn blend_scales_rgb_but_passes_named_colours_through() {
+        assert_eq!(
+            blend(Color::Rgb(100, 200, 40), 0.5),
+            Color::Rgb(50, 100, 20)
+        );
+        assert_eq!(blend(Color::Cyan, 0.5), Color::Cyan);
+    }
+
+    #[test]
+    fn chip_uses_a_tinted_background_for_rgb_but_solid_for_named_colours() {
+        let rgb_chip = chip("x", Color::Rgb(200, 100, 50));
+        assert_eq!(rgb_chip.style.fg, Some(Color::Rgb(200, 100, 50)));
+        assert_eq!(
+            rgb_chip.style.bg,
+            Some(blend(Color::Rgb(200, 100, 50), 0.14))
+        );
+
+        let named_chip = chip("x", Color::Cyan);
+        assert_eq!(named_chip.style.fg, Some(Color::Black));
+        assert_eq!(named_chip.style.bg, Some(Color::Cyan));
+    }
+
+    #[test]
+    fn status_colour_distinguishes_in_review_from_in_progress() {
+        assert_ne!(status_colour("In Review"), status_colour("In Progress"));
+        assert_eq!(status_colour("In Review"), accent2());
+        assert_eq!(status_colour("In Progress"), accent());
+    }
+
+    #[test]
+    fn type_colour_covers_each_known_type() {
+        assert_eq!(type_colour("Bug"), danger());
+        assert_eq!(type_colour("Story"), ok());
+        assert_eq!(type_colour("Task"), task_blue());
+        assert_eq!(type_colour("Epic"), accent2());
+        assert_eq!(type_colour("Something else"), accent2());
+    }
+
+    #[test]
+    fn priority_colour_low_and_lowest_are_theme_aware() {
+        // Regression test: this arm used to return the bare `Color::Blue`
+        // instead of a theme_colour()-backed function, so it never got the
+        // new alpha-tinted chip() treatment truecolor terminals give every
+        // other priority.
+        assert_eq!(priority_colour(&Priority::Low), task_blue());
+        assert_eq!(priority_colour(&Priority::Lowest), task_blue());
+    }
+
+    /// Regression test: `selection_bg()` used to pass `maple()`'s named
+    /// fallback straight through `blend()` unchanged, so a non-truecolor
+    /// terminal painted a full-brightness `Color::LightRed` background
+    /// behind every selected row instead of a subtle tint.
+    #[test]
+    fn selection_bg_for_falls_back_to_a_muted_grey_on_named_colours() {
+        assert_eq!(selection_bg_for(Color::LightRed), Color::DarkGray);
+        assert_eq!(selection_bg_for(Color::Cyan), Color::DarkGray);
+    }
+
+    #[test]
+    fn selection_bg_for_blends_rgb_maple() {
+        assert_eq!(
+            selection_bg_for(Color::Rgb(0xE8, 0x83, 0x4A)),
+            blend(Color::Rgb(0xE8, 0x83, 0x4A), 0.20)
+        );
+    }
 }

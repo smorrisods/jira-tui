@@ -9,7 +9,7 @@ use ratatui::Frame;
 use crate::app::{App, SearchRow};
 
 use super::list::issue_row;
-use super::{card, card_bordered, ACCENT, ACCENT2, MUTED, WARN};
+use super::{accent, accent2, card, card_bordered, maple, muted, selected_style, warn};
 
 pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
     let rows = Layout::default()
@@ -18,23 +18,23 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
         .split(area);
 
     // Query input line.
-    let input_block = card_bordered("  search / go to issue  ", ACCENT, ACCENT);
+    let input_block = card_bordered("  search / go to issue  ", accent(), accent());
     let input_inner = input_block.inner(rows[0]);
     f.render_widget(input_block, rows[0]);
     f.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
                 "› ",
-                Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+                Style::default().fg(accent2()).add_modifier(Modifier::BOLD),
             ),
             Span::styled(app.search.query.clone(), Style::default().fg(Color::White)),
-            Span::styled("▏", Style::default().fg(ACCENT)),
+            Span::styled("▏", Style::default().fg(accent())),
         ])),
         input_inner,
     );
 
     // Results.
-    let results_block = card("  results  ", ACCENT2);
+    let results_block = card("  results  ", accent2());
     let inner = results_block.inner(rows[1]);
     f.render_widget(results_block, rows[1]);
 
@@ -42,7 +42,7 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 "No matches. Type an issue key like DS-123 to jump to it directly.",
-                Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
+                Style::default().fg(muted()).add_modifier(Modifier::ITALIC),
             ))),
             inner,
         );
@@ -53,26 +53,35 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
     for (i, row) in app.search.rows.iter().enumerate() {
         let selected = i == app.search.selected;
         let cursor = if selected { "▌" } else { " " };
-        let cursor_style = if selected {
-            Style::default().fg(ACCENT2)
-        } else {
-            Style::default()
-        };
+        let cursor_style = selected_style(
+            if selected {
+                Style::default().fg(maple())
+            } else {
+                Style::default()
+            },
+            selected,
+        );
         match row {
             SearchRow::Goto(key) => {
                 lines.push(Line::from(vec![
                     Span::styled(cursor.to_string(), cursor_style),
                     Span::styled(
                         "↵ go to ",
-                        Style::default().fg(WARN).add_modifier(Modifier::BOLD),
+                        selected_style(
+                            Style::default().fg(warn()).add_modifier(Modifier::BOLD),
+                            selected,
+                        ),
                     ),
                     Span::styled(
                         key.clone(),
-                        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                        selected_style(
+                            Style::default().fg(accent()).add_modifier(Modifier::BOLD),
+                            selected,
+                        ),
                     ),
                     Span::styled(
                         "  (fetch directly, even if it's not in your list)",
-                        Style::default().fg(MUTED),
+                        selected_style(Style::default().fg(muted()), selected),
                     ),
                 ]));
             }

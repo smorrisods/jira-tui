@@ -9,7 +9,7 @@ use ratatui::Frame;
 
 use crate::app::App;
 
-use super::{centered_rect_h, ACCENT, ACCENT2, MUTED};
+use super::{accent, centered_rect_h, maple, muted, selected_style};
 
 pub(crate) fn draw_view_picker(f: &mut Frame, app: &App, area: Rect) {
     let options = &app.view_picker_options;
@@ -19,10 +19,10 @@ pub(crate) fn draw_view_picker(f: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Double)
-        .border_style(Style::default().fg(ACCENT))
+        .border_style(Style::default().fg(accent()))
         .title(Span::styled(
             "  switch view…  ",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent()).add_modifier(Modifier::BOLD),
         ));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
@@ -32,27 +32,36 @@ pub(crate) fn draw_view_picker(f: &mut Frame, app: &App, area: Rect) {
         let selected = i == app.view_picker_index;
         let is_current = *view == app.current_view;
         let cursor = if selected { "▌ " } else { "  " };
-        let mut style = if selected {
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::Gray)
-        };
+        let mut style = selected_style(
+            if selected {
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Gray)
+            },
+            selected,
+        );
         if is_current {
-            style = style.fg(ACCENT);
+            style = style.fg(accent());
         }
         let suffix = if is_current { "  (current)" } else { "" };
         lines.push(Line::from(vec![
-            Span::styled(cursor.to_string(), Style::default().fg(ACCENT2)),
+            Span::styled(
+                cursor.to_string(),
+                selected_style(Style::default().fg(maple()), selected),
+            ),
             Span::styled(view.label(), style),
-            Span::styled(suffix.to_string(), Style::default().fg(MUTED)),
+            Span::styled(
+                suffix.to_string(),
+                selected_style(Style::default().fg(muted()), selected),
+            ),
         ]));
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "⏎ switch · esc/← cancel",
-        Style::default().fg(MUTED),
+        Style::default().fg(muted()),
     )));
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
 }

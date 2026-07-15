@@ -10,17 +10,17 @@ use ratatui::Frame;
 use crate::adf;
 use crate::app::App;
 
-use super::{divider, MUTED, OK, WARN};
+use super::{divider, muted, ok, warn};
 
 pub(crate) fn draw_preview(f: &mut Frame, app: &App, area: Rect) {
     let key = app.detail.as_ref().map(|d| d.key.as_str()).unwrap_or("");
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Double)
-        .border_style(Style::default().fg(OK))
+        .border_style(Style::default().fg(ok()))
         .title(Span::styled(
             format!("  preview · {key}  "),
-            Style::default().fg(OK).add_modifier(Modifier::BOLD),
+            Style::default().fg(ok()).add_modifier(Modifier::BOLD),
         ));
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -28,11 +28,11 @@ pub(crate) fn draw_preview(f: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = vec![
         Line::from(Span::styled(
             "This is how your edited description will look in Jira (rendered from ADF).",
-            Style::default().fg(MUTED),
+            Style::default().fg(muted()),
         )),
         Line::from(Span::styled(
             "Press y/⏎ to apply, or esc to cancel.",
-            Style::default().fg(WARN).add_modifier(Modifier::BOLD),
+            Style::default().fg(warn()).add_modifier(Modifier::BOLD),
         )),
         divider(),
     ];

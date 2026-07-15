@@ -52,6 +52,7 @@ async fn main() -> Result<()> {
         app.onboarding.welcome_phase = app::WelcomePhase::Intro;
     }
     if cli.about {
+        app.about_return_screen = app.screen;
         app.screen = Screen::About;
     }
 
