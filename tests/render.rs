@@ -471,6 +471,54 @@ fn board_screen_highlights_selected_card() {
 }
 
 #[test]
+fn board_footer_does_not_advertise_the_unbound_t_key() {
+    // Regression test: an earlier draft of the footer's Board ACT group
+    // advertised `t transition`, but `t` isn't bound on Board at all (only
+    // within Detail) — pressing it there did nothing.
+    let mut app = demo_app();
+    app.open_board();
+    let text = render(&app);
+    assert!(
+        !text.contains("t transition"),
+        "Board's footer must not advertise a key that isn't bound there"
+    );
+}
+
+#[test]
+fn board_footer_shows_every_group_at_the_default_test_width() {
+    // Regression test: the Board footer's GO group (search/view) used to
+    // silently drop even at the standard 120-column test width because the
+    // group content (inflated by the unbound `t transition` hint above) was
+    // too wide for the footer's hint column.
+    let mut app = demo_app();
+    app.open_board();
+    let text = render(&app);
+    assert!(text.contains("NAV"), "NAV group should render");
+    assert!(text.contains("ACT"), "ACT group should render");
+    assert!(text.contains("GO"), "GO group should render");
+    assert!(text.contains("all keys"), "the pinned tail should render");
+}
+
+#[test]
+fn footer_status_truncates_with_an_ellipsis_instead_of_hard_clipping() {
+    // Regression test: the status column used to be rendered with no
+    // truncation at all, so a long message (a real live-Jira failure
+    // reason, for example) got hard-clipped mid-word by the Paragraph
+    // instead of ending in a visible "…".
+    let mut app = demo_app();
+    app.status =
+        "Jira unreachable (a very long and detailed error message that will not fit) — showing sample data".into();
+    let backend = TestBackend::new(60, 20);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(|f| ui::draw(f, &app)).unwrap();
+    let text = dump(terminal.backend().buffer());
+    assert!(
+        text.contains('…'),
+        "a status message too long for the column should end in an ellipsis"
+    );
+}
+
+#[test]
 fn help_overlay_shows_audited_keys() {
     // Regression test for the SPEC.md §10 keybinding audit: `g`, `l`,
     // PgUp/PgDn, and the board's vim keys were bound in `src/keys.rs` but

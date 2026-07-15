@@ -2,8 +2,8 @@
 //! `VIEW`, `ACT`, `GO`) followed by `key description` pairs, with a
 //! `? all keys` group always pinned last. The footer must never wrap to a
 //! second line — [`fit_footer_groups`] measures the rendered width and
-//! drops whole groups right-to-left (excluding the pinned last group) until
-//! it fits, so a narrow terminal loses whole groups instead of wrapping or
+//! drops whole groups right-to-left (excluding any pinned group) until it
+//! fits, so a narrow terminal loses whole groups instead of wrapping or
 //! truncating mid-hint.
 //!
 //! Per-screen content deliberately mirrors `docs/design/ui-refresh.html`'s
@@ -20,9 +20,10 @@ use crate::app::{App, EditTarget, ListFocus, Screen, WelcomePhase};
 
 use super::{accent, muted};
 
-pub(crate) struct FooterHint {
-    pub key: &'static str,
-    pub desc: String,
+#[derive(Clone)]
+struct FooterHint {
+    key: &'static str,
+    desc: String,
 }
 
 fn hint(key: &'static str, desc: impl Into<String>) -> FooterHint {
@@ -32,21 +33,41 @@ fn hint(key: &'static str, desc: impl Into<String>) -> FooterHint {
     }
 }
 
-pub(crate) struct FooterGroup {
-    /// `None` for the ungrouped, always-last `? all keys` survivor.
-    pub label: Option<&'static str>,
-    pub hints: Vec<FooterHint>,
+#[derive(Clone)]
+struct FooterGroup {
+    /// `None` for the ungrouped `? all keys`/single-line screens.
+    label: Option<&'static str>,
+    hints: Vec<FooterHint>,
+    /// Pinned groups are never dropped by [`fit_footer_groups`], regardless
+    /// of their position in the list — an explicit flag rather than an
+    /// "always last" positional convention, so a future caller that
+    /// assembles a screen's groups from several pieces can't accidentally
+    /// make the pinned group droppable by placing it somewhere else.
+    pinned: bool,
 }
 
 fn group(label: &'static str, hints: Vec<FooterHint>) -> FooterGroup {
     FooterGroup {
         label: Some(label),
         hints,
+        pinned: false,
     }
 }
 
+/// The always-visible trailing group (typically `? all keys`).
 fn tail(hints: Vec<FooterHint>) -> FooterGroup {
-    FooterGroup { label: None, hints }
+    FooterGroup {
+        label: None,
+        hints,
+        pinned: true,
+    }
+}
+
+/// A screen whose whole footer is just one pinned line — no grouping, so
+/// none of its hints are ever dropped even on a narrow terminal (matches
+/// every one of these screens' modal/single-purpose nature).
+fn single(hints: Vec<FooterHint>) -> Vec<FooterGroup> {
+    vec![tail(hints)]
 }
 
 /// Rendered width of one group: its label (if any) plus its `key desc`
@@ -72,39 +93,40 @@ fn total_width(groups: &[FooterGroup]) -> usize {
     sum + (groups.len() - 1) * 3
 }
 
-/// Drop whole groups right-to-left — excluding the pinned last group, which
-/// SPEC.md §2 requires survive regardless — until the rendered width fits
+/// Drop whole non-pinned groups right-to-left until the rendered width fits
 /// `available_width`. Pure logic per SPEC.md §13, unit-tested below.
-pub(crate) fn fit_footer_groups(
-    mut groups: Vec<FooterGroup>,
-    available_width: usize,
-) -> Vec<FooterGroup> {
-    while groups.len() > 1 && total_width(&groups) > available_width {
-        let drop_at = groups.len() - 2;
-        groups.remove(drop_at);
+fn fit_footer_groups(mut groups: Vec<FooterGroup>, available_width: usize) -> Vec<FooterGroup> {
+    while total_width(&groups) > available_width {
+        match groups.iter().rposition(|g| !g.pinned) {
+            Some(idx) => {
+                groups.remove(idx);
+            }
+            None => break, // nothing left that's droppable
+        }
     }
     groups
 }
 
-fn render_footer_groups(groups: &[FooterGroup]) -> Line<'static> {
+fn render_footer_groups(groups: Vec<FooterGroup>) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
-    for (gi, g) in groups.iter().enumerate() {
+    for (gi, g) in groups.into_iter().enumerate() {
         if gi > 0 {
             spans.push(Span::raw("   "));
         }
         if let Some(label) = g.label {
             spans.push(Span::styled(
-                format!("{label} "),
+                label,
                 Style::default().fg(muted()).add_modifier(Modifier::BOLD),
             ));
+            spans.push(Span::raw(" "));
         }
-        for (hi, h) in g.hints.iter().enumerate() {
+        for (hi, h) in g.hints.into_iter().enumerate() {
             if hi > 0 {
                 spans.push(Span::raw("  "));
             }
             spans.push(Span::styled(h.key, Style::default().fg(accent())));
             spans.push(Span::raw(" "));
-            spans.push(Span::styled(h.desc.clone(), Style::default().fg(muted())));
+            spans.push(Span::styled(h.desc, Style::default().fg(muted())));
         }
     }
     Line::from(spans)
@@ -115,19 +137,19 @@ fn render_footer_groups(groups: &[FooterGroup]) -> Line<'static> {
 fn footer_groups(app: &App) -> Vec<FooterGroup> {
     match app.screen {
         Screen::Welcome => match app.onboarding.welcome_phase {
-            WelcomePhase::Intro => vec![tail(vec![
+            WelcomePhase::Intro => single(vec![
                 hint("s", "connect"),
                 hint("d", "demo"),
                 hint("w", "write config"),
                 hint("?", "help"),
                 hint("q", "quit"),
-            ])],
-            WelcomePhase::Setup => vec![tail(vec![
+            ]),
+            WelcomePhase::Setup => single(vec![
                 hint("type", "to edit"),
                 hint("tab", "next"),
                 hint("⏎", "verify & save"),
                 hint("esc", "back"),
-            ])],
+            ]),
         },
         Screen::Detail => {
             let history_hints = match (app.can_go_back(), app.can_go_forward()) {
@@ -162,35 +184,35 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
                 EditTarget::Description => "apply to Jira",
                 EditTarget::Comment => "post comment",
             };
-            vec![tail(vec![
+            single(vec![
                 hint("y/⏎", apply),
                 hint("esc/←", "cancel"),
                 hint("↑/↓", "scroll"),
-            ])]
+            ])
         }
         Screen::Edit => {
             let compose = match app.edit_target {
                 EditTarget::Description => "to edit",
                 EditTarget::Comment => "your comment",
             };
-            vec![tail(vec![
+            single(vec![
+                hint("type", compose),
                 hint("^S", "preview"),
                 hint("esc", "cancel"),
-                hint("type", compose),
-            ])]
+            ])
         }
-        Screen::Search => vec![tail(vec![
+        Screen::Search => single(vec![
             hint("type", "to filter"),
             hint("↑/↓", "move"),
             hint("⏎", "open"),
             hint("esc", "cancel"),
-        ])],
-        Screen::FieldMapping => vec![tail(vec![
+        ]),
+        Screen::FieldMapping => single(vec![
             hint("type", "to search fields"),
             hint("↑/↓", "move"),
             hint("⏎", "map"),
             hint("esc", "cancel"),
-        ])],
+        ]),
         Screen::Board => vec![
             group(
                 "NAV",
@@ -200,15 +222,19 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
                     hint("pg↕", "lane"),
                 ],
             ),
-            group("ACT", vec![hint("⏎", "open"), hint("t", "transition")]),
+            // `t` isn't bound on Board (only within Detail) — SPEC.md §7's
+            // "open the transition picker from a card" is a proposed
+            // addition for a later phase, not implemented yet, so it's not
+            // advertised here.
+            group("ACT", vec![hint("⏎", "open")]),
             group("GO", vec![hint("/", "search"), hint("V", "view")]),
             tail(vec![hint("esc/q", "back"), hint("?", "all keys")]),
         ],
-        Screen::About => vec![tail(vec![
+        Screen::About => single(vec![
             hint("esc/←", "back"),
             hint("?", "help"),
             hint("q", "quit"),
-        ])],
+        ]),
         Screen::Home | Screen::List if app.quick_view => {
             let refresh = if app.list_focus == ListFocus::QuickView {
                 "refresh focused issue"
@@ -229,9 +255,6 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
                     vec![
                         hint("A", "assign"),
                         hint("c", "comment"),
-                        hint("]/[", "comments/top"),
-                        hint("n/p", "prev/next comment"),
-                        hint("{/}", "cycle links"),
                         hint("r", refresh),
                     ],
                 ),
@@ -252,7 +275,7 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
 
 pub(crate) fn footer_line(app: &App, available_width: usize) -> Line<'static> {
     let groups = fit_footer_groups(footer_groups(app), available_width);
-    render_footer_groups(&groups)
+    render_footer_groups(groups)
 }
 
 #[cfg(test)]
@@ -260,9 +283,10 @@ mod tests {
     use super::*;
 
     fn g(label: Option<&'static str>, hints: Vec<(&'static str, &'static str)>) -> FooterGroup {
-        FooterGroup {
-            label,
-            hints: hints.into_iter().map(|(k, d)| hint(k, d)).collect(),
+        let hints = hints.into_iter().map(|(k, d)| hint(k, d)).collect();
+        match label {
+            Some(l) => group(l, hints),
+            None => tail(hints),
         }
     }
 
@@ -278,7 +302,7 @@ mod tests {
     }
 
     #[test]
-    fn fit_drops_groups_right_to_left_but_never_the_last_one() {
+    fn fit_drops_groups_right_to_left_but_never_a_pinned_one() {
         let groups = vec![
             g(Some("NAV"), vec![("↑", "move")]),
             g(Some("VIEW"), vec![("v", "quick")]),
@@ -297,10 +321,25 @@ mod tests {
     }
 
     #[test]
-    fn fit_keeps_the_last_group_even_when_nothing_fits() {
+    fn fit_keeps_a_pinned_group_even_when_nothing_fits() {
         let groups = vec![
             g(Some("NAV"), vec![("↑", "move")]),
             g(None, vec![("?", "all keys")]),
+        ];
+        let fitted = fit_footer_groups(groups, 0);
+        assert_eq!(fitted.len(), 1);
+        assert_eq!(fitted[0].label, None);
+    }
+
+    /// The pinned invariant is a `pinned: bool` field, not "whichever group
+    /// happens to be last" — regression test that a pinned group placed
+    /// anywhere in the list still survives.
+    #[test]
+    fn fit_keeps_a_pinned_group_regardless_of_its_position() {
+        let groups = vec![
+            g(None, vec![("?", "all keys")]),
+            g(Some("NAV"), vec![("↑", "move")]),
+            g(Some("GO"), vec![("b", "board")]),
         ];
         let fitted = fit_footer_groups(groups, 0);
         assert_eq!(fitted.len(), 1);
@@ -316,15 +355,7 @@ mod tests {
             g(None, vec![("?", "all keys")]),
         ];
         for budget in [0usize, 5, 10, 20, 40, 200] {
-            let fitted = fit_footer_groups(
-                vec![
-                    g(Some("NAV"), vec![("↑", "move"), ("↓", "down")]),
-                    g(Some("VIEW"), vec![("v", "quick")]),
-                    g(Some("ACT"), vec![("t", "transition")]),
-                    g(None, vec![("?", "all keys")]),
-                ],
-                budget,
-            );
+            let fitted = fit_footer_groups(groups.clone(), budget);
             assert!(
                 total_width(&fitted) <= total_width(&groups),
                 "fitted width should never exceed the unclipped width (budget={budget})"

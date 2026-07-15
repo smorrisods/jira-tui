@@ -373,9 +373,17 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         Paragraph::new(footer_line(app, cols[0].width as usize)),
         cols[0],
     );
+    let prefix = loading_prefix(app);
+    // Truncate with an ellipsis rather than letting the Paragraph hard-clip
+    // mid-word — the status column can carry real error text (e.g. a live
+    // Jira failure reason) that's worth keeping legible even when narrow.
+    let budget = (cols[1].width as usize)
+        .saturating_sub(prefix.chars().count())
+        .saturating_sub(1); // trailing space
+    let status = truncate(&app.status, budget);
     f.render_widget(
         Paragraph::new(Line::from(Span::styled(
-            format!("{}{} ", loading_prefix(app), app.status),
+            format!("{prefix}{status} "),
             Style::default().fg(accent()),
         )))
         .alignment(Alignment::Right),
