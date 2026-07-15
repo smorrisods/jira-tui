@@ -125,6 +125,23 @@ pub fn issue_detail_lines(detail: &IssueDetail) -> IssueLines {
             ),
         ]));
     }
+    for child in &detail.children {
+        // Jira has no single "children" field — an Epic's child stories and
+        // a Story/Task's sub-tasks are both just "child" here (see the
+        // `parent` comment above for the matching asymmetry).
+        lines.push(Line::from(vec![
+            Span::styled("child ", Style::default().fg(ACCENT2)),
+            Span::styled(child.key.clone(), Style::default().fg(ACCENT)),
+            Span::raw(" "),
+            chip(&child.issue_type, ACCENT2),
+            Span::raw(" "),
+            chip(&child.status, status_colour(&child.status)),
+            Span::styled(
+                format!(" · {}", truncate(&child.summary, 40)),
+                Style::default().fg(MUTED),
+            ),
+        ]));
+    }
     lines.push(divider());
 
     // Description (ADF)

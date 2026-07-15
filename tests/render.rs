@@ -60,6 +60,19 @@ fn detail_screen_renders_adf() {
 }
 
 #[test]
+fn detail_screen_shows_an_epics_children() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.open_by_key("DS-2722");
+    assert_eq!(app.screen, Screen::Detail);
+    let text = render(&app);
+    assert!(
+        text.contains("child DS-2725") && text.contains("Develop"),
+        "an Epic's detail view should list its child issue and type"
+    );
+}
+
+#[test]
 fn detail_screen_shows_comment_indicator_and_jumps_to_comments() {
     let mut app = demo_app();
     app.screen = Screen::Home;

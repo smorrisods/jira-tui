@@ -168,6 +168,7 @@ impl JiraMcpServer {
                     "labels": detail.labels,
                     "components": detail.components,
                     "parent": detail.parent,
+                    "children": detail.children,
                     "description_markdown": description_markdown,
                     "transitions": detail.transitions,
                 }))
@@ -186,6 +187,7 @@ impl JiraMcpServer {
                     "labels": detail.labels,
                     "components": detail.components,
                     "parent": detail.parent,
+                    "children": detail.children,
                     "description_markdown": description_markdown,
                     "transitions": detail.transitions,
                     "note": "demo data — no Jira credentials configured",
