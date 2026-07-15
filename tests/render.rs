@@ -520,3 +520,50 @@ fn help_overlay_key_column_has_a_separator_for_long_keys() {
         "the board vim-key row must not glue into its description"
     );
 }
+
+#[test]
+fn footer_shows_grouped_hints_on_a_wide_terminal() {
+    // SPEC.md §2: footer hints are grouped under a faint uppercase label
+    // (NAV/VIEW/ACT/GO). At a comfortably wide terminal every group for
+    // Home should render.
+    let backend = TestBackend::new(120, 34);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let app = demo_app();
+    terminal.draw(|f| ui::draw(f, &app)).unwrap();
+    let text = dump(terminal.backend().buffer());
+    assert!(text.contains("NAV"), "the NAV group should render");
+    assert!(text.contains("VIEW"), "the VIEW group should render");
+    assert!(text.contains("GO"), "the GO group should render");
+    assert!(text.contains("all keys"), "the pinned tail should render");
+}
+
+#[test]
+fn footer_never_wraps_and_keeps_all_keys_visible_on_a_narrow_terminal() {
+    // SPEC.md §2's no-wrap rule: whole groups drop right-to-left as the
+    // terminal narrows, but `? all keys` — the pinned last group — must
+    // always survive, even when nothing else fits.
+    let backend = TestBackend::new(40, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let app = demo_app();
+    terminal.draw(|f| ui::draw(f, &app)).unwrap();
+    let text = dump(terminal.backend().buffer());
+    assert!(
+        text.contains("all keys"),
+        "the pinned `? all keys` group must survive even on a very narrow terminal"
+    );
+}
+
+#[test]
+fn footer_renders_at_the_84x46_reference_size() {
+    // SPEC.md §13: exercise breakpoints at both reference sizes.
+    let backend = TestBackend::new(84, 46);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut app = demo_app();
+    app.open_board();
+    terminal.draw(|f| ui::draw(f, &app)).unwrap();
+    let text = dump(terminal.backend().buffer());
+    assert!(
+        text.contains("all keys"),
+        "the board footer's pinned tail should render at the 84-col reference size"
+    );
+}
