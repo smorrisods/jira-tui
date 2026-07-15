@@ -172,8 +172,7 @@ impl App {
         self.onboarding_pending = false;
         match source {
             Source::Live { .. } => {
-                self.all_issues = issues;
-                self.source = source;
+                self.record_synced(issues, source);
                 self.status = status;
                 self.recompute_view();
                 crate::config::mark_onboarded();

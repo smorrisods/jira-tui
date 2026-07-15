@@ -123,8 +123,7 @@ impl App {
         let force_demo = matches!(self.source, Source::Demo);
         if force_demo {
             let (issues, source, status) = load_issues_for(&view, force_demo);
-            self.all_issues = issues;
-            self.source = source;
+            self.record_synced(issues, source);
             let label = view.label();
             self.current_view = view;
             self.status = format!("↻ {status}");
