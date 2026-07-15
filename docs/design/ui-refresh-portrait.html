@@ -197,8 +197,9 @@
   }
   .sync .led { width: 0.5em; height: 0.5em; border-radius: 50%; background: var(--t-fern); }
 
-  .tfoot { font-size: 0.7rem; color: var(--t-muted); }
-  .hints { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center; }
+  /* footers never wrap: hint groups drop right-to-left instead (see notes) */
+  .tfoot { font-size: 0.7rem; color: var(--t-muted); flex-wrap: nowrap; }
+  .hints { display: flex; flex-wrap: nowrap; gap: 0.5rem 1rem; align-items: center; overflow: hidden; }
   .hg { display: inline-flex; align-items: center; gap: 0.4em; white-space: nowrap; }
   .hg .gl {
     color: var(--t-faint); text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.6rem;
@@ -263,7 +264,7 @@
   .lst { display: flex; flex-direction: column; }
   .lst-head {
     display: grid;
-    grid-template-columns: 1rem 4.6rem 1fr 6rem 3rem;
+    grid-template-columns: 1rem 5.8rem 1fr 6rem 3rem;
     gap: 0.55rem;
     color: var(--t-faint); font-size: 0.62rem;
     text-transform: uppercase; letter-spacing: 0.1em;
@@ -272,7 +273,7 @@
   }
   .lrow {
     display: grid;
-    grid-template-columns: 1rem 4.6rem 1fr 6rem 3rem;
+    grid-template-columns: 1rem 5.8rem 1fr 6rem 3rem;
     gap: 0.55rem; align-items: center;
     padding: 0.16rem 0.5rem;
     border-radius: 5px; color: var(--t-muted);
@@ -460,6 +461,7 @@
     display: none;
   }
   #jaxpop.open { display: block; }
+  .term.no-jax #jaxpop { display: none; }
   #jaxpop .jtitle {
     position: absolute; top: -0.72em; left: 0.6rem;
     background: var(--t-panel);
@@ -590,7 +592,7 @@
         </div>
 
         <div class="panel focused" style="flex:1">
-          <span class="panel-title">my work <span class="cnt">· updated ↓ · 6</span></span>
+          <span class="panel-title">◂ my work ▸ <span class="cnt">· updated ↓ · 6</span></span>
           <div class="lst">
             <div class="lst-head"><span></span><span>key</span><span>summary</span><span>status</span><span>upd</span></div>
             <div class="lrow sel"><span class="pr pr-med">▪</span><span class="key">DS-129</span><span class="sum">Round-trip edit drops nested bullet lists</span><span><span class="chip c-review">In Review</span></span><span class="upd">12m</span></div>
@@ -607,7 +609,7 @@
         <footer class="tfoot">
           <div class="hints">
             <span class="hg"><span class="gl">nav</span><kbd>↑↓</kbd> move <kbd>⏎</kbd> open</span>
-            <span class="hg"><span class="gl">go</span><kbd>b</kbd> board <kbd>/</kbd> search</span>
+            <span class="hg"><span class="gl">go</span><kbd>‹›</kbd> flip <kbd>b</kbd> board <kbd>/</kbd> search</span>
             <span class="hg"><kbd>?</kbd> all keys</span>
           </div>
           <span class="jaxmini" role="button" tabindex="0" aria-label="Jax — click to open"><span class="jm-face">●‿●</span> jax <span class="jm-scene">👋</span></span>
@@ -625,12 +627,13 @@
         </header>
 
         <div class="panel focused">
-          <span class="panel-title">my work <span class="cnt">· priority ↓ · bugs · 3 of 6</span></span>
+          <span class="panel-title">◂ my work ▸ <span class="cnt">· tree · priority ↓ · bugs · 4 of 6</span></span>
           <div class="lst">
             <div class="lst-head"><span></span><span>key</span><span>summary</span><span>status</span><span>upd</span></div>
             <div class="lrow"><span class="pr pr-highest">⏫</span><span class="key">DS-137</span><span class="sum">Board lanes collapse on narrow terminals <span class="flag">⛔</span></span><span><span class="chip c-todo">To Do</span></span><span class="upd">3h</span></div>
-            <div class="lrow sel"><span class="pr pr-med">▪</span><span class="key">DS-129</span><span class="sum">Round-trip edit drops nested bullet lists</span><span><span class="chip c-review">In Review</span></span><span class="upd">12m</span></div>
-            <div class="lrow"><span class="pr pr-med"><span class="tree">└</span></span><span class="key">DS-131</span><span class="sum">Add regression fixture for 3-level lists</span><span><span class="chip c-done">Done</span></span><span class="upd">2d</span></div>
+            <div class="lrow"><span class="pr pr-high">🔺</span><span class="key"><span class="tree">▾ </span>DS-90</span><span class="sum">ADF editor round-trip</span><span><span class="chip c-prog">In Progress</span></span><span class="upd">1d</span></div>
+            <div class="lrow sel"><span class="pr pr-med">▪</span><span class="key"><span class="tree">├─ </span>DS-129</span><span class="sum">Round-trip edit drops nested bullet lists</span><span><span class="chip c-review">In Review</span></span><span class="upd">12m</span></div>
+            <div class="lrow"><span class="pr pr-med"><span class="tree">│</span></span><span class="key"><span class="tree">└─ </span>DS-131</span><span class="sum">Add regression fixture for 3-level lists</span><span><span class="chip c-done">Done</span></span><span class="upd">2d</span></div>
           </div>
         </div>
 
@@ -657,8 +660,8 @@
 
         <footer class="tfoot">
           <div class="hints">
-            <span class="hg"><span class="gl">nav</span><kbd>↑↓</kbd> move <kbd>⏎</kbd> open <kbd>tab</kbd> panel</span>
-            <span class="hg"><span class="gl">view</span><kbd>f</kbd> bugs ✕ <kbd>v</kbd> close</span>
+            <span class="hg"><span class="gl">nav</span><kbd>↑↓</kbd> move <kbd>⏎</kbd> open</span>
+            <span class="hg"><span class="gl">view</span><kbd>‹›</kbd> flip <kbd>f</kbd> bugs ✕</span>
             <span class="hg"><kbd>?</kbd> all keys</span>
           </div>
           <span class="hgroup"><span class="jaxmini" role="button" tabindex="0" aria-label="Jax — click to open"><span class="jm-face">●‿●</span> jax <span class="jm-scene">👋</span></span><span class="status">row 2 of 3</span></span>
@@ -864,7 +867,7 @@
       <div class="nc"><h4>Context: one line, not a card stack</h4><p>Repo, branch, and linked issue read fine as a single wrapped strip. The 32-column side rail only earns its width when the terminal has width to spare.</p></div>
       <div class="nc"><h4>Glance stats: 4 tiles in a row</h4><p>The stat list becomes four compact tiles with the same proportion bars. Same data, one text row taller than a plain line each.</p></div>
       <div class="nc"><h4>Two-line rows for the selected issue</h4><p>Narrow lists drop the type and assignee columns; the <em>selected</em> row grows a second line carrying exactly what was dropped (type chip, assignee, parent). Detail on demand, no horizontal squeeze.</p></div>
-      <div class="nc"><h4>Mini-Jax perches in every footer</h4><p>A floating companion would cover real content at this width, so Jax docks as <code>●‿● jax 👋</code> in the footer of every screen (Welcome keeps the big Jax). He cycles his scenes right there in miniature; click him — he pops out, parties, and tucks back in. Happiness preserved at all breakpoints.</p></div>
+      <div class="nc"><h4>Mini-Jax perches in every footer</h4><p>A floating companion would cover real content at this width, so Jax docks as <code>●‿● jax 👋</code> in the footer of every screen (Welcome keeps the big Jax). He cycles his scenes right there in miniature; click him and he pops out, parties, and stays out — keeping you company through screen switches — until you click him again. Happiness preserved at all breakpoints.</p></div>
     </div>
 
     <div class="note" data-s="list">
@@ -872,6 +875,8 @@
       <div class="nc"><h4>Column drop order is a rule, not a scramble</h4><p>As width shrinks the list sheds columns in a fixed order: assignee → type → updated. Key, status chip, and summary are load-bearing and never drop. The header row shows only what's present.</p></div>
       <div class="nc"><h4>Quick view: meta goes inline</h4><p>The side-by-side description/meta split becomes chips row → inline key-value pairs → description. Same fields, read top to bottom.</p></div>
       <div class="nc"><h4>Filter stays visible</h4><p><code>bugs</code> still lives in the crumb and the footer still offers <code>f bugs ✕</code> — visible state survives narrowing before convenience keys do.</p></div>
+      <div class="nc"><h4>Box guides survive narrowing</h4><p>Parent ↔ child guides (<code>▾</code>, <code>├─</code>, <code>└─</code>, <code>│</code>) live in the key column, which never drops — so hierarchy stays legible at every width.</p></div>
+      <div class="nc"><h4>Flippable views, one-row footers</h4><p><code>◂ my work ▸</code> in the panel title plus <code>‹</code>/<code>›</code> cycles My Work → All Project Issues → each teammate; <code>V</code> still opens the picker. And footers never wrap: hint groups drop right-to-left, <code>? all keys</code> is the last survivor.</p></div>
     </div>
 
     <div class="note" data-s="detail">
@@ -912,7 +917,6 @@
       screens.forEach(function (s) { s.classList.toggle('active', s.id === 's-' + name); });
       notes.forEach(function (n) { n.classList.toggle('active', n.dataset.s === name); });
       term.classList.toggle('no-jax', name === 'welcome');
-      pop.classList.remove('open');
     }
     tabs.forEach(function (t) {
       t.addEventListener('click', function () { show(t.dataset.s); });
@@ -967,10 +971,14 @@
     }
 
     function pet() {
+      // toggle: Jax stays out until dismissed, like the real J companion
+      if (pop.classList.contains('open')) {
+        pop.classList.remove('open');
+        return;
+      }
       pop.classList.add('open');
       scene = 4; frame = 0; render();
       mood.textContent = 'mood: ❤ best day ever';
-      setTimeout(function () { pop.classList.remove('open'); }, 4000);
     }
     minis.forEach(function (m) {
       m.addEventListener('click', pet);

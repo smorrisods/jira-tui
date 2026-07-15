@@ -195,8 +195,9 @@
   }
   .sync .led { width: 0.5em; height: 0.5em; border-radius: 50%; background: var(--t-fern); }
 
-  .tfoot { font-size: 0.72rem; color: var(--t-muted); }
-  .hints { display: flex; flex-wrap: wrap; gap: 1.1rem; align-items: center; }
+  /* footers never wrap: hint groups drop right-to-left instead (see notes) */
+  .tfoot { font-size: 0.72rem; color: var(--t-muted); flex-wrap: nowrap; }
+  .hints { display: flex; flex-wrap: nowrap; gap: 1.1rem; align-items: center; overflow: hidden; }
   .hg { display: inline-flex; align-items: center; gap: 0.45em; white-space: nowrap; }
   .hg .gl {
     color: var(--t-faint); text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.62rem;
@@ -262,7 +263,7 @@
   .lst { display: flex; flex-direction: column; }
   .lst-head, .lrow {
     display: grid;
-    grid-template-columns: 1.1rem 5rem 4.6rem 6.6rem 1fr 7.5rem 5.5rem;
+    grid-template-columns: 1.1rem 6.4rem 4.6rem 6.6rem 1fr 7.5rem 5.5rem;
     gap: 0.7rem; align-items: center;
     padding: 0.18rem 0.5rem;
   }
@@ -589,7 +590,7 @@
           </div>
 
           <div class="panel focused">
-            <span class="panel-title">my work <span class="cnt">· updated ↓ · 6</span></span>
+            <span class="panel-title">◂ my work ▸ <span class="cnt">· updated ↓ · 6</span></span>
             <div class="lst">
               <div class="lst-head"><span></span><span>key</span><span>type</span><span>status</span><span>summary</span><span>assignee</span><span>updated</span></div>
               <div class="lrow sel"><span class="pr pr-med">▪</span><span class="key">DS-129</span><span class="chip c-bug">Bug</span><span class="chip c-review">In Review</span><span class="sum">Round-trip edit drops nested bullet lists</span><span class="who"><span class="av me">SM</span>me</span><span class="upd">12m</span></div>
@@ -605,8 +606,8 @@
         <footer class="tfoot">
           <div class="hints">
             <span class="hg"><span class="gl">nav</span><kbd>↑↓</kbd> move <kbd>⏎</kbd> open</span>
-            <span class="hg"><span class="gl">view</span><kbd>v</kbd> quick <kbd>s</kbd> sort <kbd>f</kbd> filter <kbd>T</kbd> tree</span>
-            <span class="hg"><span class="gl">go</span><kbd>b</kbd> board <kbd>/</kbd> search <kbd>V</kbd> view</span>
+            <span class="hg"><span class="gl">view</span><kbd>‹›</kbd> flip <kbd>v</kbd> quick <kbd>s</kbd> sort <kbd>f</kbd> filter</span>
+            <span class="hg"><span class="gl">go</span><kbd>b</kbd> board <kbd>/</kbd> search</span>
             <span class="hg"><kbd>?</kbd> all keys</span>
           </div>
           <span class="status">6 issues · demo data</span>
@@ -627,12 +628,13 @@
         </header>
 
         <div class="panel focused" style="flex:1">
-          <span class="panel-title">my work <span class="cnt">· priority ↓ · bugs · 3 of 6</span></span>
+          <span class="panel-title">◂ my work ▸ <span class="cnt">· tree · priority ↓ · bugs · 4 of 6</span></span>
           <div class="lst">
             <div class="lst-head"><span></span><span>key</span><span>type</span><span>status</span><span>summary</span><span>assignee</span><span>updated</span></div>
             <div class="lrow"><span class="pr pr-highest">⏫</span><span class="key">DS-137</span><span class="chip c-bug">Bug</span><span class="chip c-todo">To Do</span><span class="sum">Board lanes collapse on narrow terminals</span><span class="who"><span class="av me">SM</span>me</span><span class="upd">3h <span class="flag">⛔</span></span></div>
-            <div class="lrow sel"><span class="pr pr-med">▪</span><span class="key">DS-129</span><span class="chip c-bug">Bug</span><span class="chip c-review">In Review</span><span class="sum">Round-trip edit drops nested bullet lists</span><span class="who"><span class="av me">SM</span>me</span><span class="upd">12m</span></div>
-            <div class="lrow"><span class="pr pr-med"><span class="tree">└</span></span><span class="key">DS-131</span><span class="chip c-task">Task</span><span class="chip c-done">Done</span><span class="sum">Add regression fixture for 3-level lists</span><span class="who"><span class="av">PT</span>Priya</span><span class="upd">2d</span></div>
+            <div class="lrow"><span class="pr pr-high">🔺</span><span class="key"><span class="tree">▾ </span>DS-90</span><span class="chip c-story">Story</span><span class="chip c-prog">In Progress</span><span class="sum">ADF editor round-trip</span><span class="who"><span class="av me">SM</span>me</span><span class="upd">1d</span></div>
+            <div class="lrow sel"><span class="pr pr-med">▪</span><span class="key"><span class="tree">├─ </span>DS-129</span><span class="chip c-bug">Bug</span><span class="chip c-review">In Review</span><span class="sum">Round-trip edit drops nested bullet lists</span><span class="who"><span class="av me">SM</span>me</span><span class="upd">12m</span></div>
+            <div class="lrow"><span class="pr pr-med"><span class="tree">│</span></span><span class="key"><span class="tree">└─ </span>DS-131</span><span class="chip c-task">Task</span><span class="chip c-done">Done</span><span class="sum">Add regression fixture for 3-level lists</span><span class="who"><span class="av">PT</span>Priya</span><span class="upd">2d</span></div>
           </div>
         </div>
 
@@ -660,11 +662,10 @@
         <footer class="tfoot">
           <div class="hints">
             <span class="hg"><span class="gl">nav</span><kbd>↑↓</kbd> move <kbd>⏎</kbd> open <kbd>tab</kbd> focus panel</span>
-            <span class="hg"><span class="gl">view</span><kbd>v</kbd> close quick <kbd>f</kbd> filter: bugs ✕</span>
-            <span class="hg"><span class="gl">act</span><kbd>t</kbd> transition <kbd>y</kbd> copy key</span>
+            <span class="hg"><span class="gl">view</span><kbd>‹›</kbd> flip view <kbd>f</kbd> bugs ✕ <kbd>T</kbd> tree ✓</span>
             <span class="hg"><kbd>?</kbd> all keys</span>
           </div>
-          <span class="status">row 2 of 3</span>
+          <span class="status">row 3 of 4</span>
         </footer>
       </section>
 
@@ -755,7 +756,6 @@
           <div class="hints">
             <span class="hg"><span class="gl">act</span><kbd>t</kbd> transition <kbd>e</kbd> edit <kbd>c</kbd> comment <kbd>A</kbd> assign</span>
             <span class="hg"><span class="gl">nav</span><kbd>↑↓</kbd> scroll <kbd>n/p</kbd> comments <kbd>{}</kbd> links <kbd>←→</kbd> history</span>
-            <span class="hg"><span class="gl">copy</span><kbd>y</kbd> key <kbd>Y</kbd> url</span>
             <span class="hg"><kbd>?</kbd> all keys</span>
           </div>
           <span class="status">DS-129 · loaded from live</span>
@@ -926,7 +926,10 @@
         <div class="nc"><h4>Real columns with headers</h4><p>Key, type, status, summary, assignee, updated become aligned columns with a one-line header. Status moves from coloured text to a tinted chip — same semantic colours, far easier to scan down.</p></div>
         <div class="nc"><h4>Maple selection bar</h4><p>Selection changes from a magenta <code>▌</code> glyph to a maple left bar + tint across the whole row — the row reads as selected even in peripheral vision, and magenta stays free for panel identity.</p></div>
         <div class="nc"><h4>Quick view grows a meta column</h4><p>Instead of re-rendering the full detail into a half-height pane, quick view splits: description excerpt left, compact field grid right. Full detail remains one ⏎ away.</p></div>
-        <div class="nc"><h4>Active filter is visible and dismissable</h4><p><code>filter: bugs</code> appears in the crumb and the footer shows <code>f filter: bugs ✕</code> — state you can see is state you can trust.</p></div>
+        <div class="nc"><h4>Active filter is visible and dismissable</h4><p><code>filter: bugs</code> appears in the crumb and the footer shows <code>f bugs ✕</code> — state you can see is state you can trust.</p></div>
+        <div class="nc"><h4>Parent ↔ child with box guides</h4><p>Tree view draws real guides — <code>▾</code> on a parent with visible children, <code>├─</code>/<code>└─</code> on children, <code>│</code> continuing the rail — instead of a bare <code>└</code> indent. Hierarchy reads at a glance even when parent and child are screens apart in sort order.</p></div>
+        <div class="nc"><h4>The list is flippable</h4><p>The panel title becomes <code>◂ my work ▸</code>: new <code>‹</code>/<code>›</code> keys cycle My Work → All Project Issues → each teammate in place, no picker round-trip. <code>V</code> still opens the picker for a direct jump.</p></div>
+        <div class="nc"><h4>Footers never wrap</h4><p>The footer is one row, always: hint groups drop right-to-left when the terminal narrows, and <code>? all keys</code> is the last survivor. A two-line footer steals a list row and jitters on resize.</p></div>
       </div>
     </div>
 

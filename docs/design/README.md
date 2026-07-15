@@ -10,6 +10,10 @@ any browser (no build step, no network):
   one status column at a time, and Jax docks as a mini companion in every
   footer
 
+`SPEC.md` is the implementation hand-off: behavioural rules (footer no-wrap
+drop order, list column drop order, cell-count breakpoints, tree guides, view
+flipping, mini-Jax), the new-keybinding audit, and acceptance criteria.
+
 Press `1`–`6` or use the tabs to switch between the six mocked screens:
 
 1. **Welcome** — three onboarding paths as cards, with a recommended default
