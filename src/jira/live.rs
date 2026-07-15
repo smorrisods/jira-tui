@@ -1114,6 +1114,32 @@ mod tests {
     }
 
     #[test]
+    fn children_of_escapes_quotes_and_backslashes_in_the_key() {
+        let mut server = mockito::Server::new();
+        // A key isn't attacker-controlled in practice, but children_of must
+        // still escape it the same way jql_for's Teammate arm does — a
+        // stray `"` in the interpolated value would otherwise terminate the
+        // JQL string literal early and let the rest of the key inject
+        // arbitrary JQL.
+        let mock = server
+            .mock("GET", "/rest/api/3/search/jql")
+            .match_query(mockito::Matcher::AllOf(vec![mockito::Matcher::UrlEncoded(
+                "jql".into(),
+                "parent = \"DS-1\\\" OR 1=1 --\" ORDER BY key ASC".into(),
+            )]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"issues": [], "isLast": true}"#)
+            .create();
+
+        let cfg = test_config(server.url());
+        let children = children_of(&cfg, "DS-1\" OR 1=1 --").unwrap();
+
+        mock.assert();
+        assert!(children.is_empty());
+    }
+
+    #[test]
     fn apply_transition_sends_the_transition_id() {
         let mut server = mockito::Server::new();
         let mock = server
