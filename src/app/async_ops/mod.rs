@@ -29,5 +29,5 @@ pub(crate) use mutation_ops::{
     dispatch_add_comment, dispatch_assign, dispatch_transition, dispatch_update_description,
 };
 pub(crate) use setup_ops::dispatch_field_mapping;
-#[cfg_attr(not(feature = "live"), allow(unused_imports))]
+#[cfg(feature = "live")]
 pub(crate) use setup_ops::dispatch_verify_credentials;

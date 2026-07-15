@@ -51,7 +51,7 @@ pub use search::{SearchRow, SearchState};
 pub use sort_filter::SortKey;
 pub use tree::ListViewMode;
 
-use loader::{load_issues, load_issues_for};
+use loader::load_issues;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Screen {

@@ -2,6 +2,7 @@
 
 use tokio::sync::mpsc::UnboundedSender;
 
+#[cfg(feature = "live")]
 use super::super::load_issues;
 use super::AppEvent;
 
@@ -60,9 +61,12 @@ fn list_fields_blocking() -> FieldsFetchResult {
 /// `load_issues` (the same `ViewKind::MyWork` fetch behind a plain
 /// `refresh`), since verifying fresh credentials is just loading My Work
 /// with whatever was just saved to the environment/config. Only called from
-/// `onboarding.rs`'s live-gated `submit_credentials`, so it's dead code in
-/// a no-live build.
-#[cfg_attr(not(feature = "live"), allow(dead_code))]
+/// `onboarding.rs`'s live-gated `submit_credentials`, so this is compiled
+/// out entirely (not merely unreachable) in a no-live build — gating the
+/// function itself, rather than suppressing the resulting dead-code lint,
+/// means there's nothing to suppress at either this definition or its
+/// re-export in `async_ops/mod.rs`.
+#[cfg(feature = "live")]
 pub(crate) fn dispatch_verify_credentials(tx: UnboundedSender<AppEvent>, generation: u64) {
     tokio::spawn(async move {
         let (issues, source, status) = tokio::task::spawn_blocking(|| load_issues(false))

@@ -5,7 +5,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::domain::{AssignableUser, IssueDetail, IssueSummary, Source, ViewKind};
 
-use super::super::load_issues_for;
+use super::super::loader::load_issues_for;
 use super::AppEvent;
 
 /// Spawn `load_issues_for(view, force_demo)` off the render thread for a

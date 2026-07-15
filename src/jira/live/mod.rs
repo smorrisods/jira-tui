@@ -1,11 +1,17 @@
 //! The live Jira REST client (`ureq`-based): reads, workflow transitions,
 //! description/summary writes, comments, and issue creation.
 //!
-//! Split by REST-endpoint area — `support` (HTTP core + shared parsers,
-//! everything else depends on it), `search` (JQL + paged search, which
-//! `detail` also depends on for an Epic's children), `mutations`
-//! (transitions/assignment/field writes/create), `comments`, `fields`, and
-//! `detail` (the most interconnected file, assembled from the others).
+//! `support`, `search`, `mutations`, `comments`, and `fields` are split by
+//! REST-endpoint area, each independent of the others (beyond depending on
+//! `support`'s HTTP core). `detail` is not a peer of those five — it's an
+//! aggregation layer: assembling one `IssueDetail` inherently means calling
+//! into several of them (transitions, comments, an Epic's children via
+//! `search`), so it will keep growing as `fetch_detail` accretes more
+//! sub-fetches, in a way the REST-endpoint files structurally don't. Treat
+//! `detail.rs` crossing back over ~500 lines as expected eventually, not as
+//! a sign this split needs redoing — the fix then is splitting what
+//! `fetch_detail` assembles (e.g. one file per sub-fetch it stitches
+//! together), not re-drawing the endpoint-area boundary.
 
 mod comments;
 mod detail;
