@@ -1,8 +1,16 @@
 # UI refresh proposal
 
-`ui-refresh.html` is a set of static HTML mockups for a refreshed jira-tui UI —
-open it in any browser (no build step, no network). Press `1`–`6` or use the
-tabs to switch between the six mocked screens:
+Two sets of static HTML mockups for a refreshed jira-tui UI — open either in
+any browser (no build step, no network):
+
+- `ui-refresh.html` — the landscape set (wide terminals, ≥ 110 columns)
+- `ui-refresh-portrait.html` — the portrait companion set (tall/narrow
+  terminals, < 90 columns), showing how the same UI restacks: side rails
+  become strips, the detail rail folds into a "facts" panel, the board pages
+  one status column at a time, and Jax docks as a mini companion in every
+  footer
+
+Press `1`–`6` or use the tabs to switch between the six mocked screens:
 
 1. **Welcome** — three onboarding paths as cards, with a recommended default
 2. **Home** — context rail with glance bars and a recent-issues panel
