@@ -9,15 +9,21 @@ use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
+use ratatui::buffer::Buffer;
 
 use jira_tui::app::App;
 
 use crate::Term;
 
 /// Reconstruct the plain text of an inclusive screen-row range from the last
-/// rendered frame's buffer (used for drag-to-copy).
-pub(crate) fn read_rows(terminal: &mut Term, y0: u16, y1: u16) -> String {
-    let buf = terminal.current_buffer_mut();
+/// rendered frame's buffer (used for drag-to-copy). Takes the buffer
+/// directly rather than `Term` — `Terminal::draw` swaps its double buffer
+/// before returning, so `terminal.current_buffer_mut()` called after the
+/// fact would hand back the blank buffer being prepared for the *next*
+/// frame, not the content that's actually on screen. The caller clones
+/// `CompletedFrame::buffer` right after `draw()`, while it still refers to
+/// the frame just rendered.
+pub(crate) fn read_rows(buf: &Buffer, y0: u16, y1: u16) -> String {
     let area = *buf.area();
     let mut out = String::new();
     let last = y1.min(area.height.saturating_sub(1));
