@@ -240,10 +240,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             app.cycle_filter()
         }
         KeyCode::Char('v') if matches!(app.screen, Screen::Home | Screen::List) => {
-            app.quick_view = !app.quick_view;
-            if !app.quick_view {
-                app.list_focus = app::ListFocus::List;
-            }
+            app.toggle_quick_view();
         }
         KeyCode::Char('T') if matches!(app.screen, Screen::Home | Screen::List) => {
             app.toggle_list_view_mode();

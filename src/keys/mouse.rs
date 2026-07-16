@@ -20,6 +20,14 @@ pub(crate) fn handle_mouse(app: &mut App, me: MouseEvent) {
         MouseEventKind::Down(MouseButton::Left) => app.mouse_down(me.row),
         MouseEventKind::Drag(MouseButton::Left) => app.mouse_drag(me.row),
         MouseEventKind::Up(MouseButton::Left) => app.mouse_up(me.column, me.row),
+        // Middle-click mirrors the `v` key: toggle the quick-view panel.
+        // Scoped to Home/List, matching `v`'s own screen guard — Board and
+        // the other screens have no quick-view panel to toggle.
+        MouseEventKind::Down(MouseButton::Middle)
+            if matches!(app.screen, Screen::Home | Screen::List) =>
+        {
+            app.toggle_quick_view();
+        }
         _ => {}
     }
 }
@@ -48,7 +56,9 @@ pub(super) fn toggle_mouse(app: &mut App) {
     app.mouse.selecting = false;
     if app.mouse.enabled {
         let _ = execute!(std::io::stdout(), EnableMouseCapture);
-        app.status = "mouse mode on · click to open · drag to copy · shift-drag = native".into();
+        app.status =
+            "mouse mode on · click to open · drag to copy · middle-click = quick view · shift-drag = native"
+                .into();
     } else {
         let _ = execute!(std::io::stdout(), DisableMouseCapture);
         app.status = "mouse mode off · terminal selection restored".into();
@@ -114,6 +124,44 @@ mod tests {
         app.board_scroll = 0;
         scroll_at(&mut app, 5, 5, 1);
         assert_eq!(app.board_scroll, 1);
+    }
+
+    /// Middle-click mirrors the `v` key: toggle the quick-view panel on
+    /// Home/List. crossterm has no Back/Forward `MouseButton` variant at
+    /// all (checked upstream — even its unreleased `master` branch only
+    /// defines Left/Right/Middle), so middle-click is the only extra mouse
+    /// button this app can support.
+    #[test]
+    fn middle_click_toggles_quick_view_on_home_and_list() {
+        let mut app = demo_app();
+        assert!(!app.quick_view);
+
+        let middle_down = MouseEvent {
+            kind: MouseEventKind::Down(crossterm::event::MouseButton::Middle),
+            column: 10,
+            row: 5,
+            modifiers: KeyModifiers::empty(),
+        };
+        handle_mouse(&mut app, middle_down);
+        assert!(app.quick_view, "middle-click should open quick view");
+
+        handle_mouse(&mut app, middle_down);
+        assert!(!app.quick_view, "middle-click should close quick view");
+    }
+
+    #[test]
+    fn middle_click_does_nothing_on_board() {
+        let mut app = demo_app();
+        app.open_board();
+
+        let middle_down = MouseEvent {
+            kind: MouseEventKind::Down(crossterm::event::MouseButton::Middle),
+            column: 10,
+            row: 5,
+            modifiers: KeyModifiers::empty(),
+        };
+        handle_mouse(&mut app, middle_down);
+        assert!(!app.quick_view, "Board has no quick-view panel to toggle");
     }
 
     /// CLAUDE.md "what to keep true": "Mouse mode is opt-in: Shift-drag must

@@ -46,6 +46,23 @@ fn drag_sets_a_pending_copy_range() {
 }
 
 #[test]
+fn toggle_quick_view_opens_and_closes_resetting_focus() {
+    let mut app = demo_app();
+    assert!(!app.quick_view);
+
+    app.toggle_quick_view();
+    assert!(app.quick_view);
+
+    // Give keyboard focus to the quick-view panel, then close it — focus
+    // must be forced back to the list, matching `toggle_list_focus`'s own
+    // rule, so arrow keys never end up stuck scrolling a hidden panel.
+    app.list_focus = ListFocus::QuickView;
+    app.toggle_quick_view();
+    assert!(!app.quick_view);
+    assert_eq!(app.list_focus, ListFocus::List);
+}
+
+#[test]
 fn toggle_list_focus_flips_only_when_quick_view_open() {
     let mut app = demo_app();
     // Quick view closed: toggling is a no-op (always forced to List).
