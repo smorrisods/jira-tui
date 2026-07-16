@@ -1,16 +1,22 @@
-//! The swimlane Kanban board: status columns across the top, Epic-grouped
-//! lanes down the side, rendered as a scrollable text grid.
+//! The swimlane Kanban board: status columns and Epic-grouped lanes,
+//! rendered as a bordered-card grid when wide (SPEC.md §7) or a
+//! one-column-at-a-time pager when narrow — see
+//! `board_columns::board_layout_for_width`.
 
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::Paragraph;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use ratatui::Frame;
 
 use crate::app::App;
 use crate::domain::IssueSummary;
 
-use super::{accent, accent2, card, maple, muted, selected_style, status_colour, truncate};
+use super::board_columns::{self, BoardLayout, CARD_HEIGHT};
+use super::{
+    accent, accent2, card, chip, danger, faint, initials, maple, muted, priority_glyph,
+    priority_style, selected_style, status_colour, truncate, type_colour,
+};
 
 pub(crate) fn draw_board(f: &mut Frame, app: &App, area: Rect) {
     let cols = app.board_columns();
@@ -39,139 +45,371 @@ pub(crate) fn draw_board(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
+    match board_columns::board_layout_for_width(inner.width) {
+        BoardLayout::Wide => draw_wide(f, app, inner, &cols),
+        BoardLayout::Narrow => draw_narrow(f, app, inner, &cols),
+    }
+}
+
+/// Which lanes to actually render this frame — however many fit within
+/// `body.height` starting at `app.board_scroll` — plus their `Constraint`s
+/// and whether the trailing collapsed-lanes ghost line also fits. Shared by
+/// `draw_wide`/`draw_narrow`; `height_for` computes a lane's height for
+/// whichever layout is currently rendering (mirrors `App::board_lane_height`
+/// so the renderer and the keyboard-scroll code can never disagree).
+fn fit_lanes(
+    lanes: &[Option<String>],
+    scroll: usize,
+    body_height: u16,
+    hidden: usize,
+    height_for: impl Fn(&Option<String>) -> u16,
+) -> (Vec<&Option<String>>, Vec<Constraint>, bool) {
+    let mut shown: Vec<&Option<String>> = Vec::new();
+    let mut constraints: Vec<Constraint> = Vec::new();
+    let mut used = 0u16;
+    for lane in lanes.iter().skip(scroll) {
+        let h = height_for(lane) + 1; // +1 gap after each lane's band
+        if used + h > body_height && !shown.is_empty() {
+            break;
+        }
+        shown.push(lane);
+        constraints.push(Constraint::Length(h));
+        used += h;
+    }
+    let show_ghost = hidden > 0 && used < body_height;
+    if show_ghost {
+        constraints.push(Constraint::Length(1));
+    }
+    constraints.push(Constraint::Min(0));
+    (shown, constraints, show_ghost)
+}
+
+fn draw_wide(f: &mut Frame, app: &App, area: Rect, cols: &[String]) {
+    let (lanes, hidden) = app.board_wide_lanes();
+    let all_lanes = app.board_lanes();
+    let selected_lane = all_lanes.get(app.board_sel.lane).cloned();
+
     let n = cols.len().max(1);
-    let col_width = board_col_width(inner.width as usize, n);
+    let col_width = board_columns::board_card_col_width(area.width, n);
 
-    let mut lines: Vec<Line> = Vec::new();
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(area);
+    f.render_widget(Paragraph::new(header_line(app, cols, col_width)), rows[0]);
 
-    // Column header row: status name + total count in that column.
-    let mut header: Vec<Span> = Vec::new();
-    for (ci, status) in cols.iter().enumerate() {
-        let count = app.issues.iter().filter(|i| &i.status == status).count();
-        let label = truncate(&format!("{status} ({count})"), col_width);
-        header.push(Span::raw(" ")); // aligns with the selection bar column below
-        header.push(Span::styled(
-            format!("{label:<col_width$}"),
+    let body = rows[1];
+    let scroll = (app.board_scroll as usize).min(lanes.len().saturating_sub(1));
+    let (shown, constraints, show_ghost) = fit_lanes(&lanes, scroll, body.height, hidden, |lane| {
+        app.board_lane_height(lane, BoardLayout::Wide)
+    });
+
+    let lane_areas = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(body);
+
+    for (i, lane) in shown.iter().enumerate() {
+        let is_selected_lane = selected_lane.as_ref() == Some(*lane);
+        draw_wide_lane(
+            f,
+            app,
+            lane_areas[i],
+            lane,
+            cols,
+            col_width,
+            is_selected_lane,
+        );
+    }
+    if show_ghost {
+        let text = format!(
+            "▸ {hidden} lane{} fully done — pgdn to peek",
+            if hidden == 1 { "" } else { "s" }
+        );
+        f.render_widget(ghost_line(&text), lane_areas[shown.len()]);
+    }
+}
+
+fn header_line(app: &App, cols: &[String], col_width: u16) -> Line<'static> {
+    let n = cols.len();
+    let mut spans = Vec::new();
+    for (i, status) in cols.iter().enumerate() {
+        let count = app
+            .issues
+            .iter()
+            .filter(|iss| &iss.status == status)
+            .count();
+        let label = truncate(&format!("{status} ({count})"), col_width as usize);
+        spans.push(Span::styled(
+            format!("{label:<width$}", width = col_width as usize),
             Style::default()
                 .fg(status_colour(status))
                 .add_modifier(Modifier::BOLD),
         ));
-        if ci + 1 < n {
-            header.push(Span::styled(" │ ", Style::default().fg(muted())));
+        if i + 1 < n {
+            spans.push(Span::raw(" "));
         }
     }
-    lines.push(Line::from(header));
-    lines.push(Line::from(Span::styled(
-        "─".repeat(inner.width as usize),
-        Style::default().fg(muted()),
-    )));
+    Line::from(spans)
+}
 
-    for (li, lane) in lanes.iter().enumerate() {
-        let cell_lists: Vec<Vec<&IssueSummary>> = cols
-            .iter()
-            .map(|status| app.board_cell(lane, status))
-            .collect();
-        let lane_count: usize = cell_lists.iter().map(|c| c.len()).sum();
+fn draw_wide_lane(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    lane: &Option<String>,
+    cols: &[String],
+    col_width: u16,
+    is_selected_lane: bool,
+) {
+    let cells: Vec<Vec<&IssueSummary>> = cols.iter().map(|s| app.board_cell(lane, s)).collect();
+    let lane_count: usize = cells.iter().map(|c| c.len()).sum();
+    // Shared with `App::board_lane_height` so the height reserved for this
+    // lane and the grid actually drawn into it can never disagree.
+    let max_rows = app.board_max_rows_wide(lane);
 
-        lines.push(Line::from(Span::styled(
-            format!("▸ {} ({lane_count})", app.board_lane_label(lane)),
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(max_rows as u16 * CARD_HEIGHT),
+        ])
+        .split(area);
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            format!(
+                "▾ {} · {lane_count} issue{}",
+                app.board_lane_label(lane),
+                if lane_count == 1 { "" } else { "s" }
+            ),
             Style::default().fg(accent2()).add_modifier(Modifier::BOLD),
-        )));
+        ))),
+        rows[0],
+    );
 
-        let max_rows = cell_lists.iter().map(|c| c.len()).max().unwrap_or(0).max(1);
-        for row in 0..max_rows {
-            let mut spans: Vec<Span> = Vec::new();
-            for (ci, cell) in cell_lists.iter().enumerate() {
-                let selected = li == app.board_sel.lane
-                    && ci == app.board_sel.col
-                    && row == app.board_sel.card;
-                let text = match cell.get(row) {
-                    Some(issue) => {
-                        let head = format!("{}{} ", issue.priority.glyph(), issue.key);
-                        let remaining = col_width.saturating_sub(head.chars().count());
-                        format!("{head}{}", truncate(&issue.summary, remaining))
-                    }
-                    None => String::new(),
-                };
-                let base_fg = if cell.get(row).is_some() {
+    let n = cols.len().max(1);
+    let col_areas = Layout::horizontal(vec![Constraint::Length(col_width); n])
+        .spacing(1)
+        .split(rows[1]);
+
+    for (ci, cell) in cells.iter().enumerate() {
+        let col_area = col_areas[ci];
+        if cell.is_empty() {
+            f.render_widget(
+                ghost_line(&"╌".repeat(col_area.width as usize)),
+                Rect::new(col_area.x, col_area.y, col_area.width, 1),
+            );
+            continue;
+        }
+        let card_areas =
+            Layout::vertical(vec![Constraint::Length(CARD_HEIGHT); max_rows]).split(col_area);
+        for (ri, issue) in cell.iter().enumerate() {
+            let selected = is_selected_lane && app.board_sel.col == ci && app.board_sel.card == ri;
+            draw_card(f, card_areas[ri], issue, selected, None);
+        }
+    }
+}
+
+fn draw_narrow(f: &mut Frame, app: &App, area: Rect, cols: &[String]) {
+    let status = cols
+        .get(app.board_sel.col)
+        .cloned()
+        .unwrap_or_else(|| "No status".to_string());
+    let (lanes, hidden) = app.board_narrow_lanes(&status);
+    let all_lanes = app.board_lanes();
+    let selected_lane = all_lanes.get(app.board_sel.lane).cloned();
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(area);
+    f.render_widget(Paragraph::new(tab_strip(cols, app.board_sel.col)), rows[0]);
+
+    let body = rows[1];
+    let scroll = (app.board_scroll as usize).min(lanes.len().saturating_sub(1));
+    let (shown, constraints, show_ghost) = fit_lanes(&lanes, scroll, body.height, hidden, |lane| {
+        app.board_lane_height(lane, BoardLayout::Narrow)
+    });
+
+    let lane_areas = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(body);
+
+    for (i, lane) in shown.iter().enumerate() {
+        let is_selected_lane = selected_lane.as_ref() == Some(*lane);
+        draw_narrow_lane(f, app, lane_areas[i], lane, &status, is_selected_lane);
+    }
+    if show_ghost {
+        let text = format!(
+            "▸ {hidden} lane{} with nothing {status} — pgdn to peek",
+            if hidden == 1 { "" } else { "s" }
+        );
+        f.render_widget(ghost_line(&text), lane_areas[shown.len()]);
+    }
+}
+
+fn tab_strip(cols: &[String], current: usize) -> Line<'static> {
+    let mut spans = vec![Span::styled("← ", Style::default().fg(muted()))];
+    for (i, status) in cols.iter().enumerate() {
+        spans.push(board_tab(status, i == current));
+        if i + 1 < cols.len() {
+            spans.push(Span::raw(" "));
+        }
+    }
+    spans.push(Span::styled(" →", Style::default().fg(muted())));
+    Line::from(spans)
+}
+
+/// A status tab in the narrow pager's strip (SPEC.md §7): the current
+/// column filled and bold in `accent()`/cyan, others plain muted text.
+fn board_tab(text: &str, current: bool) -> Span<'static> {
+    if current {
+        Span::styled(
+            format!(" {text} "),
+            Style::default()
+                .fg(Color::Black)
+                .bg(accent())
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled(text.to_string(), Style::default().fg(muted()))
+    }
+}
+
+fn draw_narrow_lane(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    lane: &Option<String>,
+    status: &str,
+    is_selected_lane: bool,
+) {
+    let (here, total) = app.board_lane_counts(lane, status);
+    let cards = app.board_cell(lane, status);
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(area);
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            format!(
+                "▾ {} · {here} here · {total} total",
+                app.board_lane_label(lane)
+            ),
+            Style::default().fg(accent2()).add_modifier(Modifier::BOLD),
+        ))),
+        rows[0],
+    );
+
+    let constraints: Vec<Constraint> = (0..cards.len())
+        .map(|ci| {
+            let selected = is_selected_lane && app.board_sel.card == ci;
+            Constraint::Length(if selected {
+                CARD_HEIGHT + 1
+            } else {
+                CARD_HEIGHT
+            })
+        })
+        .chain(std::iter::once(Constraint::Min(0)))
+        .collect();
+    let card_areas = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(rows[1]);
+
+    for (ci, issue) in cards.iter().enumerate() {
+        let selected = is_selected_lane && app.board_sel.card == ci;
+        let peek = selected.then(|| neighbour_peek_text(app, lane));
+        draw_card(f, card_areas[ci], issue, selected, peek.as_deref());
+    }
+}
+
+/// The narrow layout's selected-card neighbour-peek line (SPEC.md §7):
+/// this lane's issue counts in the immediately adjacent columns, dropping
+/// whichever side (and its arrow) is absent at the first/last column.
+fn neighbour_peek_text(app: &App, lane: &Option<String>) -> String {
+    let (prev, next) = app.board_neighbour_counts(lane);
+    match (prev, next) {
+        (Some((p, pn)), Some((n, nn))) => format!("◂ {p} {pn} · {n} {nn} ▸"),
+        (Some((p, pn)), None) => format!("◂ {p} {pn}"),
+        (None, Some((n, nn))) => format!("{n} {nn} ▸"),
+        (None, None) => String::new(),
+    }
+}
+
+fn ghost_line(text: &str) -> Paragraph<'static> {
+    Paragraph::new(Line::from(Span::styled(
+        text.to_string(),
+        Style::default().fg(muted()).add_modifier(Modifier::ITALIC),
+    )))
+}
+
+/// One card, shared by both layouts. `peek` is the narrow pager's
+/// neighbour-peek line — only ever `Some` for the selected card, and only
+/// ever passed by `draw_narrow_lane` (the wide grid has room for the side
+/// rail instead, so it never needs one).
+fn draw_card(f: &mut Frame, area: Rect, issue: &IssueSummary, selected: bool, peek: Option<&str>) {
+    let border_colour = if selected { maple() } else { muted() };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(border_colour))
+        .style(selected_style(Style::default(), selected));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let mut top = vec![
+        Span::styled(
+            priority_glyph(&issue.priority),
+            priority_style(&issue.priority),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            issue.key.clone(),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        chip(&issue.issue_type, type_colour(&issue.issue_type)),
+    ];
+    if issue.blocked {
+        top.push(Span::raw(" "));
+        top.push(chip("⛔", danger()));
+    }
+
+    let width = inner.width as usize;
+    let assignee_text = match &issue.assignee {
+        Some(name) => format!("{} {name}", initials(name)),
+        None => "unassigned".to_string(),
+    };
+    let mut lines = vec![
+        Line::from(top),
+        Line::from(Span::raw(truncate(&issue.summary, width))),
+        Line::from(vec![
+            Span::styled(
+                truncate(
+                    &assignee_text,
+                    width.saturating_sub(issue.updated.len() + 1),
+                ),
+                Style::default().fg(if issue.assignee.is_some() {
                     Color::White
                 } else {
-                    muted()
-                };
-                let mut style = selected_style(Style::default().fg(base_fg), selected);
-                if selected {
-                    style = style.add_modifier(Modifier::BOLD);
-                }
-                // One selection language shared with the list and pickers:
-                // a leading maple bar, reserved as its own column so
-                // unselected cells stay aligned.
-                let bar = if selected { "▌" } else { " " };
-                let bar_style = if selected {
-                    Style::default().fg(maple())
-                } else {
-                    Style::default()
-                };
-                spans.push(Span::styled(bar, bar_style));
-                spans.push(Span::styled(format!("{text:<col_width$}"), style));
-                if ci + 1 < n {
-                    spans.push(Span::styled(" │ ", Style::default().fg(muted())));
-                }
-            }
-            lines.push(Line::from(spans));
-        }
-        lines.push(Line::from(""));
+                    faint()
+                }),
+            ),
+            Span::raw(" "),
+            Span::styled(issue.updated.clone(), Style::default().fg(faint())),
+        ]),
+    ];
+    if let Some(p) = peek {
+        lines.push(Line::from(Span::styled(
+            p.to_string(),
+            Style::default().fg(faint()),
+        )));
     }
 
-    let para = Paragraph::new(Text::from(lines)).scroll((app.board_scroll, 0));
-    f.render_widget(para, inner);
-}
-
-/// Per-column text width, leaving room for the real width of the " │ "
-/// separator between columns and of the leading selection-bar column each
-/// card/header cell reserves (see `bar` above and the header's leading
-/// `Span::raw(" ")`) — both are subtracted from the budget up front so the
-/// header and body rows come out to the same total rendered width instead
-/// of drifting apart. Pure so it's unit-testable against the width formula
-/// callers actually use.
-fn board_col_width(inner_width: usize, n: usize) -> usize {
-    let n = n.max(1);
-    let sep_width = 3 * n.saturating_sub(1);
-    let bar_width = n;
-    (inner_width.saturating_sub(sep_width + bar_width) / n).max(12)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Regression test: a leading 1-char selection bar used to be prepended
-    /// to every body-row cell without a matching reservation in the width
-    /// budget, so both header and body rows rendered wider than the pane —
-    /// clipped inconsistently since the header (no bar) overflowed less
-    /// than the body (with a bar) did, breaking column alignment between
-    /// them. Every row now reserves the same 1-char lead-in (the header's
-    /// `Span::raw(" ")`, the body's selection bar), so this asserts the
-    /// shared total-row-width formula never exceeds the pane width — unless
-    /// the terminal is so narrow that `col_width`'s 12-char readability
-    /// floor is doing the clamping instead, which (like the pre-existing
-    /// floor itself) is an accepted narrow-terminal tradeoff, not a bug.
-    #[test]
-    fn row_width_never_exceeds_the_pane_when_not_floor_clamped() {
-        for n in 1..=6usize {
-            for inner_width in [40usize, 80, 110, 200] {
-                let sep_width = 3 * n.saturating_sub(1);
-                let bar_width = n;
-                let unclamped = inner_width.saturating_sub(sep_width + bar_width) / n;
-                if unclamped < 12 {
-                    continue; // the readability floor is clamping; overflow is expected here
-                }
-                let col_width = board_col_width(inner_width, n);
-                let total_row_width = n * (1 + col_width) + sep_width;
-                assert!(
-                    total_row_width <= inner_width,
-                    "n={n} inner_width={inner_width}: row width {total_row_width} exceeds pane"
-                );
-            }
-        }
-    }
+    f.render_widget(Paragraph::new(lines), inner);
 }

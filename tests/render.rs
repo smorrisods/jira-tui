@@ -2,7 +2,7 @@
 //! and assert the composed screen text, so each screen is exercised in CI.
 
 use jira_tui::app::{App, Screen, WelcomePhase};
-use jira_tui::domain::Source;
+use jira_tui::domain::{IssueSummary, Priority, Source};
 use jira_tui::ui;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -631,7 +631,11 @@ fn search_screen_empty_query_shows_hint_or_full_list() {
 fn board_screen_shows_columns_and_lanes() {
     let mut app = demo_app();
     app.open_board();
-    let text = render(&app);
+    // Bordered cards are far taller than the old packed text rows, so not
+    // every lane fits in the default 120x40 — use a tall enough viewport
+    // that all of demo data's lanes (including the trailing "no epic" one)
+    // are visible without needing to page down.
+    let text = render_at(&app, 120, 60);
     assert!(text.contains("board"), "board panel should render");
     assert!(text.contains("To Do"), "board should show a status column");
     assert!(
@@ -951,5 +955,130 @@ fn header_sync_pill_collapses_to_led_and_short_duration_when_narrow() {
     assert!(
         !text.contains("synced"),
         "below the collapse width the pill should drop to just the LED and a short duration"
+    );
+}
+
+fn board_issue(key: &str, epic: Option<&str>, status: &str, blocked: bool) -> IssueSummary {
+    IssueSummary {
+        key: key.to_string(),
+        summary: format!("Summary for {key}"),
+        issue_type: "Task".to_string(),
+        status: status.to_string(),
+        priority: Priority::Medium,
+        assignee: Some("scott.morris".to_string()),
+        blocked,
+        updated: "1h ago".to_string(),
+        epic: epic.map(String::from),
+    }
+}
+
+/// A small dedicated Board fixture (SPEC.md §7) exercising what demo data
+/// doesn't: a blocked card, a fully-done lane, and a lane empty in a given
+/// column — rather than relying on demo data happening to contain all
+/// three. Lane order (first-seen): EPIC-MIXED, EPIC-DONE, EPIC-EMPTY-TODO.
+fn board_fixture_app() -> App {
+    let mut app = demo_app();
+    app.issues = vec![
+        board_issue("DS-101", Some("EPIC-MIXED"), "To Do", true),
+        board_issue("DS-102", Some("EPIC-MIXED"), "In Progress", false),
+        board_issue("DS-201", Some("EPIC-DONE"), "Done", false),
+        board_issue("DS-202", Some("EPIC-DONE"), "Done", false),
+        board_issue("DS-301", Some("EPIC-EMPTY-TODO"), "In Progress", false),
+    ];
+    app.open_board();
+    app
+}
+
+#[test]
+fn board_screen_wide_shows_card_grid_and_a_fully_done_ghost() {
+    let app = board_fixture_app();
+    let text = render_at(&app, 120, 34);
+    assert!(
+        text.contains('╭') && text.contains('╮'),
+        "wide board should render bordered cards"
+    );
+    assert!(
+        text.contains("⛔"),
+        "the blocked issue's card should show the blocked chip"
+    );
+    assert!(
+        text.contains("fully done") && text.contains("pgdn to peek"),
+        "the fully-done EPIC-DONE lane should collapse into a ghost line"
+    );
+    assert!(
+        !text.contains("EPIC-DONE"),
+        "the fully-done lane itself must not also render expanded"
+    );
+}
+
+#[test]
+fn board_screen_narrow_shows_pager_and_neighbour_peek() {
+    let mut app = board_fixture_app();
+    // Narrow's tab strip/pager keys off `board_sel.col`; land on "To Do" so
+    // the selected card (DS-101, EPIC-MIXED) has both a previous and next
+    // column to peek at.
+    let cols = app.board_columns();
+    app.board_sel.col = cols.iter().position(|c| c == "To Do").unwrap();
+    let text = render_at(&app, 84, 46);
+    for status in &cols {
+        assert!(
+            text.contains(status.as_str()),
+            "the tab strip should show every status: missing {status:?}"
+        );
+    }
+    assert!(
+        text.contains("here") && text.contains("total"),
+        "a lane header should show its here/total counts"
+    );
+    assert!(
+        text.contains('◂') || text.contains('▸'),
+        "the selected card should show a neighbour-peek line"
+    );
+}
+
+#[test]
+fn board_screen_narrow_collapses_empty_lanes() {
+    let mut app = board_fixture_app();
+    // EPIC-EMPTY-TODO has nothing in "To Do" and isn't selected (EPIC-MIXED,
+    // the first lane, is) — it should collapse into the narrow ghost line.
+    let cols = app.board_columns();
+    app.board_sel.col = cols.iter().position(|c| c == "To Do").unwrap();
+    app.board_sel.lane = 0;
+    let text = render_at(&app, 84, 46);
+    assert!(
+        text.contains("lanes with nothing") && text.contains("pgdn to peek"),
+        "a lane empty in the current column should collapse into a ghost line"
+    );
+    assert!(
+        !text.contains("EPIC-EMPTY-TODO"),
+        "the collapsed lane itself must not also render expanded"
+    );
+}
+
+#[test]
+fn board_screen_wide_scrolls_the_selected_lane_into_actual_view() {
+    // Regression test: `board_ensure_visible`'s "how many lanes fit" budget
+    // must match the renderer's own `fit_lanes` budget exactly (both must
+    // account for the 1-row column-header line). An earlier version of
+    // this budgeted one row too many, so a lane `board_ensure_visible`
+    // considered already in view could still be silently dropped by the
+    // renderer — a numeric scroll-bound assertion wouldn't catch that, only
+    // checking the actual rendered output does.
+    let mut app = board_fixture_app();
+    // Populate `board_area` with this size's real geometry before
+    // navigating, mirroring the established pattern for nav functions that
+    // read back render-time state (see Detail's `jump_to_comments` tests).
+    let _ = render_at(&app, 120, 10);
+    let lanes = app.board_lanes();
+    let lanes_len = lanes.len();
+    for _ in 0..lanes_len - 1 {
+        app.board_move_lane(1);
+    }
+    let label = app.board_lane_label(&lanes[app.board_sel.lane]);
+    let text = render_at(&app, 120, 10);
+    assert!(
+        text.contains(&label),
+        "the selected lane ({label:?}) must actually render on screen after \
+         scrolling to it, not just satisfy a numeric scroll bound"
     );
 }

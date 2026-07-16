@@ -22,6 +22,7 @@ use crate::domain::Priority;
 mod about;
 mod assignee_picker;
 mod board;
+pub(crate) mod board_columns;
 mod detail;
 pub(crate) mod detail_columns;
 mod editor;
