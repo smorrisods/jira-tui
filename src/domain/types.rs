@@ -141,7 +141,7 @@ pub struct AssignableUser {
     pub display_name: String,
 }
 
-/// Where the data on screen came from, shown in the footer.
+/// Where the data on screen came from, shown in the header's sync pill.
 /// `Live`/`Cache` are only constructed when the `live` feature is enabled.
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
@@ -149,16 +149,6 @@ pub enum Source {
     Demo,
     Cache { user: String },
     Live { site: String, user: String },
-}
-
-impl Source {
-    pub fn label(&self) -> String {
-        match self {
-            Source::Demo => "demo · offline sample data".into(),
-            Source::Cache { user } => format!("cache · {user} · offline"),
-            Source::Live { site, user } => format!("live · {site} · {user}"),
-        }
-    }
 }
 
 /// Which issue list is currently loaded into `App.all_issues` — "my work" is
@@ -245,20 +235,6 @@ mod tests {
             ranks.len(),
             "every priority should have a distinct rank"
         );
-    }
-
-    #[test]
-    fn source_labels_render() {
-        assert!(Source::Demo.label().contains("demo"));
-        assert!(Source::Cache { user: "me".into() }
-            .label()
-            .contains("cache"));
-        assert!(Source::Live {
-            site: "x.atlassian.net".into(),
-            user: "me".into()
-        }
-        .label()
-        .contains("live"));
     }
 
     #[test]

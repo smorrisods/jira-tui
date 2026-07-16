@@ -39,12 +39,16 @@ fn screen_label(screen: Screen) -> Option<&'static str> {
 
 /// `{view} › {screen}` with the current (rightmost) node bold, an amber
 /// crumb for an active filter, and Detail's special `{key} · ← N back`.
-fn breadcrumb(app: &App) -> Vec<Span<'static>> {
+/// `budget` is the header's left column width — `ViewKind::Teammate`'s
+/// display name is arbitrary Jira user input with no length limit, so it's
+/// capped, and the filter crumb (the least essential part) is dropped
+/// entirely rather than rendered if there's no room left for it.
+fn breadcrumb(app: &App, budget: usize) -> Vec<Span<'static>> {
     if app.screen == Screen::Welcome {
         return vec![];
     }
 
-    let view = app.current_view.label();
+    let view = truncate(&app.current_view.label(), 30);
     let mut spans = Vec::new();
 
     if app.screen == Screen::Detail {
@@ -80,8 +84,12 @@ fn breadcrumb(app: &App) -> Vec<Span<'static>> {
     }
 
     if let Some(filter) = app.filter_label() {
-        spans.push(Span::styled(" · ", Style::default().fg(muted())));
-        spans.push(Span::styled(filter, Style::default().fg(warn())));
+        let base_width: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+        let filter_width = 3 + filter.chars().count(); // " · " + filter
+        if base_width + filter_width <= budget {
+            spans.push(Span::styled(" · ", Style::default().fg(muted())));
+            spans.push(Span::styled(filter, Style::default().fg(warn())));
+        }
     }
 
     spans
@@ -108,45 +116,58 @@ fn format_elapsed_short(d: Duration) -> String {
     }
 }
 
-/// The LED colour, source word, and — for `Live`/`Cache` — the
-/// site/username detail (e.g. site for `Live`, since that's the more
-/// useful disambiguator when more than one Jira instance is configured;
-/// `Cache` has no site of its own, so its username stands in). `budget` is
+/// The LED colour and a list of candidate texts, most-detailed first — the
+/// first one that fits `budget` wins, falling all the way back to the last
+/// (shortest) candidate if none do. `Live`/`Cache` get a site/username
+/// detail tier (site for `Live`, the more useful disambiguator when more
+/// than one Jira instance is configured; `Cache` has no site of its own, so
+/// its username stands in) that `Demo` has no equivalent for. `budget` is
 /// how many characters remain in the header's right column after the git
-/// branch/issue-key context. Three tiers, cascading on measured width
-/// rather than a fixed-width guess a long branch name or site hostname
-/// could still blow through: full pill with detail, full pill without
-/// detail, then (if even that doesn't fit) the same collapsed LED + short
-/// duration form `collapsed` triggers directly below ~90 columns.
+/// branch/issue-key context *and* this pill's own leading `● ` LED — every
+/// candidate is checked against the same budget, so unlike a fixed-width
+/// guess, a long branch name or site hostname can only ever push a source
+/// down to a shorter candidate, never past the edge of the column.
 fn sync_pill(app: &App, collapsed: bool, budget: usize) -> Vec<Span<'static>> {
-    let (led, word, detail) = match &app.source {
-        Source::Demo => return vec![Span::styled("● demo", Style::default().fg(muted()))],
-        Source::Live { site, .. } => (ok(), "live", site.as_str()),
-        Source::Cache { user } => (warn(), "cache", user.as_str()),
-    };
-    let dot = Span::styled("● ", Style::default().fg(led));
     let short = app
         .last_synced
         .map(|t| format_elapsed_short(t.elapsed()))
         .unwrap_or_default();
-    if collapsed {
-        return vec![dot, Span::styled(short, Style::default().fg(muted()))];
-    }
     let synced = app
         .last_synced
         .map(|t| format_elapsed(t.elapsed()))
         .unwrap_or_else(|| "just now".into());
-    let with_detail = format!("{word} · {detail} · synced {synced}");
-    let without_detail = format!("{word} · synced {synced}");
-    let text = if with_detail.chars().count() <= budget {
-        with_detail
-    } else if without_detail.chars().count() <= budget {
-        without_detail
+
+    let (led, candidates) = match &app.source {
+        Source::Demo => (muted(), vec!["demo".to_string()]),
+        Source::Live { site, .. } => (
+            ok(),
+            vec![
+                format!("live · {site} · synced {synced}"),
+                format!("live · synced {synced}"),
+                short.clone(),
+            ],
+        ),
+        Source::Cache { user } => (
+            warn(),
+            vec![
+                format!("cache · {user} · synced {synced}"),
+                format!("cache · synced {synced}"),
+                short.clone(),
+            ],
+        ),
+    };
+
+    let dot = Span::styled("● ", Style::default().fg(led));
+    const DOT_WIDTH: usize = 2; // "● "
+    let text = if collapsed {
+        candidates.last().cloned().unwrap_or_default()
     } else {
-        // Even the bare pill doesn't fit (e.g. an extreme branch name ate
-        // the whole right column) — fall back to the collapsed form as a
-        // safety net instead of risking a mid-word clip.
-        return vec![dot, Span::styled(short, Style::default().fg(muted()))];
+        candidates
+            .iter()
+            .find(|c| c.chars().count() + DOT_WIDTH <= budget)
+            .or(candidates.last())
+            .cloned()
+            .unwrap_or_default()
     };
     vec![dot, Span::styled(text, Style::default().fg(muted()))]
 }
@@ -164,26 +185,6 @@ pub(crate) fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         .map(|k| format!(" ⇢ {k}"))
         .unwrap_or_default();
 
-    let mut left = vec![
-        Span::styled(format!(" {spinner} "), Style::default().fg(accent2())),
-        Span::styled(
-            "jira",
-            Style::default().fg(accent()).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "-tui",
-            Style::default().fg(accent2()).add_modifier(Modifier::BOLD),
-        ),
-    ];
-    let crumb = breadcrumb(app);
-    if !crumb.is_empty() {
-        left.push(Span::styled("  ·  ", Style::default().fg(muted())));
-        left.extend(crumb);
-    }
-    if app.mouse.enabled {
-        left.push(Span::styled("  🖱 mouse", Style::default().fg(ok())));
-    }
-
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -196,14 +197,38 @@ pub(crate) fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(inner);
 
-    let git_prefix = format!("⎇ {branch}{ctx_key}  ·  ");
-    // How much room the sync pill actually has, after the git context and
-    // the separator ahead of it and a trailing space — this is what lets
-    // `sync_pill` decide whether its site/user detail segment fits, instead
-    // of a fixed-width guess that a long branch name or site hostname could
-    // still overflow.
+    let mut left = vec![
+        Span::styled(format!(" {spinner} "), Style::default().fg(accent2())),
+        Span::styled(
+            "jira",
+            Style::default().fg(accent()).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "-tui",
+            Style::default().fg(accent2()).add_modifier(Modifier::BOLD),
+        ),
+    ];
+    const BRAND_WIDTH: usize = 11; // " {spinner} " (3) + "jira" (4) + "-tui" (4)
+    let crumb_budget = (cols[0].width as usize).saturating_sub(BRAND_WIDTH + 5); // "  ·  "
+    let crumb = breadcrumb(app, crumb_budget);
+    if !crumb.is_empty() {
+        left.push(Span::styled("  ·  ", Style::default().fg(muted())));
+        left.extend(crumb);
+    }
+    if app.mouse.enabled {
+        left.push(Span::styled("  🖱 mouse", Style::default().fg(ok())));
+    }
+
+    // How much room the sync pill actually has, after the git context
+    // ("⎇ " + branch + issue key + "  ·  " separator) and a trailing space —
+    // this is what lets `sync_pill` decide whether its site/user detail
+    // segment fits, instead of a fixed-width guess that a long branch name
+    // or site hostname could still overflow. Summed from the same pieces
+    // rendered into `right` below, rather than reformatting them into a
+    // throwaway string just to measure it.
+    let git_prefix_width = 2 + branch.chars().count() + ctx_key.chars().count() + 5;
     let pill_budget = (cols[1].width as usize)
-        .saturating_sub(git_prefix.chars().count())
+        .saturating_sub(git_prefix_width)
         .saturating_sub(1);
     let mut right = vec![
         Span::styled(format!("⎇ {branch}"), Style::default().fg(Color::Blue)),

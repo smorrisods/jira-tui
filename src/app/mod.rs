@@ -373,16 +373,4 @@ impl App {
 
         app
     }
-
-    /// Record a successful issues/source load. Always stamps `last_synced`
-    /// alongside `source`/`all_issues` so the two can't drift apart — two
-    /// call sites had hand-assigned `source` without pairing it before this
-    /// helper existed (caught by the phase-3 UI-refresh review), so every
-    /// load path routes through this instead of assigning the fields
-    /// directly.
-    pub(crate) fn record_synced(&mut self, issues: Vec<IssueSummary>, source: Source) {
-        self.all_issues = issues;
-        self.source = source;
-        self.last_synced = Some(std::time::Instant::now());
-    }
 }

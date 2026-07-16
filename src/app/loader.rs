@@ -27,6 +27,16 @@ impl App {
         let tx = self.events_tx.clone();
         async_ops::dispatch_refresh(tx, generation, kind, force_demo);
     }
+
+    /// Record a successful issues/source load. Always stamps `last_synced`
+    /// alongside `source`/`all_issues` so the two can't drift apart — route
+    /// every load path through this instead of assigning the fields
+    /// directly.
+    pub(crate) fn record_synced(&mut self, issues: Vec<IssueSummary>, source: Source) {
+        self.all_issues = issues;
+        self.source = source;
+        self.last_synced = Some(std::time::Instant::now());
+    }
 }
 
 /// Open the on-disk cache for the current site, running the one-time

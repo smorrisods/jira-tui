@@ -716,6 +716,22 @@ fn header_sync_pill_shows_live_and_synced_when_wide() {
 }
 
 #[test]
+fn header_sync_pill_shows_cache_and_synced_when_wide() {
+    // Every other sync-pill test exercises only Source::Live — this covers
+    // the Cache arm (amber LED, username as the detail segment) so a future
+    // regression specific to Cache isn't invisible to the whole suite.
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.source = Source::Cache { user: "me".into() };
+    app.git.branch = Some("main".into());
+    let text = render(&app);
+    assert!(
+        text.contains("cache") && text.contains("synced"),
+        "a wide terminal should show the full sync pill for a cached source"
+    );
+}
+
+#[test]
 fn header_sync_pill_degrades_gracefully_instead_of_clipping_mid_word() {
     // Regression test: the sync pill's site/user detail segment used to be
     // included unconditionally, which combined with a long branch name and
