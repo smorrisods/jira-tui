@@ -40,6 +40,17 @@ impl App {
         self.quick_view && Self::point_in(self.quick_view_area.get(), x, y)
     }
 
+    /// Toggle the quick-view panel (`v`, or a middle-click on Home/List —
+    /// see `keys::mouse::handle_mouse`). Closing it forces keyboard focus
+    /// back to the list, matching `toggle_list_focus`'s own rule, so arrow
+    /// keys never end up stuck scrolling a now-hidden panel.
+    pub fn toggle_quick_view(&mut self) {
+        self.quick_view = !self.quick_view;
+        if !self.quick_view {
+            self.list_focus = ListFocus::List;
+        }
+    }
+
     /// Toggle keyboard focus between the list and the quick-view panel
     /// (`Tab`). A no-op — and forced back to the list — when quick view is
     /// closed, so arrow keys never get stuck scrolling a hidden panel.
