@@ -1,4 +1,10 @@
 //! The work list panel and its full-width quick-view companion.
+//!
+//! `issue_row` renders one issue as columns (selection bar, priority glyph,
+//! key with tree guide, type chip, status chip, summary, assignee, updated)
+//! that drop by priority as the terminal narrows (`list_columns`), plus a
+//! matching `column_header_line`. Below the narrow breakpoint the selected
+//! row grows a second line carrying whatever got dropped (SPEC.md §3).
 
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -6,14 +12,20 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::app::{App, ListFocus};
+use crate::app::{App, ListFocus, TreeRow};
 use crate::domain::IssueSummary;
 
+use super::list_columns::{column_set_for_width, ColumnSet};
 use super::{
-    accent, accent2, card_bordered, chip, danger, maple, muted, priority_colour, priority_glyph,
-    priority_style, selected_style, status_colour, status_short, status_style, truncate,
+    accent, accent2, card_bordered, chip, danger, faint, initials, maple, muted, priority_colour,
+    priority_glyph, priority_style, selected_style, status_colour, status_short, truncate,
     type_colour,
 };
+
+const KEY_WIDTH: usize = 8;
+const STATUS_WIDTH: usize = 10;
+const SUMMARY_WIDTH: usize = 40;
+const ASSIGNEE_WIDTH: usize = 16;
 
 pub(crate) fn draw_list(f: &mut Frame, app: &App, area: Rect, full: bool) {
     // Reflect whichever view is active (My Work / All Project Issues / a
@@ -26,14 +38,18 @@ pub(crate) fn draw_list(f: &mut Frame, app: &App, area: Rect, full: bool) {
     } else {
         label
     };
-    let mut title = format!("  {base} · {}", app.sort_label());
+    let mut title = format!("  ◂ {base} ▸ · {}", app.sort_label());
     if let Some(filter) = app.filter_label() {
         title.push_str(&format!(" · {filter}"));
     }
     if app.list_view_mode == crate::app::ListViewMode::Tree {
         title.push_str(" · tree");
     }
-    title.push_str(&format!("  ({})  ", app.issues.len()));
+    title.push_str(&format!(
+        "  ({} of {})  ",
+        app.issues.len(),
+        app.all_issues.len()
+    ));
     // Dim the list's border when the quick-view panel has keyboard focus
     // (Tab), so it's clear which panel arrow keys currently affect.
     let list_focused = !(app.quick_view && app.list_focus == ListFocus::QuickView);
@@ -42,17 +58,17 @@ pub(crate) fn draw_list(f: &mut Frame, app: &App, area: Rect, full: bool) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let rows = app.tree_rows();
-    let mut lines: Vec<Line> = Vec::new();
-    let height = inner.height as usize;
-    let cur_pos = rows
-        .iter()
-        .position(|(i, _)| *i == app.selected)
-        .unwrap_or(0);
+    let columns = column_set_for_width(inner.width);
+    let rows = app.tree_rows_detailed();
+    let mut lines: Vec<Line> = vec![column_header_line(&columns)];
+    // One line already spent on the header above.
+    let height = (inner.height as usize).saturating_sub(1);
+    let cur_pos = rows.iter().position(|r| r.idx == app.selected).unwrap_or(0);
     // simple scroll window around the selection
     let start = cur_pos.saturating_sub(height.saturating_sub(2).max(1) / 2);
-    for &(idx, depth) in rows.iter().skip(start).take(height) {
-        lines.push(issue_row(&app.issues[idx], idx == app.selected, depth));
+    for row in rows.iter().skip(start).take(height) {
+        let is_selected = row.idx == app.selected;
+        lines.extend(issue_row(&app.issues[row.idx], is_selected, row, &columns));
     }
     // Record geometry so mouse clicks can be mapped back to issues (via
     // `tree_rows` again — `list_start` is a position within it, not a raw
@@ -60,6 +76,30 @@ pub(crate) fn draw_list(f: &mut Frame, app: &App, area: Rect, full: bool) {
     app.list_area.set(inner);
     app.list_start.set(start);
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// One faint uppercase line naming only the columns actually present.
+fn column_header_line(columns: &ColumnSet) -> Line<'static> {
+    let style = Style::default().fg(faint());
+    let mut spans = vec![Span::styled(format!("   {:<KEY_WIDTH$} ", "KEY"), style)];
+    if columns.type_chip {
+        spans.push(Span::styled(format!("{:<6} ", "TYPE"), style));
+    }
+    spans.push(Span::styled(format!("{:<STATUS_WIDTH$} ", "STATUS"), style));
+    spans.push(Span::styled(
+        format!("{:<SUMMARY_WIDTH$}", "SUMMARY"),
+        style,
+    ));
+    if columns.assignee {
+        spans.push(Span::styled(
+            format!("{:<ASSIGNEE_WIDTH$}", "ASSIGNEE"),
+            style,
+        ));
+    }
+    if columns.updated {
+        spans.push(Span::styled("UPDATED", style));
+    }
+    Line::from(spans)
 }
 
 /// Full-width quick-view panel: the selected issue's fields and full ADF body,
@@ -143,11 +183,42 @@ pub(crate) fn draw_quick_view(f: &mut Frame, app: &App, area: Rect) {
     );
 }
 
+/// The box-drawing tree guide for the key column (SPEC.md §3): `▾ ` on a
+/// parent (never `▸ ` — collapse isn't implemented, see phase 4's plan),
+/// `├─ `/`└─ ` on a non-last/last child, with a `│` continuation for every
+/// ancestor level whose own siblings aren't exhausted yet. Empty in flat
+/// mode (`guide.depth == 0` and no children never draws anything but the
+/// parent marker).
+fn tree_guide(guide: &TreeRow, selected: bool) -> Span<'static> {
+    let style = selected_style(Style::default().fg(faint()), selected);
+    if guide.depth == 0 {
+        if guide.has_children {
+            Span::styled("▾ ", style)
+        } else {
+            Span::raw("")
+        }
+    } else {
+        let mut s = String::new();
+        for &continues in &guide.rails[..guide.depth - 1] {
+            s.push_str(if continues { "│ " } else { "  " });
+        }
+        s.push_str(if guide.is_last { "└─ " } else { "├─ " });
+        Span::styled(s, style)
+    }
+}
+
 /// A single row in the work list. Also reused by the search results list
-/// (always at `depth` 0) and the swimlane board's card summaries. `depth`
-/// nests a row under its parent in the tree view mode (see `app::tree`);
-/// pass 0 for the flat list.
-pub(crate) fn issue_row(issue: &IssueSummary, selected: bool, depth: usize) -> Line<'static> {
+/// (which computes its own `ColumnSet` from its own panel width, and passes
+/// a trivial flat `TreeRow` since search results aren't nested). Returns
+/// more than one `Line` only for the selected row on a narrow terminal
+/// (`columns.two_line`), which grows a second line carrying exactly what
+/// got dropped from the main columns (SPEC.md §3).
+pub(crate) fn issue_row(
+    issue: &IssueSummary,
+    selected: bool,
+    guide: &TreeRow,
+    columns: &ColumnSet,
+) -> Vec<Line<'static>> {
     // One selection language shared with the board and every picker: a
     // maple bar plus a low-alpha maple tint across the whole row — every
     // span below runs through `selected_style` so the tint has no gaps.
@@ -188,7 +259,7 @@ pub(crate) fn issue_row(issue: &IssueSummary, selected: bool, depth: usize) -> L
         Span::raw("")
     };
 
-    let updated_style = selected_style(
+    let secondary_style = selected_style(
         if selected {
             Style::default().fg(Color::Gray)
         } else {
@@ -197,30 +268,90 @@ pub(crate) fn issue_row(issue: &IssueSummary, selected: bool, depth: usize) -> L
         selected,
     );
 
-    let indent = if depth > 0 {
-        Span::styled(
-            format!("{}└ ", "  ".repeat(depth - 1)),
-            selected_style(Style::default().fg(muted()), selected),
-        )
-    } else {
-        Span::raw("")
-    };
-
-    Line::from(vec![
+    let mut spans = vec![
         Span::styled(cursor.to_string(), cursor_style),
         Span::styled(
             priority_glyph(&issue.priority),
             selected_style(priority_style(&issue.priority), selected),
         ),
         Span::styled(" ", selected_style(Style::default(), selected)),
-        indent,
-        Span::styled(format!("{:<8}", issue.key), key_style),
-        Span::styled(
-            format!("{:<11}", status_short(&issue.status)),
-            selected_style(status_style(&issue.status), selected),
-        ),
-        Span::styled(truncate(&issue.summary, 40), summary_style),
-        block_flag,
-        Span::styled(format!("  {}", issue.updated), updated_style),
-    ])
+        tree_guide(guide, selected),
+        Span::styled(format!("{:<KEY_WIDTH$}", issue.key), key_style),
+        Span::styled(" ", selected_style(Style::default(), selected)),
+    ];
+
+    if columns.type_chip {
+        spans.push(chip(
+            &format!("{:<4}", issue.issue_type),
+            type_colour(&issue.issue_type),
+        ));
+        spans.push(Span::styled(
+            " ",
+            selected_style(Style::default(), selected),
+        ));
+    }
+
+    spans.push(chip(
+        &format!("{:<STATUS_WIDTH$}", status_short(&issue.status)),
+        status_colour(&issue.status),
+    ));
+    spans.push(Span::styled(
+        " ",
+        selected_style(Style::default(), selected),
+    ));
+    spans.push(Span::styled(
+        truncate(&issue.summary, SUMMARY_WIDTH),
+        summary_style,
+    ));
+    spans.push(block_flag);
+
+    if columns.assignee {
+        let name = issue.assignee.as_deref().unwrap_or("unassigned");
+        let text = format!(
+            "  {} {}",
+            initials(name),
+            truncate(name, ASSIGNEE_WIDTH.saturating_sub(3))
+        );
+        spans.push(Span::styled(text, secondary_style));
+    }
+    if columns.updated {
+        spans.push(Span::styled(
+            format!("  {}", issue.updated),
+            secondary_style,
+        ));
+    }
+
+    let mut lines = vec![Line::from(spans)];
+
+    if columns.two_line && selected {
+        let mut second = vec![Span::raw("     ")];
+        second.push(chip(&issue.issue_type, type_colour(&issue.issue_type)));
+        second.push(Span::raw(" "));
+        let name = issue.assignee.as_deref().unwrap_or("unassigned");
+        second.push(Span::styled(
+            format!("{} {}", initials(name), name),
+            Style::default().fg(muted()),
+        ));
+        if let Some(parent) = &issue.epic {
+            second.push(Span::styled(
+                format!("  ↳ {parent}"),
+                Style::default().fg(muted()),
+            ));
+        }
+        lines.push(Line::from(second));
+    }
+
+    lines
+}
+
+/// A trivial, un-nested `TreeRow` for screens (like search results) that
+/// reuse `issue_row` outside tree mode.
+pub(crate) fn flat_guide() -> TreeRow {
+    TreeRow {
+        idx: 0,
+        depth: 0,
+        has_children: false,
+        is_last: true,
+        rails: Vec::new(),
+    }
 }

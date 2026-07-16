@@ -69,6 +69,52 @@ fn switch_view_to_all_project_then_back_to_my_work_round_trips() {
 }
 
 #[test]
+fn cycle_view_steps_forward_through_view_options_in_order() {
+    let mut app = demo_app();
+    let options = app.view_options();
+    assert_eq!(app.current_view, options[0], "starts on My Work");
+    app.cycle_view(1);
+    assert_eq!(app.current_view, options[1]);
+}
+
+#[test]
+fn cycle_view_wraps_at_either_end() {
+    let mut app = demo_app();
+    let options = app.view_options();
+    let last = options.last().unwrap().clone();
+
+    // Backward from the first view wraps to the last.
+    app.cycle_view(-1);
+    assert_eq!(app.current_view, last);
+
+    // Forward from the last view wraps back to the first.
+    app.cycle_view(1);
+    assert_eq!(app.current_view, options[0]);
+}
+
+#[test]
+fn cycle_view_loads_data_exactly_like_the_picker_does() {
+    // Same data path as confirm_view_switch — cycling to a teammate view
+    // should filter all_issues by that teammate's assignee, same as
+    // `confirm_view_switch_to_teammate_filters_by_assignee` above.
+    let mut app = demo_app();
+    let options = app.view_options();
+    let priya_idx = options
+        .iter()
+        .position(|v| *v == ViewKind::Teammate("priya.nair".into()))
+        .expect("priya.nair should be a demo teammate");
+    for _ in 0..priya_idx {
+        app.cycle_view(1);
+    }
+    assert_eq!(app.current_view, ViewKind::Teammate("priya.nair".into()));
+    assert!(!app.all_issues.is_empty());
+    assert!(app
+        .all_issues
+        .iter()
+        .all(|i| i.assignee.as_deref() == Some("priya.nair")));
+}
+
+#[test]
 fn refresh_preserves_the_current_view() {
     let mut app = demo_app();
     app.switch_view(ViewKind::Teammate("alex.chen".into()));

@@ -50,6 +50,7 @@ pub use onboarding::{Field, OnboardingState, WelcomePhase};
 pub use search::{SearchRow, SearchState};
 pub use sort_filter::SortKey;
 pub use tree::ListViewMode;
+pub(crate) use tree::TreeRow;
 
 use loader::load_issues;
 

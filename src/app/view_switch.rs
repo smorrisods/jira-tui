@@ -9,19 +9,44 @@ use super::loader::load_issues_for;
 use super::App;
 
 impl App {
-    /// Open the view picker: My Work, All Project Issues, then one entry per
-    /// teammate currently visible in `all_issues` — seeded for free from
-    /// already-loaded assignees, no extra API call needed just to populate
-    /// the list (per the design sketch in issue #6).
-    pub fn open_view_picker(&mut self) {
+    /// My Work, All Project Issues, then one entry per teammate currently
+    /// visible in `all_issues` — seeded for free from already-loaded
+    /// assignees, no extra API call needed just to populate the list (per
+    /// the design sketch in issue #6). Shared by the view picker and `<`/`>`
+    /// view-flipping, so both cycle through the exact same ordered list.
+    pub fn view_options(&self) -> Vec<ViewKind> {
         let mut options = vec![ViewKind::MyWork, ViewKind::AllProject];
         options.extend(self.known_teammates().into_iter().map(ViewKind::Teammate));
+        options
+    }
+
+    /// Open the view picker for a direct jump to any view.
+    pub fn open_view_picker(&mut self) {
+        let options = self.view_options();
         self.view_picker_index = options
             .iter()
             .position(|v| *v == self.current_view)
             .unwrap_or(0);
         self.view_picker_options = options;
         self.view_picker_open = true;
+    }
+
+    /// `<`/`>`: step to the next/previous view in `view_options`' order,
+    /// wrapping at either end, and load it exactly like picking it from the
+    /// view picker would (`switch_view` — same cache-then-live data path,
+    /// same spinner-in-footer behaviour).
+    pub fn cycle_view(&mut self, delta: isize) {
+        let options = self.view_options();
+        if options.is_empty() {
+            return;
+        }
+        let cur = options
+            .iter()
+            .position(|v| *v == self.current_view)
+            .unwrap_or(0) as isize;
+        let len = options.len() as isize;
+        let next = (((cur + delta) % len) + len) % len;
+        self.switch_view(options[next as usize].clone());
     }
 
     pub fn close_view_picker(&mut self) {
