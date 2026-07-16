@@ -1,6 +1,10 @@
 //! Mouse input: a distinct input modality from the keyboard, with its own
 //! opt-in toggle and its own "pointer, not keyboard focus" scroll routing
-//! (see `scroll_at`'s doc comment).
+//! (see `scroll_at`'s doc comment). Right-click stands in for a mouse
+//! back/forward button — crossterm's `MouseButton` has no such variant at
+//! all (checked upstream, including its unreleased `master` branch), so a
+//! real back/forward button press can't be told apart from any other input
+//! this app receives.
 
 use crossterm::event::{
     DisableMouseCapture, EnableMouseCapture, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -27,6 +31,21 @@ pub(crate) fn handle_mouse(app: &mut App, me: MouseEvent) {
             if matches!(app.screen, Screen::Home | Screen::List) =>
         {
             app.toggle_quick_view();
+        }
+        // Right-click steps back (see this module's doc comment for why
+        // right-click, not an actual back button). Mirrors `←`'s own
+        // Detail-history-then-back-out chain exactly. Deliberately excludes
+        // Home: `back_or_quit` quits the app there, and a stray right-click
+        // shouldn't be able to do that the way a deliberate `Esc` keypress
+        // can.
+        MouseEventKind::Down(MouseButton::Right)
+            if matches!(app.screen, Screen::Detail | Screen::List | Screen::Board) =>
+        {
+            if app.screen == Screen::Detail && app.can_go_back() {
+                app.go_back();
+            } else {
+                super::back_or_quit(app);
+            }
         }
         _ => {}
     }
@@ -57,7 +76,7 @@ pub(super) fn toggle_mouse(app: &mut App) {
     if app.mouse.enabled {
         let _ = execute!(std::io::stdout(), EnableMouseCapture);
         app.status =
-            "mouse mode on · click to open · drag to copy · middle-click = quick view · shift-drag = native"
+            "mouse mode on · click to open · drag to copy · middle-click = quick view · right-click = back · shift-drag = native"
                 .into();
     } else {
         let _ = execute!(std::io::stdout(), DisableMouseCapture);
@@ -162,6 +181,69 @@ mod tests {
         };
         handle_mouse(&mut app, middle_down);
         assert!(!app.quick_view, "Board has no quick-view panel to toggle");
+    }
+
+    fn right_click(row: u16) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Down(crossterm::event::MouseButton::Right),
+            column: 10,
+            row,
+            modifiers: KeyModifiers::empty(),
+        }
+    }
+
+    /// Right-click on Detail steps through in-body link history first,
+    /// exactly like `←` does — see `app::history`.
+    #[test]
+    fn right_click_on_detail_steps_back_through_link_history() {
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        let first = app.detail.as_ref().unwrap().key.clone();
+        app.open_by_key("DS-9001");
+        assert!(app.can_go_back());
+
+        handle_mouse(&mut app, right_click(5));
+
+        assert_eq!(app.screen, Screen::Detail, "history exists, so stay put");
+        assert_eq!(app.detail.as_ref().unwrap().key, first);
+    }
+
+    /// Right-click on Detail with no history left falls through to leaving
+    /// the screen, matching `←`'s own fallback once history is exhausted.
+    #[test]
+    fn right_click_on_detail_with_no_history_leaves_the_screen() {
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        assert!(!app.can_go_back());
+
+        handle_mouse(&mut app, right_click(5));
+
+        assert_eq!(app.screen, Screen::Home);
+    }
+
+    #[test]
+    fn right_click_on_list_and_board_returns_to_home() {
+        let mut app = demo_app();
+        app.screen = Screen::List;
+        handle_mouse(&mut app, right_click(5));
+        assert_eq!(app.screen, Screen::Home);
+
+        let mut app = demo_app();
+        app.open_board();
+        handle_mouse(&mut app, right_click(5));
+        assert_eq!(app.screen, Screen::Home);
+    }
+
+    /// Deliberately excluded: `back_or_quit` quits the app on Home, and a
+    /// stray right-click shouldn't be able to do that.
+    #[test]
+    fn right_click_on_home_does_nothing() {
+        let mut app = demo_app();
+        handle_mouse(&mut app, right_click(5));
+        assert_eq!(app.screen, Screen::Home);
+        assert!(!app.should_quit);
     }
 
     /// CLAUDE.md "what to keep true": "Mouse mode is opt-in: Shift-drag must
