@@ -4,8 +4,7 @@
 //! see `detail_columns::detail_layout_for_width`.
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::style::Color;
 use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::Frame;
 
@@ -73,12 +72,21 @@ fn draw_wide(
         ])
         .split(area);
 
-    let identity_height = wide.identity.lines.len() as u16;
+    // The identity block's summary line has no fixed length — a long one
+    // needs more than its 2 logical lines once wrapped at the main
+    // column's width, the same under-allocation bug the rail panels had
+    // (see `wrapped_row_count`'s own doc comment): sizing from the raw
+    // line count and never calling `.wrap()` on the Paragraph meant a long
+    // summary was silently hard-clipped mid-word instead of wrapping.
+    let identity_height = wrapped_row_count(&wide.identity.lines, cols[0].width);
     let main_rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(identity_height), Constraint::Min(3)])
         .split(cols[0]);
-    f.render_widget(Paragraph::new(wide.identity.lines), main_rows[0]);
+    f.render_widget(
+        Paragraph::new(wide.identity.lines).wrap(Wrap { trim: false }),
+        main_rows[0],
+    );
     app.detail_main_area.set(main_rows[1]);
     f.render_widget(
         Paragraph::new(wide.main.lines)
@@ -107,24 +115,28 @@ fn draw_wide(
     );
 }
 
-/// The static side rail: four unbordered mini-panels, sized to their own
-/// wrapped content (via `wrapped_row_count` — the logical line count alone
-/// under-allocates height once a line wraps at the rail's width, silently
-/// clipping trailing lines) except the last panel, which takes whatever's
+/// The static side rail: four bordered mini-panels (matching this app's
+/// established "titled card" look everywhere else — quick view, Board's
+/// cards, the outer Detail card itself), sized to their own wrapped content
+/// (via `wrapped_row_count`, against the *inner* content width now that a
+/// border eats 2 columns — the logical line count alone under-allocates
+/// height once a line wraps, silently clipping trailing lines) plus 2 rows
+/// for the top/bottom border, except the last panel, which takes whatever's
 /// left. Deliberately non-scrolling — panels are short/bounded, and
 /// clipping on genuine overflow (more content than the rail area has room
 /// for at all) is an accepted scope cut for this phase (see the module
 /// doc's plan reference).
 fn draw_rail(f: &mut Frame, area: Rect, panels: [(String, Color, Panel); 4]) {
     let last = panels.len() - 1;
+    let content_width = area.width.saturating_sub(2);
     let constraints: Vec<Constraint> = panels
         .iter()
         .enumerate()
         .map(|(i, (_, _, panel))| {
             if i == last {
-                Constraint::Min(1)
+                Constraint::Min(3)
             } else {
-                Constraint::Length(wrapped_row_count(&panel.lines, area.width) + 1)
+                Constraint::Length(wrapped_row_count(&panel.lines, content_width) + 2)
             }
         })
         .collect();
@@ -138,20 +150,12 @@ fn draw_rail(f: &mut Frame, area: Rect, panels: [(String, Color, Panel); 4]) {
 }
 
 fn draw_rail_panel(f: &mut Frame, area: Rect, title: &str, colour: Color, panel: Panel) {
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(0)])
-        .split(area);
-    f.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            title.to_string(),
-            Style::default().fg(colour).add_modifier(Modifier::BOLD),
-        ))),
-        rows[0],
-    );
+    let block = card(&format!("  {title}  "), colour);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
     f.render_widget(
         Paragraph::new(panel.lines).wrap(Wrap { trim: false }),
-        rows[1],
+        inner,
     );
 }
 

@@ -112,6 +112,42 @@ fn detail_screen_wide_layout_shows_side_rail_panels() {
         text.contains("updated:"),
         "the people & meta panel's trailing 'updated:' line must not be clipped"
     );
+    // Regression test: the rail panels used to have no border at all —
+    // just a plain title line with the body text running straight to the
+    // pane's edge — so each panel now gets its own rounded card frame.
+    // Every screen's header/footer chrome also has rounded corners, so
+    // this counts at least the outer Detail card plus its 4 rail panels
+    // (5) on top of whatever header/footer/etc. contribute, rather than
+    // asserting an exact total.
+    assert!(
+        text.matches('╭').count() >= 5,
+        "the outer Detail card plus all 4 rail panels should each have their own border"
+    );
+}
+
+#[test]
+fn detail_screen_wide_layout_wraps_a_long_summary_instead_of_clipping_it() {
+    // Regression test: the identity block (key/summary/chips) was sized
+    // from its raw logical line count and never wrapped, so a summary
+    // longer than the main column's width was silently hard-clipped
+    // mid-word at the terminal edge instead of wrapping onto another row —
+    // the same under-allocation bug already fixed for the rail panels via
+    // `wrapped_row_count`, just missed here.
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.open_by_key("DS-2722");
+    let mut detail = app.detail.clone().unwrap();
+    detail.summary = "A deliberately long summary meant to exceed the main \
+        column's width so it wraps onto another row instead of being cut \
+        off mid word RIGHTMOST"
+        .to_string();
+    app.detail = Some(detail);
+    let text = render_at(&app, 120, 34);
+    assert!(
+        text.contains("RIGHTMOST"),
+        "a long summary must wrap onto additional rows, not get hard-clipped \
+         at the main column's width"
+    );
 }
 
 #[test]
