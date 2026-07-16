@@ -22,7 +22,11 @@ fn dump(buf: &Buffer) -> String {
 }
 
 fn render(app: &App) -> String {
-    let backend = TestBackend::new(120, 40);
+    render_at(app, 120, 40)
+}
+
+fn render_at(app: &App, width: u16, height: u16) -> String {
+    let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal.draw(|f| ui::draw(f, app)).unwrap();
     dump(terminal.backend().buffer())
@@ -402,6 +406,69 @@ fn work_list_title_reflects_the_active_view() {
     assert!(
         text.contains("all alex.chen's work"),
         "the full-screen List view should prefix a non-'all'-prefixed label with 'all'"
+    );
+}
+
+#[test]
+fn list_screen_shows_column_header_and_view_flip_arrows_at_120x34() {
+    let mut app = demo_app();
+    app.screen = Screen::List;
+    let text = render_at(&app, 120, 34);
+    assert!(
+        text.contains('◂') && text.contains('▸'),
+        "title should show view-flip arrows"
+    );
+    assert!(
+        text.contains(" of "),
+        "title should show the N of M count format"
+    );
+    for label in ["KEY", "TYPE", "STATUS", "SUMMARY", "ASSIGNEE", "UPDATED"] {
+        assert!(
+            text.contains(label),
+            "column header should show {label} at a wide terminal"
+        );
+    }
+}
+
+#[test]
+fn list_screen_tree_mode_shows_box_drawing_guides() {
+    let mut app = demo_app();
+    app.screen = Screen::List;
+    app.toggle_list_view_mode();
+    assert_eq!(app.list_view_mode, jira_tui::app::ListViewMode::Tree);
+    let text = render_at(&app, 120, 34);
+    // DS-2722 (an Epic) has DS-2725 as its only child in the demo data.
+    assert!(
+        text.contains('▾'),
+        "a parent with children should show the expanded-parent marker"
+    );
+    assert!(
+        text.contains("└─") || text.contains("├─"),
+        "a child row should show a box-drawing guide"
+    );
+}
+
+#[test]
+fn list_screen_drops_optional_columns_and_shows_two_line_selected_row_at_84x46() {
+    let mut app = demo_app();
+    app.screen = Screen::List;
+    app.selected = app
+        .issues
+        .iter()
+        .position(|i| i.key == "DS-2725")
+        .expect("DS-2725 should be in the demo data");
+    let text = render_at(&app, 84, 46);
+    assert!(
+        !text.contains("ASSIGNEE") && !text.contains("TYPE"),
+        "assignee/type column headers should be dropped below the narrow breakpoint"
+    );
+    assert!(
+        text.contains("↳ DS-2722"),
+        "the selected row's second line should show its parent key"
+    );
+    assert!(
+        text.contains("all keys"),
+        "the footer's pinned tail should still render alongside the narrower list (regression guard for phase 2)"
     );
 }
 

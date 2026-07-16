@@ -93,7 +93,13 @@ async fn run(terminal: &mut Term, app: &mut App) -> Result<()> {
     let mut window_title = String::new();
 
     loop {
-        terminal.draw(|f| ui::draw(f, app))?;
+        // Cloned immediately: `Terminal::draw` swaps its double buffer
+        // before returning, so `terminal.current_buffer_mut()` queried any
+        // later in this loop iteration would hand back the blank buffer
+        // being prepared for the *next* frame rather than what's actually
+        // on screen — this is the only point where the just-rendered
+        // content is still reachable, for the drag-to-copy read below.
+        let last_frame = terminal.draw(|f| ui::draw(f, app))?.buffer.clone();
 
         // Reflect the issue currently being viewed (full detail, its
         // preview/edit flow, or the quick-view panel) in the window title,
@@ -127,7 +133,7 @@ async fn run(terminal: &mut Term, app: &mut App) -> Result<()> {
 
         // Fulfil a drag-select copy using the frame we just rendered.
         if let Some((y0, y1)) = app.mouse.pending_copy.take() {
-            let text = editor_launch::read_rows(terminal, y0, y1);
+            let text = editor_launch::read_rows(&last_frame, y0, y1);
             let n = text.lines().filter(|l| !l.trim().is_empty()).count();
             let _ = jira_tui::infra::osc52_copy(&text);
             app.status = format!("copied {n} line(s) to clipboard");

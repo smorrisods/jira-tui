@@ -8,7 +8,8 @@ use ratatui::Frame;
 
 use crate::app::{App, SearchRow};
 
-use super::list::issue_row;
+use super::list::{flat_guide, issue_row};
+use super::list_columns::column_set_for_width;
 use super::{accent, accent2, card, card_bordered, maple, muted, selected_style, warn};
 
 pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
@@ -49,6 +50,8 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
+    let columns = column_set_for_width(inner.width);
+    let guide = flat_guide();
     let mut lines: Vec<Line> = Vec::new();
     for (i, row) in app.search.rows.iter().enumerate() {
         let selected = i == app.search.selected;
@@ -87,7 +90,7 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
             }
             SearchRow::Match(idx) => {
                 if let Some(issue) = app.all_issues.get(*idx) {
-                    lines.push(issue_row(issue, selected, 0));
+                    lines.extend(issue_row(issue, selected, &guide, &columns));
                 }
             }
         }

@@ -57,13 +57,15 @@ impl App {
     /// Map a screen row to an issue index within the recorded list area.
     /// `list_start` is a position within `tree_rows()` (which is just
     /// `0..issues.len()` in `Flat` mode), not a raw index into
-    /// `self.issues` — see `ui::list::draw_list`.
+    /// `self.issues` — see `ui::list::draw_list`. The area's first screen
+    /// row (`y == area.y`) is the column header line, not a data row, so it
+    /// maps to no issue; every row below it is offset back by one.
     pub fn list_index_at(&self, y: u16) -> Option<usize> {
         let area = self.list_area.get();
-        if area.height == 0 || y < area.y || y >= area.y + area.height {
+        if area.height == 0 || y <= area.y || y >= area.y + area.height {
             return None;
         }
-        let pos = self.list_start.get() + (y - area.y) as usize;
+        let pos = self.list_start.get() + (y - area.y - 1) as usize;
         self.tree_rows().get(pos).map(|(idx, _)| *idx)
     }
 

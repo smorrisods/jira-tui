@@ -121,6 +121,10 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
         desc: "switch view (My Work / All Project Issues / teammate)",
     },
     KeyHint {
+        key: "‹ / ›",
+        desc: "cycle view in place (same order as V's picker)",
+    },
+    KeyHint {
         key: "a",
         desc: "about panel",
     },

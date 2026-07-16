@@ -9,8 +9,10 @@ fn list_index_at_maps_rows_to_issues() {
     let app = demo_app();
     app.list_area.set(Rect::new(0, 4, 80, 8));
     app.list_start.set(0);
-    assert_eq!(app.list_index_at(4), Some(0));
-    assert_eq!(app.list_index_at(6), Some(2));
+    // The area's first row is the column header line, not a data row.
+    assert_eq!(app.list_index_at(4), None);
+    assert_eq!(app.list_index_at(5), Some(0));
+    assert_eq!(app.list_index_at(7), Some(2));
     // Above the list area.
     assert_eq!(app.list_index_at(0), None);
     // Below the populated rows.
@@ -26,7 +28,7 @@ fn click_opens_detail() {
     app.mouse_up(0, 5);
     assert_eq!(app.screen, Screen::Detail);
     assert!(app.detail.is_some());
-    assert_eq!(app.selected, 1);
+    assert_eq!(app.selected, 0);
 }
 
 #[test]

@@ -32,6 +32,7 @@ mod home;
 mod jax_companion;
 mod keymap;
 mod list;
+mod list_columns;
 mod preview;
 mod search;
 mod transition_picker;
@@ -118,9 +119,10 @@ pub(crate) fn danger() -> Color {
 pub(crate) fn muted() -> Color {
     theme_colour((0x77, 0x83, 0x8F), Color::DarkGray)
 }
-// FAINT (tertiary text, tree guides, group labels) isn't added yet — nothing
-// in this phase uses it (tree guides are phase 4, footer group labels are
-// phase 2). Add it alongside whichever phase first needs it.
+/// Tertiary text, tree guides, and column-header labels.
+pub(crate) fn faint() -> Color {
+    theme_colour((0x4A, 0x57, 0x63), Color::DarkGray)
+}
 /// Not part of the 8-token palette table — shared by the Task type chip and
 /// `priority_colour`'s Low/Lowest arm, the two places that want "a blue"
 /// without it being a named theme concept of its own.
@@ -401,8 +403,12 @@ pub(crate) fn status_colour(s: &str) -> Color {
         "Done" => ok(),
         "In Progress" => accent(),
         "In Review" => accent2(),
-        "To Do" | "Backlog" => muted(),
-        _ => Color::White,
+        // Everything else — including "To Do"/"Backlog" and any workflow
+        // status this codebase doesn't special-case (e.g. "Blocked", "In
+        // QA") — falls back to the theme-aware muted tone rather than a
+        // bare `Color::White`, so an unrecognized status still reads as a
+        // subdued chip instead of a jarring solid-white block.
+        _ => muted(),
     }
 }
 
@@ -422,16 +428,29 @@ pub(crate) fn type_colour(issue_type: &str) -> Color {
     }
 }
 
-fn status_style(s: &str) -> Style {
-    Style::default().fg(status_colour(s))
-}
-
 pub(crate) fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
     } else {
         let cut: String = s.chars().take(max.saturating_sub(1)).collect();
         format!("{cut}…")
+    }
+}
+
+/// The assignee column's "initials avatar" (SPEC.md §3): first+last initial
+/// for a "First Last"-shaped display name, the first two characters of a
+/// single-word name, or `?` for an empty one.
+pub(crate) fn initials(name: &str) -> String {
+    let words: Vec<&str> = name.split_whitespace().collect();
+    match words.as_slice() {
+        [] => "?".into(),
+        [one] => one.chars().take(2).collect::<String>().to_uppercase(),
+        [first, .., last] => format!(
+            "{}{}",
+            first.chars().next().unwrap_or('?'),
+            last.chars().next().unwrap_or('?')
+        )
+        .to_uppercase(),
     }
 }
 
@@ -534,5 +553,14 @@ mod tests {
             selection_bg_for(Color::Rgb(0xE8, 0x83, 0x4A)),
             blend(Color::Rgb(0xE8, 0x83, 0x4A), 0.20)
         );
+    }
+
+    #[test]
+    fn initials_handles_empty_single_and_multi_word_names() {
+        assert_eq!(initials(""), "?");
+        assert_eq!(initials("   "), "?");
+        assert_eq!(initials("Zephyr"), "ZE");
+        assert_eq!(initials("Scott Morris"), "SM");
+        assert_eq!(initials("Alex J. Chen"), "AC");
     }
 }

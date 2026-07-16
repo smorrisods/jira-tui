@@ -254,6 +254,12 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('V') if matches!(app.screen, Screen::Home | Screen::List) => {
             app.open_view_picker();
         }
+        KeyCode::Char('<') if matches!(app.screen, Screen::Home | Screen::List) => {
+            app.cycle_view(-1);
+        }
+        KeyCode::Char('>') if matches!(app.screen, Screen::Home | Screen::List) => {
+            app.cycle_view(1);
+        }
 
         KeyCode::Char('l') if app.screen != Screen::Detail => app.screen = Screen::List,
 
@@ -479,5 +485,33 @@ mod tests {
         assert_eq!(app.screen, Screen::About);
         handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
         assert_eq!(app.screen, Screen::Detail);
+    }
+
+    #[test]
+    fn view_flip_keys_cycle_on_home_and_list() {
+        let options = demo_app().view_options();
+        for screen in [Screen::Home, Screen::List] {
+            let mut app = demo_app();
+            app.screen = screen;
+            handle_key(&mut app, KeyEvent::from(KeyCode::Char('>')));
+            assert_eq!(app.current_view, options[1], "'>' should advance the view");
+            handle_key(&mut app, KeyEvent::from(KeyCode::Char('<')));
+            assert_eq!(
+                app.current_view, options[0],
+                "'<' should step back to the previous view"
+            );
+        }
+    }
+
+    #[test]
+    fn view_flip_keys_do_nothing_on_board() {
+        let mut app = demo_app();
+        app.open_board();
+        let before = app.current_view.clone();
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('>')));
+        assert_eq!(
+            app.current_view, before,
+            "view-flipping is scoped to Home/List, not Board"
+        );
     }
 }
