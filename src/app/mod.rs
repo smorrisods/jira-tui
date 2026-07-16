@@ -126,6 +126,14 @@ pub struct App {
     pub(crate) detail_back: Vec<String>,
     pub(crate) detail_forward: Vec<String>,
 
+    /// Last-3 distinct issue keys opened into Detail, most-recent-first —
+    /// backs Home's "recent" card/strip (SPEC.md §5). Independent of
+    /// `detail_back`/`detail_forward` above (which track in-body-link
+    /// navigation within one Detail-viewing session and get cleared on
+    /// fresh opens): this list is durable across screens and views, and is
+    /// only ever capped, never cleared.
+    pub(crate) recent: Vec<String>,
+
     // Search / go-to-issue.
     pub search: SearchState,
 
@@ -323,6 +331,7 @@ impl App {
             link_index: 0,
             detail_back: Vec::new(),
             detail_forward: Vec::new(),
+            recent: Vec::new(),
             search: SearchState::default(),
             board_sel: BoardSelection::default(),
             board_scroll: 0,

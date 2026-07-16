@@ -89,3 +89,26 @@ fn go_back_and_go_forward_are_no_ops_with_empty_history() {
     app.go_forward();
     assert_eq!(app.detail.as_ref().unwrap().key, key);
 }
+
+#[test]
+fn note_recent_caps_at_three_most_recent_first() {
+    let mut app = demo_app();
+    app.open_by_key("DS-1");
+    app.open_by_key("DS-2");
+    app.open_by_key("DS-3");
+    app.open_by_key("DS-4");
+    assert_eq!(app.recent, vec!["DS-4", "DS-3", "DS-2"]);
+}
+
+#[test]
+fn note_recent_moves_a_reopened_key_to_front_instead_of_duplicating() {
+    let mut app = demo_app();
+    app.open_by_key("DS-1");
+    app.open_by_key("DS-2");
+    app.open_by_key("DS-1");
+    assert_eq!(
+        app.recent,
+        vec!["DS-1", "DS-2"],
+        "re-opening DS-1 should move it to front, not add a duplicate entry"
+    );
+}

@@ -107,6 +107,7 @@ pub(super) fn summary_from(issue: &Value) -> IssueSummary {
         .unwrap_or("?")
         .to_string();
     let f = issue.get("fields").cloned().unwrap_or(Value::Null);
+    let raw_updated = str_field(&f, &["updated"]);
     IssueSummary {
         key,
         summary: str_field(&f, &["summary"]).unwrap_or_default(),
@@ -115,13 +116,25 @@ pub(super) fn summary_from(issue: &Value) -> IssueSummary {
         priority: priority_from(&str_field(&f, &["priority", "name"]).unwrap_or_default()),
         assignee: str_field(&f, &["assignee", "displayName"]),
         blocked: is_blocked(&f),
-        updated: str_field(&f, &["updated"])
+        updated: raw_updated
+            .as_deref()
             .map(|s| s.chars().take(10).collect())
             .unwrap_or_default(),
+        updated_at: raw_updated.as_deref().and_then(parse_jira_updated),
         // Used to group issues into board swimlanes. Usually an Epic, but
         // whatever Jira reports as the parent for issues without one.
         epic: str_field(&f, &["parent", "key"]),
     }
+}
+
+/// Parses Jira's `updated` timestamp shape (e.g.
+/// `"2024-01-02T03:04:05.000+0000"`) into a UTC instant, for time-window
+/// queries like `App::done_this_week` — the display string (`updated`,
+/// above) stays a plain truncated date and is unaffected by parse failures.
+fn parse_jira_updated(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S%.3f%z")
+        .ok()
+        .map(|dt| dt.with_timezone(&chrono::Utc))
 }
 
 pub fn whoami(cfg: &Config) -> Result<String> {

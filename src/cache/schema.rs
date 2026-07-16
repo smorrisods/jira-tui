@@ -7,7 +7,7 @@ use super::{cache_db_path, Cache};
 
 /// Current schema version. Bump this and add a branch in `migrate` when the
 /// schema changes.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 impl Cache {
     /// Open (creating if needed) the cache database at its standard XDG path.
@@ -93,6 +93,11 @@ impl Cache {
                     PRIMARY KEY (view_id, issue_id)
                 );",
             )?;
+        }
+
+        if current_version < 2 {
+            self.conn
+                .execute_batch("ALTER TABLE issues ADD COLUMN updated_at TEXT;")?;
         }
 
         self.conn.execute(

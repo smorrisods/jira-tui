@@ -68,6 +68,54 @@ fn blocked_returns_only_blocked_issues() {
 }
 
 #[test]
+fn in_review_returns_only_in_review_issues() {
+    let mut app = demo_app();
+    app.all_issues = vec![
+        issue("DS-1", None, "In Review", false),
+        issue("DS-2", None, "To Do", false),
+    ];
+    let in_review = app.in_review();
+    assert_eq!(
+        in_review.iter().map(|i| i.key.as_str()).collect::<Vec<_>>(),
+        vec!["DS-1"]
+    );
+}
+
+#[test]
+fn done_this_week_excludes_stale_done_issues_and_issues_with_no_timestamp() {
+    let mut app = demo_app();
+    let now = chrono::Utc::now();
+    app.all_issues = vec![
+        IssueSummary {
+            status: "Done".into(),
+            updated_at: Some(now - chrono::Duration::days(2)),
+            ..crate::test_support::sample_issue("DS-1")
+        },
+        IssueSummary {
+            status: "Done".into(),
+            updated_at: Some(now - chrono::Duration::days(10)),
+            ..crate::test_support::sample_issue("DS-2")
+        },
+        IssueSummary {
+            status: "Done".into(),
+            updated_at: None,
+            ..crate::test_support::sample_issue("DS-3")
+        },
+        IssueSummary {
+            status: "In Progress".into(),
+            updated_at: Some(now - chrono::Duration::hours(1)),
+            ..crate::test_support::sample_issue("DS-4")
+        },
+    ];
+    let done = app.done_this_week();
+    assert_eq!(
+        done.iter().map(|i| i.key.as_str()).collect::<Vec<_>>(),
+        vec!["DS-1"],
+        "only the Done issue updated within the last 7 days should count"
+    );
+}
+
+#[test]
 fn active_flash_shows_the_message_until_it_expires() {
     let mut app = demo_app();
     assert_eq!(

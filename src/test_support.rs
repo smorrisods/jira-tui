@@ -36,6 +36,7 @@ pub(crate) fn sample_issue(key: &str) -> IssueSummary {
         assignee: None,
         blocked: false,
         updated: "now".into(),
+        updated_at: None,
         epic: None,
     }
 }

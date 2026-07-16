@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use chrono::{TimeZone, Utc};
+
 use crate::domain::{IssueSummary, Priority};
 
 use super::Cache;
@@ -15,6 +17,9 @@ fn sample_issues() -> Vec<IssueSummary> {
             assignee: Some("scott".into()),
             blocked: false,
             updated: "1h ago".into(),
+            // Exercises the `Some` round-trip path; DS-2 (below) exercises
+            // `None`, since both must survive insert/select intact.
+            updated_at: Some(Utc.with_ymd_and_hms(2024, 1, 2, 3, 4, 5).unwrap()),
             epic: None,
         },
         IssueSummary {
@@ -26,6 +31,7 @@ fn sample_issues() -> Vec<IssueSummary> {
             assignee: None,
             blocked: true,
             updated: "2d ago".into(),
+            updated_at: None,
             epic: Some("DS-100".into()),
         },
     ]
@@ -122,6 +128,35 @@ fn save_and_load_view_round_trips_issues_in_order() {
     assert_eq!(loaded[1].key, "DS-2");
     assert_eq!(loaded[1].priority, Priority::Medium);
     assert_eq!(loaded[1].epic.as_deref(), Some("DS-100"));
+    assert_eq!(
+        loaded[0].updated_at,
+        Some(Utc.with_ymd_and_hms(2024, 1, 2, 3, 4, 5).unwrap())
+    );
+    assert_eq!(loaded[1].updated_at, None);
+}
+
+#[test]
+fn a_fresh_database_migrates_straight_to_the_latest_schema_version() {
+    // A brand-new DB starts at version 0, so both the version-1 and
+    // version-2 migration branches must run in sequence on first open —
+    // covers the `updated_at` column existing (and being usable) even
+    // without ever going through an intermediate version-1 database.
+    let (mut cache, _dir) = open_temp();
+    let site = cache.site_id("https://a.atlassian.net").unwrap();
+    cache
+        .save_view(
+            site,
+            "my_work",
+            "My Work",
+            "assignee = currentUser()",
+            &sample_issues(),
+        )
+        .unwrap();
+    let loaded = cache.load_view(site, "my_work").unwrap().unwrap();
+    assert_eq!(
+        loaded[0].updated_at,
+        Some(Utc.with_ymd_and_hms(2024, 1, 2, 3, 4, 5).unwrap())
+    );
 }
 
 #[test]

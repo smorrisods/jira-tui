@@ -35,14 +35,14 @@ impl App {
     /// The comment section's header/step offsets for whichever document is
     /// actually on screen right now: the Detail screen's wide or narrow
     /// layout (picked via the last-rendered `detail_area`'s width, the same
-    /// idiom `app::mouse::link_at` already uses), or the quick-view panel's
-    /// unchanged flat document everywhere else. Kept in step with
-    /// `ui::detail`/`ui::list::draw_quick_view` by construction — same
-    /// "recompute, don't cache" rationale as `active_links`.
+    /// idiom `app::mouse::link_at` already uses). The quick-view panel
+    /// (SPEC.md §4) shows no comments section at all, so it has none to jump
+    /// to — `jump_to_comments`/`next_comment`/`prev_comment` already
+    /// degrade gracefully (their own "no comments on this issue" status)
+    /// when given an empty offset list.
     fn active_comment_offsets(&self, detail: &IssueDetail) -> (Option<usize>, Vec<usize>) {
         if self.screen != Screen::Detail {
-            let rendered = crate::render::issue_detail_lines(detail);
-            return (rendered.comments_header, rendered.comment_starts);
+            return (None, Vec::new());
         }
         let current_user = self.current_user_display();
         let updated = self.issue_updated(&detail.key).to_string();

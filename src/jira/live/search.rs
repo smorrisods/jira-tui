@@ -197,6 +197,14 @@ mod tests {
         assert_eq!(issue.priority, Priority::Highest);
         assert_eq!(issue.assignee.as_deref(), Some("Ada Lovelace"));
         assert_eq!(issue.updated, "2024-01-02");
+        assert_eq!(
+            issue.updated_at,
+            Some(
+                chrono::DateTime::parse_from_rfc3339("2024-01-02T03:04:05Z")
+                    .unwrap()
+                    .with_timezone(&chrono::Utc)
+            )
+        );
         assert_eq!(issue.epic.as_deref(), Some("DS-0"));
         assert!(
             issue.blocked,

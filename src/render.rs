@@ -6,15 +6,20 @@
 //!
 //! The body is built from small section-builder functions (`identity_lines`,
 //! `meta_lines`, `workflow_lines`, `links_lines`, `children_lines`,
-//! `description_lines`, `activity_lines_plain`/`activity_lines_cards`), each
-//! producing a self-contained `Vec<Line>`. Three composers concatenate them
-//! in different orders/arrangements without ever slicing a shared vec, so
+//! `description_lines`, `activity_lines_cards`, plus quick view's own
+//! `quick_view_chip_line`/`quick_view_kv_fields`/`quick_view_meta_lines`/
+//! `quick_view_inline_kv_line`), each producing a self-contained `Vec<Line>`.
+//! The composers below concatenate them in different orders/arrangements
+//! without ever slicing a shared vec, so
 //! `comments_header`/`comment_starts`/`LinkTarget.line` always stay absolute
 //! indices into whatever `Vec<Line>` is actually being displayed:
 //!
-//! - `issue_detail_lines` — today's flat document (identity → meta → links
-//!   → children → description → workflow → activity), used by the
-//!   quick-view panel and unchanged in shape from before this module split.
+//! - `quick_view_wide`/`quick_view_narrow` — the quick-view panel's split
+//!   layouts (SPEC.md §4): a description excerpt plus a compact meta-field
+//!   grid (assignee/parent/labels/updated, with type/status/priority shown
+//!   as chips), each independently linkified — a narrower field set than
+//!   Detail's own meta/facts panels (no reporter/components), and no
+//!   workflow/activity sections at all.
 //! - `wide_detail` — the Detail screen's wide layout (SPEC.md §6): identity
 //!   + a scrollable `main` column (description + activity) plus four static
 //!   side-rail panels (workflow/meta/links/children), each independently
@@ -142,11 +147,9 @@ fn identity_lines(detail: &IssueDetail) -> Vec<Line<'static>> {
     ]
 }
 
-/// Assignee/reporter/parent/component/labels, one per line, and — only when
-/// `updated` is `Some` (the wide/narrow layouts' meta/facts panels; the
-/// legacy flat document has no `updated` field to show) — a trailing
+/// Assignee/reporter/parent/component/labels, one per line, plus a trailing
 /// "updated" line.
-fn meta_lines(detail: &IssueDetail, updated: Option<&str>) -> Vec<Line<'static>> {
+fn meta_lines(detail: &IssueDetail, updated: &str) -> Vec<Line<'static>> {
     let mut lines = vec![Line::from(Span::styled(
         format!(
             "assignee: {}",
@@ -183,12 +186,10 @@ fn meta_lines(detail: &IssueDetail, updated: Option<&str>) -> Vec<Line<'static>>
             Style::default().fg(muted()),
         )));
     }
-    if let Some(updated) = updated {
-        lines.push(Line::from(Span::styled(
-            format!("updated: {updated}"),
-            Style::default().fg(muted()),
-        )));
-    }
+    lines.push(Line::from(Span::styled(
+        format!("updated: {updated}"),
+        Style::default().fg(muted()),
+    )));
     lines
 }
 
@@ -370,7 +371,7 @@ fn linked_panel_title(detail: &IssueDetail) -> Line<'static> {
     ))
 }
 
-fn description_lines(detail: &IssueDetail) -> Vec<Line<'static>> {
+pub(crate) fn description_lines(detail: &IssueDetail) -> Vec<Line<'static>> {
     let mut lines = adf::render(&detail.description).lines;
     if let Some(ac) = &detail.acceptance_criteria {
         lines.push(divider());
@@ -381,45 +382,6 @@ fn description_lines(detail: &IssueDetail) -> Vec<Line<'static>> {
         lines.extend(adf::render(ac).lines);
     }
     lines
-}
-
-/// Today's plain comment rendering (legacy flat document / quick view):
-/// author+timestamp header, ADF body, no card styling. Returns section-local
-/// line offsets (0-based within just this section) — composers add their own
-/// running total when concatenating.
-fn activity_lines_plain(comments: &[Comment]) -> (Vec<Line<'static>>, Option<usize>, Vec<usize>) {
-    let mut lines = Vec::new();
-    let mut header = None;
-    let mut starts = Vec::with_capacity(comments.len());
-    if !comments.is_empty() {
-        header = Some(lines.len());
-        lines.push(Line::from(Span::styled(
-            format!(
-                "💬 {} comment{}",
-                comments.len(),
-                if comments.len() == 1 { "" } else { "s" }
-            ),
-            Style::default().fg(accent()).add_modifier(Modifier::BOLD),
-        )));
-        for comment in comments {
-            lines.push(Line::default());
-            starts.push(lines.len());
-            lines.push(Line::from(vec![
-                Span::styled(
-                    comment.author.clone(),
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    format!(" · {}", comment.created),
-                    Style::default().fg(muted()),
-                ),
-            ]));
-            lines.extend(adf::render(&comment.body).lines);
-        }
-    }
-    (lines, header, starts)
 }
 
 /// The wide/narrow layouts' comment-card rendering (SPEC.md §6): a 2-cell
@@ -474,40 +436,77 @@ fn activity_lines_cards(
     (lines, header, starts)
 }
 
-/// Render an issue's fields, ADF body (description, acceptance criteria),
-/// workflow strip, and comments as one flat document — the quick-view
-/// panel's rendering, unchanged in shape since before the wide/narrow
-/// Detail-screen split (SPEC.md phase 7 revisits quick view itself).
-pub fn issue_detail_lines(detail: &IssueDetail) -> IssueLines {
-    let mut lines = identity_lines(detail);
-    lines.extend(meta_lines(detail, None));
-    lines.extend(links_lines(detail));
-    lines.extend(children_lines(detail));
-    lines.push(divider());
-    lines.extend(description_lines(detail));
-
-    let workflow = workflow_lines(detail);
-    if !workflow.is_empty() {
-        lines.push(divider());
-        lines.extend(workflow);
+/// Quick view's compact kv fields (SPEC.md §4): assignee, parent (if any),
+/// labels (if any), updated — a narrower set than `facts_pairs`' (no
+/// reporter/components), since quick view aims for a compact excerpt rather
+/// than the full field list. Type/status/priority are shown separately, as
+/// chips (`quick_view_chip_line`), not in this kv list.
+fn quick_view_kv_fields(detail: &IssueDetail, updated: &str) -> Vec<(&'static str, String)> {
+    let mut pairs = vec![(
+        "assignee",
+        detail
+            .assignee
+            .clone()
+            .unwrap_or_else(|| "unassigned".into()),
+    )];
+    if let Some(parent) = &detail.parent {
+        pairs.push(("parent", parent.clone()));
     }
-
-    let (activity, header, starts) = activity_lines_plain(&detail.comments);
-    if !activity.is_empty() {
-        lines.push(divider());
+    if !detail.labels.is_empty() {
+        pairs.push(("labels", detail.labels.join(", ")));
     }
-    let base = lines.len();
-    lines.extend(activity);
-    let comments_header = header.map(|h| h + base);
-    let comment_starts = starts.into_iter().map(|s| s + base).collect();
+    pairs.push(("updated", updated.to_string()));
+    pairs
+}
 
-    let links = linkify(&mut lines, DetailPane::Main);
-    IssueLines {
-        lines,
-        comments_header,
-        comment_starts,
-        links,
+fn quick_view_chip_line(detail: &IssueDetail) -> Line<'static> {
+    Line::from(vec![
+        chip(&detail.issue_type, type_colour(&detail.issue_type)),
+        Span::raw(" "),
+        chip(&detail.status, status_colour(&detail.status)),
+        Span::raw(" "),
+        chip(detail.priority.label(), priority_colour(&detail.priority)),
+    ])
+}
+
+/// Quick view's wide-layout meta panel body: the chips line, then one
+/// `label: value` row per kv field — the same "label: value" idiom
+/// `meta_lines`/`facts_kv_lines` already use, rather than the mockup's
+/// literal two-column `dl`, since that's this app's established
+/// terminal-rendering convention for field lists.
+fn quick_view_meta_lines(detail: &IssueDetail, updated: &str) -> Vec<Line<'static>> {
+    let mut lines = vec![quick_view_chip_line(detail)];
+    for (label, value) in quick_view_kv_fields(detail, updated) {
+        lines.push(Line::from(vec![
+            Span::styled(format!("{label}: "), Style::default().fg(muted())),
+            Span::styled(value, Style::default().fg(Color::White)),
+        ]));
     }
+    lines
+}
+
+/// One `label value` pair per kv field, packed onto a single flowing
+/// `Line` — the narrow layout's "wrapping flex" requirement (SPEC.md §4)
+/// needs no dedicated wrap primitive: packing every pair's spans onto one
+/// logical `Line` and letting `Paragraph::wrap(Wrap { trim: false })`
+/// reflow it at render time reuses the same mechanism every other screen
+/// already relies on for word-wrap.
+fn quick_view_inline_kv_line(detail: &IssueDetail, updated: &str) -> Line<'static> {
+    let mut spans = Vec::new();
+    for (i, (label, value)) in quick_view_kv_fields(detail, updated)
+        .into_iter()
+        .enumerate()
+    {
+        if i > 0 {
+            spans.push(Span::raw("   "));
+        }
+        spans.push(Span::styled(
+            format!("{label}: "),
+            Style::default().fg(muted()),
+        ));
+        spans.push(Span::styled(value, Style::default().fg(Color::White)));
+    }
+    Line::from(spans)
 }
 
 fn linkify_panel(mut lines: Vec<Line<'static>>, pane: DetailPane) -> Panel {
@@ -523,7 +522,7 @@ fn linkify_panel(mut lines: Vec<Line<'static>>, pane: DetailPane) -> Panel {
 pub fn wide_detail(detail: &IssueDetail, current_user: &str, updated: &str) -> WideDetail {
     let identity = linkify_panel(identity_lines(detail), DetailPane::Identity);
     let workflow = linkify_panel(workflow_lines(detail), DetailPane::Workflow);
-    let meta = linkify_panel(meta_lines(detail, Some(updated)), DetailPane::Meta);
+    let meta = linkify_panel(meta_lines(detail, updated), DetailPane::Meta);
     let links = linkify_panel(links_lines(detail), DetailPane::Links);
     let children = linkify_panel(children_lines(detail), DetailPane::Children);
 
@@ -616,6 +615,58 @@ pub fn narrow_detail(
             comment_starts,
             links,
         },
+    }
+}
+
+/// The quick-view panel's wide layout (SPEC.md §4): a description excerpt
+/// panel beside a compact meta grid — reuses `DetailPane::Main`/`Meta` for
+/// pane-tagging (quick view's shape is close enough to Detail's own
+/// main/meta split that new variants aren't needed) so `{`/`}` cycling and
+/// highlighting work the same way Detail's side rail does.
+pub struct QuickViewWide {
+    pub description: Panel,
+    pub meta: Panel,
+}
+
+pub fn quick_view_wide(detail: &IssueDetail, updated: &str) -> QuickViewWide {
+    QuickViewWide {
+        description: linkify_panel(description_lines(detail), DetailPane::Main),
+        meta: linkify_panel(quick_view_meta_lines(detail, updated), DetailPane::Meta),
+    }
+}
+
+/// Reading order for `{`/`}` link cycling in the wide layout: description
+/// first, then the meta grid — mirrors `wide_detail_links`' shape.
+pub fn quick_view_wide_links(wide: &QuickViewWide) -> Vec<LinkTarget> {
+    wide.description
+        .links
+        .iter()
+        .chain(wide.meta.links.iter())
+        .cloned()
+        .collect()
+}
+
+/// The quick-view panel's narrow layout (SPEC.md §4): chips line, kv fields
+/// packed onto one flowing/wrapping line, then the description excerpt —
+/// all one scrollable document (same single-pane model as `narrow_detail`).
+/// No workflow/activity sections — quick view shows neither, so this is a
+/// plain `Panel` rather than `IssueLines` (whose `comments_header`/
+/// `comment_starts` would always be empty here).
+pub struct QuickViewNarrow {
+    pub panel: Panel,
+}
+
+pub fn quick_view_narrow(detail: &IssueDetail, updated: &str) -> QuickViewNarrow {
+    let mut lines = vec![
+        quick_view_chip_line(detail),
+        Line::default(),
+        quick_view_inline_kv_line(detail, updated),
+        Line::default(),
+    ];
+    lines.extend(description_lines(detail));
+    let links = linkify(&mut lines, DetailPane::Main);
+    QuickViewNarrow {
+        panel: Panel { lines, links },
     }
 }
 
@@ -841,17 +892,54 @@ mod link_tests {
     }
 
     #[test]
-    fn issue_detail_lines_finds_parent_and_link_and_body_keys() {
+    fn quick_view_narrow_finds_parent_and_link_and_body_keys() {
         let detail = demo_detail(&demo_issues()[1].key);
-        let rendered = issue_detail_lines(&detail);
-        assert!(!rendered.links.is_empty());
+        let rendered = quick_view_narrow(&detail, "12m ago");
+        assert!(!rendered.panel.links.is_empty());
         // Every recorded target actually points at text within its line's
         // bounds.
-        for target in &rendered.links {
-            let line = &rendered.lines[target.line];
+        for target in &rendered.panel.links {
+            let line = &rendered.panel.lines[target.line];
             let len: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
             assert!(target.end <= len);
             assert!(target.start < target.end);
+        }
+    }
+
+    #[test]
+    fn quick_view_wide_meta_shows_only_the_seven_spec_fields() {
+        let detail = demo_detail(&demo_issues()[1].key);
+        let wide = quick_view_wide(&detail, "12m ago");
+        let meta_text: String = wide
+            .meta
+            .lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(meta_text.contains("assignee:"));
+        assert!(meta_text.contains("updated:"));
+        assert!(
+            !meta_text.contains("reporter:"),
+            "quick view's meta grid should omit reporter, unlike the facts/meta panels"
+        );
+        assert!(
+            !meta_text.contains("components:"),
+            "quick view's meta grid should omit components, unlike the facts/meta panels"
+        );
+    }
+
+    #[test]
+    fn quick_view_wide_links_reads_description_before_meta() {
+        let detail = demo_detail(&demo_issues()[1].key);
+        let wide = quick_view_wide(&detail, "12m ago");
+        let combined = quick_view_wide_links(&wide);
+        assert_eq!(
+            combined.len(),
+            wide.description.links.len() + wide.meta.links.len()
+        );
+        if !wide.description.links.is_empty() {
+            assert_eq!(combined[0].pane, DetailPane::Main);
         }
     }
 

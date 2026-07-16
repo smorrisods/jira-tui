@@ -93,3 +93,58 @@ fn point_in_quick_view_respects_recorded_area_and_visibility() {
     assert!(app.point_in_quick_view(12, 12));
     assert!(!app.point_in_quick_view(0, 0));
 }
+
+#[test]
+fn link_at_ignores_the_wide_quick_views_meta_column() {
+    // Regression test: quick view's wide layout (SPEC.md §4) puts the
+    // description in a left column and a compact meta grid in a right
+    // column, each independently linkified — but `link_at` used to compute
+    // (line, col) against the whole panel with no column split at all, so a
+    // click landing in the meta column could coincidentally resolve to a
+    // description-pane link at that same raw column offset.
+    let mut app = demo_app();
+    app.screen = Screen::List;
+    app.quick_view = true;
+    app.selected = 0;
+    app.ensure_quick_view_loaded();
+
+    // Demo descriptions don't naturally mention another issue key; swap in
+    // one that does, so the description (main) pane has a real link to
+    // click, distinct from the meta grid's own "parent" link (if any).
+    let key = app.issues[0].key.clone();
+    let mut detail = app.quick_view_detail().unwrap().clone();
+    detail.description = serde_json::json!({
+        "type": "doc", "version": 1,
+        "content": [{"type": "paragraph", "content": [
+            {"type": "text", "text": "See DS-9999 for context."}
+        ]}]
+    });
+    app.detail_cache.insert(key, detail);
+
+    // Comfortably above the wide-layout threshold.
+    let area = Rect::new(0, 0, 120, 20);
+    app.quick_view_area.set(area);
+
+    let links = app.active_links();
+    let first = links
+        .iter()
+        .find(|t| t.pane == crate::render::DetailPane::Main)
+        .expect("the synthetic description should have a navigable link");
+    let x = area.x + first.start as u16;
+    let y = area.y + first.line as u16;
+    assert_eq!(
+        app.link_at(x, y),
+        Some(0),
+        "a click on the description column's own link should resolve"
+    );
+
+    // Same row, but far enough right to land in the meta column instead —
+    // must not resolve to anything, regardless of what raw column math
+    // would otherwise say.
+    let meta_x = area.x + area.width - 2;
+    assert_eq!(
+        app.link_at(meta_x, y),
+        None,
+        "a click in the meta column must not resolve to a description-pane link"
+    );
+}

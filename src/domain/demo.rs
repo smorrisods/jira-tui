@@ -1,6 +1,7 @@
 //! Baked-in sample data so the TUI is fully explorable with zero network.
 //! Flavoured after the real DS design-system project this toolkit grew from.
 
+use chrono::{Duration, Utc};
 use serde_json::json;
 
 use super::types::{
@@ -14,6 +15,10 @@ use super::types::{
 pub const DEMO_CURRENT_USER: &str = "scott.morris";
 
 pub fn demo_issues() -> Vec<IssueSummary> {
+    // Computed at call time (not baked-in literals) so `updated_at` stays a
+    // genuine instant relative to whenever the app actually runs, matching
+    // the existing `updated` display strings' approximate age below.
+    let now = Utc::now();
     vec![
         IssueSummary {
             key: "DS-2722".into(),
@@ -24,6 +29,7 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             assignee: Some(DEMO_CURRENT_USER.into()),
             blocked: false,
             updated: "2h ago".into(),
+            updated_at: Some(now - Duration::hours(2)),
             epic: None,
         },
         IssueSummary {
@@ -35,6 +41,7 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             assignee: Some(DEMO_CURRENT_USER.into()),
             blocked: false,
             updated: "31m ago".into(),
+            updated_at: Some(now - Duration::minutes(31)),
             epic: Some("DS-2722".into()),
         },
         IssueSummary {
@@ -46,6 +53,7 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             assignee: Some(DEMO_CURRENT_USER.into()),
             blocked: true,
             updated: "1d ago".into(),
+            updated_at: Some(now - Duration::days(1)),
             epic: Some("DS-2602".into()),
         },
         IssueSummary {
@@ -57,6 +65,7 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             assignee: None,
             blocked: false,
             updated: "1d ago".into(),
+            updated_at: Some(now - Duration::days(1)),
             epic: Some("DS-2602".into()),
         },
         IssueSummary {
@@ -68,6 +77,7 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             assignee: Some(DEMO_CURRENT_USER.into()),
             blocked: false,
             updated: "3d ago".into(),
+            updated_at: Some(now - Duration::days(3)),
             epic: Some("DS-2600".into()),
         },
         IssueSummary {
@@ -79,6 +89,7 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             assignee: Some(DEMO_CURRENT_USER.into()),
             blocked: false,
             updated: "5h ago".into(),
+            updated_at: Some(now - Duration::hours(5)),
             epic: None,
         },
         IssueSummary {
@@ -90,6 +101,7 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             assignee: Some(DEMO_CURRENT_USER.into()),
             blocked: false,
             updated: "6d ago".into(),
+            updated_at: Some(now - Duration::days(6)),
             epic: None,
         },
         IssueSummary {
@@ -101,6 +113,7 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             assignee: None,
             blocked: false,
             updated: "2w ago".into(),
+            updated_at: Some(now - Duration::weeks(2)),
             epic: Some("DS-2600".into()),
         },
         // A couple of teammate-assigned issues so the teammate-view switcher
@@ -114,6 +127,7 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             assignee: Some("priya.nair".into()),
             blocked: false,
             updated: "4h ago".into(),
+            updated_at: Some(now - Duration::hours(4)),
             epic: Some("DS-2600".into()),
         },
         IssueSummary {
@@ -125,6 +139,7 @@ pub fn demo_issues() -> Vec<IssueSummary> {
             assignee: Some("alex.chen".into()),
             blocked: false,
             updated: "9h ago".into(),
+            updated_at: Some(now - Duration::hours(9)),
             epic: None,
         },
     ]

@@ -31,11 +31,14 @@ mod footer;
 mod header;
 mod help;
 mod home;
+pub(crate) mod home_columns;
 mod jax_companion;
 mod keymap;
 mod list;
 mod list_columns;
 mod preview;
+mod quick_view;
+pub(crate) mod quick_view_columns;
 mod search;
 mod transition_picker;
 mod view_picker;
@@ -52,8 +55,9 @@ use header::draw_header;
 use help::draw_help_overlay;
 use home::draw_home;
 use jax_companion::draw_jax_companion;
-use list::{draw_list, draw_quick_view};
+use list::draw_list;
 use preview::draw_preview;
+use quick_view::draw_quick_view;
 use search::draw_search;
 use transition_picker::draw_transition_picker;
 use view_picker::draw_view_picker;
@@ -200,9 +204,17 @@ pub fn draw(f: &mut Frame, app: &App) {
             crate::app::Screen::Home | crate::app::Screen::List
         );
     let (body_area, quick_area) = if quick_view_active {
+        // SPEC.md §11: "height < ~30 rows: ... quick view caps at 40%
+        // height" — a shorter terminal has less room to spare for the list
+        // above it, so the quick-view strip gives some of its share back.
+        let quick_view_share = if root[1].height < home::SHORT_HEIGHT {
+            40
+        } else {
+            50
+        };
         let rows = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(6), Constraint::Percentage(50)])
+            .constraints([Constraint::Min(6), Constraint::Percentage(quick_view_share)])
             .split(root[1]);
         (rows[0], Some(rows[1]))
     } else {

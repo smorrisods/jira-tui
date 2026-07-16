@@ -235,20 +235,38 @@ fn detail_screen_shows_comment_indicator_and_jumps_to_comments() {
 }
 
 #[test]
-fn quick_view_panel_renders_comments_inline() {
+fn quick_view_panel_no_longer_shows_comments_or_activity() {
+    // SPEC.md §4 (phase 7): quick view is now description-excerpt + compact
+    // meta grid only — no workflow strip, no comments/activity section
+    // (unlike the pre-phase-7 full detail re-render). `jump_to_comments`
+    // degrades to its existing "no comments" status rather than finding a
+    // section that no longer exists.
     let mut app = demo_app();
     app.screen = Screen::Home;
     app.quick_view = true;
     app.selected = 0;
     app.ensure_quick_view_loaded();
-    app.jump_to_comments();
+    let detail = app.quick_view_detail().unwrap().clone();
+    assert!(
+        !detail.comments.is_empty(),
+        "demo detail should have canned comments to make this a real check"
+    );
+    let first_author = detail.comments[0].author.clone();
 
     let text = render(&app);
-    let detail = app.quick_view_detail().unwrap();
-    let first_author = detail.comments[0].author.clone();
     assert!(
-        text.contains(&first_author),
-        "quick view should render full comments, not just an indicator"
+        !text.contains(&first_author),
+        "quick view should not render comment authors any more"
+    );
+    assert!(
+        !text.contains('💬'),
+        "quick view should not render the comments section header"
+    );
+
+    app.jump_to_comments();
+    assert_eq!(
+        app.status, "no comments on this issue",
+        "quick view has no comments section to jump to"
     );
 }
 
@@ -479,6 +497,147 @@ fn quick_view_panel_shows_selected_issue() {
         text.contains("Problem") || text.contains("Proposed"),
         "quick view should render the full ADF body"
     );
+}
+
+#[test]
+fn quick_view_screen_wide_shows_description_and_meta_grid() {
+    let mut app = demo_app();
+    app.screen = Screen::List;
+    app.quick_view = true;
+    app.selected = 0;
+    app.ensure_quick_view_loaded();
+    let issue_type = app.issues[0].issue_type.clone();
+    // Terminal-width 110 -> inner quick-view width just above the 100-col
+    // wide threshold.
+    let text = render_at(&app, 110, 40);
+    assert!(
+        text.contains(&issue_type),
+        "wide quick view should show the selected issue's type chip"
+    );
+    assert!(
+        text.contains("updated:"),
+        "wide quick view should show the meta grid's kv fields"
+    );
+    assert!(
+        text.contains("Problem") || text.contains("Proposed"),
+        "wide quick view should show the description excerpt"
+    );
+}
+
+#[test]
+fn quick_view_screen_narrow_shows_chips_and_inline_pairs() {
+    let mut app = demo_app();
+    app.screen = Screen::List;
+    app.quick_view = true;
+    app.selected = 0;
+    app.ensure_quick_view_loaded();
+    let issue_type = app.issues[0].issue_type.clone();
+    // Terminal-width 70 -> inner quick-view width below the 100-col wide
+    // threshold.
+    let text = render_at(&app, 70, 40);
+    assert!(
+        text.contains(&issue_type),
+        "narrow quick view should show the selected issue's type chip"
+    );
+    assert!(
+        text.contains("updated:"),
+        "narrow quick view should show the inline kv pairs"
+    );
+    assert!(
+        text.contains("Problem") || text.contains("Proposed"),
+        "narrow quick view should show the description excerpt"
+    );
+}
+
+#[test]
+fn quick_view_screen_shows_overflow_line_when_description_exceeds_the_panel() {
+    let mut app = demo_app();
+    app.screen = Screen::List;
+    app.quick_view = true;
+    app.selected = 0;
+    app.ensure_quick_view_loaded();
+
+    // Swap in a deliberately long description so it can't possibly fit a
+    // small quick-view panel.
+    let key = app.issues[0].key.clone();
+    let mut detail = app.quick_view_detail().unwrap().clone();
+    let paragraphs: Vec<_> = (0..80)
+        .map(|i| {
+            serde_json::json!({
+                "type": "paragraph",
+                "content": [{"type": "text", "text": format!("Line {i} of a deliberately long description.")}]
+            })
+        })
+        .collect();
+    detail.description = serde_json::json!({"type": "doc", "version": 1, "content": paragraphs});
+    app.detail_cache.insert(key, detail);
+
+    let text = render_at(&app, 110, 16);
+    assert!(
+        text.contains("more line"),
+        "a description exceeding the panel should show a '... N more lines' indicator"
+    );
+}
+
+#[test]
+fn home_screen_wide_shows_three_rail_cards_with_bars() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    // Open an issue and back out to Home so `recent` gets populated the
+    // same way real navigation would.
+    let key = app.issues[0].key.clone();
+    app.open_by_key(&key);
+    app.screen = Screen::Home;
+
+    let text = render_at(&app, 120, 40);
+    assert!(text.contains("current context"));
+    assert!(text.contains("at a glance"));
+    assert!(text.contains("recent"), "the recent card should render");
+    assert!(
+        text.contains('█') || text.contains('░'),
+        "glance stats should show proportion bars"
+    );
+}
+
+#[test]
+fn home_screen_narrow_shows_tiles_and_recent_strip() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    let key = app.issues[0].key.clone();
+    app.open_by_key(&key);
+    app.screen = Screen::Home;
+
+    let text = render_at(&app, 80, 40);
+    assert!(
+        text.contains("recent:"),
+        "narrow home should show the collapsed recent strip"
+    );
+    assert!(
+        text.contains("assigned"),
+        "narrow home should show glance tile labels"
+    );
+}
+
+#[test]
+fn home_screen_short_height_hides_recent_and_trims_glance_to_two() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    let key = app.issues[0].key.clone();
+    app.open_by_key(&key);
+    app.screen = Screen::Home;
+
+    // Body height (~24) falls below the 30-row short-terminal threshold.
+    let text = render_at(&app, 120, 30);
+    assert!(
+        !text.contains("recent"),
+        "a short terminal should hide the recent card entirely"
+    );
+    assert!(
+        !text.contains("in review") && !text.contains("done this week"),
+        "a short terminal should trim glance down to assigned/blocked only"
+    );
+    assert!(text.contains("assigned"));
+    assert!(text.contains("blocked"));
 }
 
 #[test]
@@ -1004,6 +1163,7 @@ fn board_issue(key: &str, epic: Option<&str>, status: &str, blocked: bool) -> Is
         assignee: Some("scott.morris".to_string()),
         blocked,
         updated: "1h ago".to_string(),
+        updated_at: None,
         epic: epic.map(String::from),
     }
 }
