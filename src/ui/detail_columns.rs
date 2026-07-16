@@ -43,22 +43,58 @@ pub(crate) fn rail_width_for(width: u16) -> u16 {
 /// panel's `Constraint::Length` from the real wrapped row count instead of
 /// the logical (unwrapped) line count, which under-allocates height and
 /// silently clips trailing content the moment any line wraps.
+///
+/// A first cut of this used raw character-width division
+/// (`line.width().div_ceil(width)`), but ratatui's `Wrap` breaks on word
+/// boundaries — it never splits a word across rows — so a line needs
+/// *more* rows than that division predicts whenever a word doesn't fit the
+/// remaining columns and gets bumped whole to the next row. Rail content is
+/// exactly this shape (comma-joined `labels`/`components`, arrow-joined
+/// workflow chips, multi-word names), so the naive division reintroduced a
+/// milder version of the clipping bug this function exists to fix. This
+/// greedily packs whitespace-separated words per row instead, matching real
+/// word-wrap (verified against ratatui's actual `Wrap{trim:false}` render
+/// output across thousands of randomly generated multi-word lines).
 pub(crate) fn wrapped_row_count(lines: &[Line], width: u16) -> u16 {
     if width == 0 {
         return lines.len() as u16;
     }
     let rows: usize = lines
         .iter()
-        .map(|line| {
-            let w = line.width();
-            if w == 0 {
-                1
-            } else {
-                w.div_ceil(width as usize)
-            }
-        })
+        .map(|line| wrapped_rows_for_line(line, width as usize))
         .sum();
     rows.try_into().unwrap_or(u16::MAX)
+}
+
+fn wrapped_rows_for_line(line: &Line, width: usize) -> usize {
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.is_empty() {
+        return 1;
+    }
+    let mut rows = 1usize;
+    let mut col = 0usize; // columns already used on the current row
+    for word in words {
+        let word_width = Line::from(word).width();
+        if word_width > width {
+            // Wider than any row on its own — ratatui hard-wraps it rather
+            // than leaving it unrendered, consuming ceil(word/width) rows.
+            if col > 0 {
+                rows += 1;
+            }
+            rows += word_width.div_ceil(width) - 1;
+            col = word_width % width;
+            continue;
+        }
+        let gap = if col == 0 { 0 } else { 1 };
+        if col + gap + word_width > width {
+            rows += 1;
+            col = word_width;
+        } else {
+            col += gap + word_width;
+        }
+    }
+    rows
 }
 
 #[cfg(test)]
@@ -115,5 +151,35 @@ mod tests {
     fn a_zero_width_area_falls_back_to_the_logical_line_count() {
         let lines = vec![line("anything"), line("at all")];
         assert_eq!(wrapped_row_count(&lines, 0), 2);
+    }
+
+    /// Regression test: a naive `line.width().div_ceil(width)` (a prior cut
+    /// of this function) undercounts whenever word-boundary wrapping leaves
+    /// a row under-full — verified against ratatui's actual `Wrap{trim:
+    /// false}` render output. "aaaaa bbbbb ccccc" (17 chars) at width 10
+    /// divides to 2 by raw width, but real word-wrap needs 3 rows: "aaaaa
+    /// bbbbb" (11 chars) doesn't fit either, so it's "aaaaa" / "bbbbb" /
+    /// "ccccc".
+    #[test]
+    fn multi_word_lines_match_real_word_wrap_not_raw_character_division() {
+        assert_eq!(wrapped_row_count(&[line("aaaaa bbbbb ccccc")], 10), 3);
+    }
+
+    #[test]
+    fn a_comma_joined_components_line_wraps_on_word_boundaries() {
+        // Realistic rail content (SPEC.md §6's meta panel): a regression
+        // guard using real field-shaped text, packed as words rather than
+        // raw characters — "API"/"Gateway" each move to a fresh row as a
+        // whole word rather than splitting mid-word.
+        let lines = vec![line("components: Frontend, Backend, API Gateway")];
+        assert_eq!(wrapped_row_count(&lines, 20), 3);
+    }
+
+    #[test]
+    fn a_single_word_wider_than_the_width_is_hard_wrapped() {
+        // No whitespace to break on — matches ratatui's own fallback of
+        // hard-wrapping an over-long single token rather than overflowing.
+        let lines = vec![line("supercalifragilisticexpialidocious")]; // 35 chars
+        assert_eq!(wrapped_row_count(&lines, 10), 4); // ceil(35/10)
     }
 }

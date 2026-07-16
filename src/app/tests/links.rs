@@ -57,6 +57,18 @@ fn has_links_is_false_with_no_detail_loaded() {
     assert!(!app.has_links());
 }
 
+/// Simulates a mouse click on `target`, as if `app.detail_main_area` were
+/// the Rect it was rendered into starting at row 1 — shared by every
+/// click-to-open-a-link test below.
+fn click_link(app: &mut App, target: &crate::render::LinkTarget) {
+    app.detail_main_area.set(Rect::new(0, 1, 80, 20));
+    app.detail_scroll = 0;
+    let x = target.start as u16;
+    let y = 1 + target.line as u16;
+    app.mouse_down(y);
+    app.mouse_up(x, y);
+}
+
 #[test]
 fn click_on_a_detail_link_opens_it() {
     let mut app = demo_app();
@@ -71,15 +83,9 @@ fn click_on_a_detail_link_opens_it() {
             _ => None,
         })
         .expect("demo detail should link to another issue");
-    let target = &links[idx];
+    let target = links[idx].clone();
 
-    app.detail_main_area.set(Rect::new(0, 1, 80, 20));
-    app.detail_scroll = 0;
-    let x = target.start as u16;
-    let y = 1 + target.line as u16;
-
-    app.mouse_down(y);
-    app.mouse_up(x, y);
+    click_link(&mut app, &target);
     assert_eq!(app.detail.as_ref().unwrap().key, key);
 }
 
@@ -118,14 +124,8 @@ fn click_on_a_detail_link_opens_it_in_the_wide_layout() {
             _ => None,
         })
         .expect("the overridden description should link to DS-2603 in the Main pane");
-    let target = &links[idx];
+    let target = links[idx].clone();
 
-    app.detail_main_area.set(Rect::new(0, 1, 80, 20));
-    app.detail_scroll = 0;
-    let x = target.start as u16;
-    let y = 1 + target.line as u16;
-
-    app.mouse_down(y);
-    app.mouse_up(x, y);
+    click_link(&mut app, &target);
     assert_eq!(app.detail.as_ref().unwrap().key, key);
 }
