@@ -19,7 +19,7 @@ const BAR_CELLS: u16 = 4;
 /// 2" — a shorter terminal has less room to spare for the rail, so the
 /// least essential pieces (recent, the newer half of the glance stats) give
 /// their space back first.
-const SHORT_HEIGHT: u16 = 30;
+pub(crate) const SHORT_HEIGHT: u16 = 30;
 
 pub(crate) fn draw_home(f: &mut Frame, app: &App, area: Rect) {
     match home_layout_for_width(area.width) {

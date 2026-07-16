@@ -36,7 +36,7 @@ impl App {
                 QuickViewLayout::Wide => {
                     render::quick_view_wide_links(&render::quick_view_wide(detail, &updated))
                 }
-                QuickViewLayout::Narrow => render::quick_view_narrow(detail, &updated).lines.links,
+                QuickViewLayout::Narrow => render::quick_view_narrow(detail, &updated).panel.links,
             };
         }
         let current_user = self.current_user_display();

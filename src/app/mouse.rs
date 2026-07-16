@@ -2,6 +2,7 @@
 //! focus tracking.
 
 use crate::render::DetailPane;
+use crate::ui::quick_view_columns::{meta_width_for, quick_view_layout_for_width, QuickViewLayout};
 
 use super::{App, Screen};
 
@@ -114,12 +115,23 @@ impl App {
             if !Self::point_in(area, x, y) {
                 return None;
             }
-            let line = self.quick_view_scroll as usize + (y - area.y) as usize;
             let col = (x - area.x) as usize;
-            return self
-                .active_links()
-                .iter()
-                .position(|t| t.line == line && col >= t.start && col < t.end);
+            // Wide quick view's meta column (to the right) isn't
+            // independently scrolled and has no `Rect` of its own recorded
+            // for hit-testing — the same accepted limitation `link_at`'s
+            // Detail branch above already has for its side rail. Restrict
+            // matches to the description pane so a click in the meta
+            // column can't coincidentally resolve to the wrong link.
+            if quick_view_layout_for_width(area.width) == QuickViewLayout::Wide {
+                let desc_width = area.width.saturating_sub(meta_width_for(area.width)) as usize;
+                if col >= desc_width {
+                    return None;
+                }
+            }
+            let line = self.quick_view_scroll as usize + (y - area.y) as usize;
+            return self.active_links().iter().position(|t| {
+                t.pane == DetailPane::Main && t.line == line && col >= t.start && col < t.end
+            });
         }
         None
     }

@@ -6,9 +6,11 @@
 //!
 //! The body is built from small section-builder functions (`identity_lines`,
 //! `meta_lines`, `workflow_lines`, `links_lines`, `children_lines`,
-//! `description_lines`, `activity_lines_plain`/`activity_lines_cards`), each
-//! producing a self-contained `Vec<Line>`. Three composers concatenate them
-//! in different orders/arrangements without ever slicing a shared vec, so
+//! `description_lines`, `activity_lines_cards`, plus quick view's own
+//! `quick_view_chip_line`/`quick_view_kv_fields`/`quick_view_meta_lines`/
+//! `quick_view_inline_kv_line`), each producing a self-contained `Vec<Line>`.
+//! The composers below concatenate them in different orders/arrangements
+//! without ever slicing a shared vec, so
 //! `comments_header`/`comment_starts`/`LinkTarget.line` always stay absolute
 //! indices into whatever `Vec<Line>` is actually being displayed:
 //!
@@ -647,9 +649,11 @@ pub fn quick_view_wide_links(wide: &QuickViewWide) -> Vec<LinkTarget> {
 /// The quick-view panel's narrow layout (SPEC.md §4): chips line, kv fields
 /// packed onto one flowing/wrapping line, then the description excerpt —
 /// all one scrollable document (same single-pane model as `narrow_detail`).
-/// No workflow/activity sections — quick view shows neither.
+/// No workflow/activity sections — quick view shows neither, so this is a
+/// plain `Panel` rather than `IssueLines` (whose `comments_header`/
+/// `comment_starts` would always be empty here).
 pub struct QuickViewNarrow {
-    pub lines: IssueLines,
+    pub panel: Panel,
 }
 
 pub fn quick_view_narrow(detail: &IssueDetail, updated: &str) -> QuickViewNarrow {
@@ -662,12 +666,7 @@ pub fn quick_view_narrow(detail: &IssueDetail, updated: &str) -> QuickViewNarrow
     lines.extend(description_lines(detail));
     let links = linkify(&mut lines, DetailPane::Main);
     QuickViewNarrow {
-        lines: IssueLines {
-            lines,
-            comments_header: None,
-            comment_starts: Vec::new(),
-            links,
-        },
+        panel: Panel { lines, links },
     }
 }
 
@@ -896,11 +895,11 @@ mod link_tests {
     fn quick_view_narrow_finds_parent_and_link_and_body_keys() {
         let detail = demo_detail(&demo_issues()[1].key);
         let rendered = quick_view_narrow(&detail, "12m ago");
-        assert!(!rendered.lines.links.is_empty());
+        assert!(!rendered.panel.links.is_empty());
         // Every recorded target actually points at text within its line's
         // bounds.
-        for target in &rendered.lines.links {
-            let line = &rendered.lines.lines[target.line];
+        for target in &rendered.panel.links {
+            let line = &rendered.panel.lines[target.line];
             let len: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
             assert!(target.end <= len);
             assert!(target.start < target.end);

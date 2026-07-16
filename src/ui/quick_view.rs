@@ -81,10 +81,11 @@ fn draw_wide(
         .split(area);
 
     draw_with_overflow(f, cols[0], wide.description, app.quick_view_scroll);
-    f.render_widget(
-        Paragraph::new(wide.meta.lines).wrap(Wrap { trim: false }),
-        cols[1],
-    );
+    // The meta column never scrolls (there's no dedicated scroll state for
+    // it), so a fixed `scroll` of 0 here just means "show an overflow line
+    // instead of silently clipping" whenever it doesn't fit — content that
+    // can't be scrolled to still gets a visible signal that it's there.
+    draw_with_overflow(f, cols[1], wide.meta, 0);
 }
 
 fn draw_narrow(
@@ -95,18 +96,10 @@ fn draw_narrow(
     updated: &str,
 ) {
     let mut narrow = render::quick_view_narrow(detail, updated);
-    if let Some(target) = narrow.lines.links.get(app.link_index).cloned() {
-        render::highlight_target(&mut narrow.lines.lines, &target);
+    if let Some(target) = narrow.panel.links.get(app.link_index).cloned() {
+        render::highlight_target(&mut narrow.panel.lines, &target);
     }
-    draw_with_overflow(
-        f,
-        area,
-        Panel {
-            lines: narrow.lines.lines,
-            links: narrow.lines.links,
-        },
-        app.quick_view_scroll,
-    );
+    draw_with_overflow(f, area, narrow.panel, app.quick_view_scroll);
 }
 
 /// Renders `panel.lines` scrolled by `scroll`, appending a trailing

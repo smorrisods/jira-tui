@@ -207,7 +207,11 @@ pub fn draw(f: &mut Frame, app: &App) {
         // SPEC.md §11: "height < ~30 rows: ... quick view caps at 40%
         // height" — a shorter terminal has less room to spare for the list
         // above it, so the quick-view strip gives some of its share back.
-        let quick_view_share = if root[1].height < 30 { 40 } else { 50 };
+        let quick_view_share = if root[1].height < home::SHORT_HEIGHT {
+            40
+        } else {
+            50
+        };
         let rows = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(6), Constraint::Percentage(quick_view_share)])
