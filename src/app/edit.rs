@@ -267,6 +267,7 @@ impl App {
             }
             self.status = format!("updated {key} description");
             self.flash("✓ description updated");
+            self.trigger_jax_party();
             self.screen = return_screen;
             return;
         }
@@ -316,6 +317,7 @@ impl App {
             }
             self.status = format!("added comment to {key}");
             self.flash("✓ comment added");
+            self.trigger_jax_party();
             self.screen = return_screen;
             return;
         }

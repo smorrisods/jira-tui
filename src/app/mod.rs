@@ -145,8 +145,20 @@ pub struct App {
     /// (`board_scroll_by`) moves it by whole lanes, one notch per lane.
     pub board_scroll: u16,
 
-    /// Ambient Jax companion (pure entertainment 🦦).
+    /// Ambient Jax companion (pure entertainment 🦦, SPEC.md §9). Means "the
+    /// user has explicitly popped the full floating box out" — not "Jax is
+    /// enabled at all" — since the mini footer dock shows ambiently at
+    /// narrow widths regardless of this flag (see `ui::jax_companion::jax_mode`).
     pub show_jax: bool,
+    /// Tick deadline for a reactive "party" moment (a successful
+    /// transition-to-Done/edit/comment, `App::trigger_jax_party`) to force
+    /// Jax's party scene regardless of the normal rotation. Same "forced
+    /// state until a tick deadline" shape as `flash`/`flash_until`.
+    pub(crate) jax_party_until: u64,
+    /// The mini-Jax footer dock's last-rendered area, for click
+    /// hit-testing (`App::point_in_jax_mini`) — only meaningful while
+    /// `ui::jax_companion::jax_mode` is actually `Mini`.
+    pub(crate) jax_mini_area: Cell<Rect>,
 
     // In-TUI editor.
     pub editor: EditorState,
@@ -336,6 +348,8 @@ impl App {
             board_sel: BoardSelection::default(),
             board_scroll: 0,
             show_jax: false,
+            jax_party_until: 0,
+            jax_mini_area: Cell::new(Rect::default()),
             editor: EditorState::default(),
             flash_msg: String::new(),
             flash_until: 0,

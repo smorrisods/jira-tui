@@ -797,6 +797,58 @@ fn jax_companion_sits_above_quick_view_not_overlapping() {
 }
 
 #[test]
+fn jax_companion_shows_a_mood_line_when_popped_out() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.show_jax = true;
+    let text = render(&app);
+    assert!(
+        text.contains("mood:"),
+        "the popped-out Jax box should show a mood line (SPEC.md §9)"
+    );
+}
+
+#[test]
+fn jax_docks_into_the_footer_at_narrow_widths_instead_of_the_full_box() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    // Below the 90-col threshold, Jax should be the ambient mini dock —
+    // present even though `show_jax` was never toggled on.
+    let text = render_at(&app, 80, 40);
+    assert!(
+        text.contains("●‿●") && text.contains("jax"),
+        "mini-Jax should dock into the footer at narrow widths"
+    );
+    assert!(
+        !text.contains("mood:"),
+        "the full box (with its mood line) should not render at narrow widths"
+    );
+}
+
+#[test]
+fn jax_j_key_pops_the_full_box_out_even_at_a_narrow_width() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.toggle_jax();
+    let text = render_at(&app, 80, 40);
+    assert!(
+        text.contains("mood:"),
+        "an explicit pop-out should show the full box even below the wide threshold"
+    );
+}
+
+#[test]
+fn jax_mini_is_absent_on_welcome() {
+    let mut app = demo_app();
+    app.screen = Screen::Welcome;
+    let text = render_at(&app, 80, 40);
+    assert!(
+        !text.contains("●‿●"),
+        "mini-Jax must stay hidden on Welcome, matching the full box's existing rule"
+    );
+}
+
+#[test]
 fn search_screen_shows_goto_and_filters_results() {
     let mut app = demo_app();
     app.open_search();

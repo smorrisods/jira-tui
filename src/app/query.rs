@@ -65,6 +65,16 @@ impl App {
         }
     }
 
+    /// Force Jax's party scene for a few seconds (SPEC.md §9: a successful
+    /// transition-to-Done/edit/comment) — same "forced state until a tick
+    /// deadline" shape as `flash`/`flash_until`, just longer (`flash`'s
+    /// ~1.5s toast is `tick + 18`; "a few seconds" here is `tick + 36`).
+    /// Only visible if Jax is already showing (mini or full) — this never
+    /// forces Jax onto screen by itself.
+    pub(crate) fn trigger_jax_party(&mut self) {
+        self.jax_party_until = self.tick + 36;
+    }
+
     /// The Jira URL for the selected issue, when we know the site.
     pub fn selected_issue_url(&self) -> Option<String> {
         let issue = self.selected_issue()?;

@@ -54,7 +54,7 @@ use footer::footer_line;
 use header::draw_header;
 use help::draw_help_overlay;
 use home::draw_home;
-use jax_companion::draw_jax_companion;
+use jax_companion::{draw_jax_companion, draw_jax_mini, JaxMode};
 use list::draw_list;
 use preview::draw_preview;
 use quick_view::draw_quick_view;
@@ -243,7 +243,9 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     // The ambient Jax companion floats above the quick-view panel when it's
     // open (so it never covers it), or at the bottom of the body otherwise.
-    if app.show_jax && !matches!(app.screen, Screen::Welcome | Screen::Edit | Screen::About) {
+    // At narrow widths it docks into the footer instead (see `draw_footer`)
+    // unless explicitly popped out — see `jax_companion::jax_mode`.
+    if jax_companion::jax_mode(app, body_area.width) == JaxMode::Full {
         draw_jax_companion(f, app, body_area);
     }
 
@@ -320,9 +322,20 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
+    // SPEC.md §9: mini-Jax docks into the footer's right side at narrow
+    // widths, unless the full box has been explicitly popped out instead.
+    let mini_jax = jax_companion::jax_mode(app, inner.width) == JaxMode::Mini;
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(80), Constraint::Percentage(20)])
+        .constraints(if mini_jax {
+            vec![
+                Constraint::Percentage(70),
+                Constraint::Percentage(20),
+                Constraint::Length(14),
+            ]
+        } else {
+            vec![Constraint::Percentage(80), Constraint::Percentage(20)]
+        })
         .split(inner);
 
     f.render_widget(
@@ -345,6 +358,9 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         .alignment(Alignment::Right),
         cols[1],
     );
+    if mini_jax {
+        draw_jax_mini(f, app, cols[2]);
+    }
 }
 
 /// A braille spinner frame while a background fetch (`refresh`/
