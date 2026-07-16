@@ -5,6 +5,18 @@ use crate::domain::{demo_detail, IssueDetail, Source};
 use super::{async_ops, App, Screen};
 
 impl App {
+    /// `x` — fold/unfold the narrow Detail layout's facts panel to one line
+    /// (SPEC.md §6). A no-op in the wide layout — there's no facts panel to
+    /// fold there — so this is deliberately unguarded by screen width.
+    ///
+    /// Resets `detail_scroll` to the top: folding/unfolding changes the
+    /// narrow document's total line count, so the same absolute scroll
+    /// offset would otherwise land on unrelated content after the toggle.
+    pub fn toggle_facts_folded(&mut self) {
+        self.facts_folded = !self.facts_folded;
+        self.detail_scroll = 0;
+    }
+
     pub fn open_detail(&mut self) {
         let Some(issue) = self.selected_issue().cloned() else {
             return;
@@ -47,6 +59,7 @@ impl App {
     pub(crate) fn show_issue(&mut self, key: &str) {
         self.detail_scroll = 0;
         self.link_index = 0;
+        self.facts_folded = false;
         if !matches!(self.source, Source::Live { .. }) {
             let detail = self.load_detail(key);
             self.detail_cache.insert(key.to_string(), detail.clone());

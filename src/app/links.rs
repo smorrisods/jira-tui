@@ -13,14 +13,36 @@
 
 use crate::infra;
 use crate::render::{self, LinkTarget};
+use crate::ui::detail_columns::{detail_layout_for_width, DetailLayout};
 
-use super::App;
+use super::{App, Screen};
 
 impl App {
+    /// Every navigable link in whichever document is actually on screen:
+    /// the Detail screen's wide layout (identity, main, then the side rail
+    /// top-to-bottom — see `render::wide_detail_links`) or narrow layout
+    /// (one document), picked via the last-rendered `detail_area`'s width
+    /// (same idiom `app::mouse::link_at` and `app::comments` already use);
+    /// the quick-view panel's unchanged flat document everywhere else.
     pub(crate) fn active_links(&self) -> Vec<LinkTarget> {
-        self.active_comment_detail()
-            .map(|d| render::issue_detail_lines(d).links)
-            .unwrap_or_default()
+        let Some(detail) = self.active_comment_detail() else {
+            return Vec::new();
+        };
+        if self.screen != Screen::Detail {
+            return render::issue_detail_lines(detail).links;
+        }
+        let current_user = self.current_user_display();
+        let updated = self.issue_updated(&detail.key).to_string();
+        match detail_layout_for_width(self.detail_area.get().width) {
+            DetailLayout::Wide => {
+                render::wide_detail_links(&render::wide_detail(detail, &current_user, &updated))
+            }
+            DetailLayout::Narrow => {
+                render::narrow_detail(detail, &current_user, &updated, self.facts_folded)
+                    .lines
+                    .links
+            }
+        }
     }
 
     /// `}` — highlight the next link, wrapping around.

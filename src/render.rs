@@ -1,17 +1,57 @@
-//! Issue detail rendering: builds the flat `Line` list shared by the full
-//! Detail screen and the inline quick-view panel, plus the line offsets
-//! `app` needs to jump the scroll position to the comments section or step
-//! between individual comments.
+//! Issue detail rendering: builds the `Line` content shared by the
+//! quick-view panel, the full Detail screen's wide two-column layout, and
+//! its narrow single-column layout, plus the line offsets `app` needs to
+//! jump the scroll position to the comments section or step between
+//! individual comments.
+//!
+//! The body is built from small section-builder functions (`identity_lines`,
+//! `meta_lines`, `workflow_lines`, `links_lines`, `children_lines`,
+//! `description_lines`, `activity_lines_plain`/`activity_lines_cards`), each
+//! producing a self-contained `Vec<Line>`. Three composers concatenate them
+//! in different orders/arrangements without ever slicing a shared vec, so
+//! `comments_header`/`comment_starts`/`LinkTarget.line` always stay absolute
+//! indices into whatever `Vec<Line>` is actually being displayed:
+//!
+//! - `issue_detail_lines` — today's flat document (identity → meta → links
+//!   → children → description → workflow → activity), used by the
+//!   quick-view panel and unchanged in shape from before this module split.
+//! - `wide_detail` — the Detail screen's wide layout (SPEC.md §6): identity
+//!   + a scrollable `main` column (description + activity) plus four static
+//!   side-rail panels (workflow/meta/links/children), each independently
+//!   linkified and tagged with the `DetailPane` they live in so `{`/`}`
+//!   cycling can reach every link regardless of which pane it's in.
+//! - `narrow_detail` — the Detail screen's narrow layout: identity → facts
+//!   panel (foldable) → description → linked (links+children merged) →
+//!   activity.
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::adf;
-use crate::domain::IssueDetail;
+use crate::domain::{Comment, IssueDetail};
 use crate::ui::{
-    accent, accent2, chip, danger, divider, muted, priority_colour, priority_glyph, priority_style,
-    status_colour, truncate, type_colour,
+    accent, accent2, chip, danger, divider, maple, muted, ok, priority_colour, priority_glyph,
+    priority_style, status_colour, truncate, type_colour, workflow_chip,
 };
+
+/// Which Detail-screen pane a navigable link lives in. Quick view and the
+/// narrow Detail layout only ever use `Main` (there's one scrollable
+/// document); the wide layout's four side-rail panels get their own tags so
+/// mouse hit-testing can stay scoped to `Main` while keyboard `{`/`}`
+/// cycling still reaches every pane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DetailPane {
+    /// The wide layout's identity line (key/summary/chips) — a distinct
+    /// pane from `Main` even though both render above/below each other in
+    /// the same column, since each restarts its own line numbering from 0
+    /// and a target's `line` is only unambiguous within its own pane.
+    Identity,
+    Main,
+    Workflow,
+    Meta,
+    Links,
+    Children,
+}
 
 /// Something a navigable span in the rendered detail points to — either
 /// another Jira issue (by key) or a bare URL. Found by scanning the
@@ -26,7 +66,7 @@ pub enum LinkKind {
     Url(String),
 }
 
-/// A single navigable span within `IssueLines::lines`: which line, and
+/// A single navigable span within a rendered `Vec<Line>`: which line, and
 /// which char range within that line's flattened text (i.e. the
 /// concatenation of all its spans' content).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,10 +75,11 @@ pub struct LinkTarget {
     pub start: usize,
     pub end: usize,
     pub kind: LinkKind,
+    pub pane: DetailPane,
 }
 
-/// The rendered issue detail, plus line offsets into `lines` for
-/// comment-navigation keybindings (`]`/`[`, `n`/`p`).
+/// A rendered document plus line offsets into it for comment-navigation
+/// keybindings (`]`/`[`, `n`/`p`).
 pub struct IssueLines {
     pub lines: Vec<Line<'static>>,
     /// Line index of the "💬 N comments" section header, if there are any
@@ -47,48 +88,75 @@ pub struct IssueLines {
     /// Line index of each individual comment's "author · created" header,
     /// in display order.
     pub comment_starts: Vec<usize>,
-    /// Every navigable issue key / URL found in `lines`, in reading order —
-    /// powers `Tab`/`Shift+Tab` cycling and `Enter`-to-open in the Detail
-    /// screen and quick-view panel.
+    /// Every navigable issue key/URL found in `lines`, in reading order —
+    /// powers `Tab`/`Shift+Tab` cycling and `Enter`-to-open.
     pub links: Vec<LinkTarget>,
 }
 
-/// Render an issue's fields, ADF body (description, acceptance criteria),
-/// transitions strip, and comments. Shared by the full Detail screen and the
-/// inline quick-view panel so both show the same content.
-pub fn issue_detail_lines(detail: &IssueDetail) -> IssueLines {
-    let mut lines: Vec<Line> = Vec::new();
-    // Identity line
-    lines.push(Line::from(vec![
-        Span::styled(
-            priority_glyph(&detail.priority),
-            priority_style(&detail.priority),
-        ),
-        Span::raw(" "),
-        Span::styled(
-            detail.summary.clone(),
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ]));
-    lines.push(Line::from(vec![
-        chip(&detail.issue_type, type_colour(&detail.issue_type)),
-        Span::raw(" "),
-        chip(&detail.status, status_colour(&detail.status)),
-        Span::raw(" "),
-        chip(detail.priority.label(), priority_colour(&detail.priority)),
-        Span::styled(
-            format!(
-                "   assignee: {}",
-                detail
-                    .assignee
-                    .clone()
-                    .unwrap_or_else(|| "unassigned".into())
+/// One Wide-layout side-rail panel: its own lines plus its own navigable
+/// links, linkified independently of every other panel.
+pub struct Panel {
+    pub lines: Vec<Line<'static>>,
+    pub links: Vec<LinkTarget>,
+}
+
+/// The Detail screen's wide (≥ ~90 cols) layout: a scrollable main column
+/// (description + activity) beside a static four-panel side rail.
+pub struct WideDetail {
+    pub identity: Panel,
+    pub main: IssueLines,
+    pub workflow: Panel,
+    pub meta: Panel,
+    pub links: Panel,
+    pub children: Panel,
+}
+
+/// The Detail screen's narrow (< ~90 cols) layout: one scrollable document,
+/// identity → facts → description → linked → activity.
+pub struct NarrowDetail {
+    pub lines: IssueLines,
+}
+
+fn identity_lines(detail: &IssueDetail) -> Vec<Line<'static>> {
+    vec![
+        Line::from(vec![
+            Span::styled(
+                priority_glyph(&detail.priority),
+                priority_style(&detail.priority),
             ),
-            Style::default().fg(muted()),
+            Span::raw(" "),
+            Span::styled(
+                detail.summary.clone(),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(vec![
+            chip(&detail.issue_type, type_colour(&detail.issue_type)),
+            Span::raw(" "),
+            chip(&detail.status, status_colour(&detail.status)),
+            Span::raw(" "),
+            chip(detail.priority.label(), priority_colour(&detail.priority)),
+        ]),
+    ]
+}
+
+/// Assignee/reporter/parent/component/labels, one per line, and — only when
+/// `updated` is `Some` (the wide/narrow layouts' meta/facts panels; the
+/// legacy flat document has no `updated` field to show) — a trailing
+/// "updated" line.
+fn meta_lines(detail: &IssueDetail, updated: Option<&str>) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::from(Span::styled(
+        format!(
+            "assignee: {}",
+            detail
+                .assignee
+                .clone()
+                .unwrap_or_else(|| "unassigned".into())
         ),
-    ]));
+        Style::default().fg(muted()),
+    ))];
     if let Some(reporter) = &detail.reporter {
         lines.push(Line::from(Span::styled(
             format!("reporter: {reporter}"),
@@ -115,40 +183,195 @@ pub fn issue_detail_lines(detail: &IssueDetail) -> IssueLines {
             Style::default().fg(muted()),
         )));
     }
-    for link in &detail.links {
-        lines.push(Line::from(vec![
-            Span::styled(format!("{} ", link.relation), Style::default().fg(danger())),
-            Span::styled(link.key.clone(), Style::default().fg(accent())),
-            Span::styled(
-                format!(" · {}", truncate(&link.summary, 40)),
-                Style::default().fg(muted()),
-            ),
-        ]));
+    if let Some(updated) = updated {
+        lines.push(Line::from(Span::styled(
+            format!("updated: {updated}"),
+            Style::default().fg(muted()),
+        )));
     }
-    for child in &detail.children {
-        // Jira has no single "children" field — an Epic's child stories and
-        // a Story/Task's sub-tasks are both just "child" here (see the
-        // `parent` comment above for the matching asymmetry).
-        lines.push(Line::from(vec![
-            Span::styled("child ", Style::default().fg(accent2())),
-            Span::styled(child.key.clone(), Style::default().fg(accent())),
-            Span::raw(" "),
-            chip(&child.issue_type, type_colour(&child.issue_type)),
-            Span::raw(" "),
-            chip(&child.status, status_colour(&child.status)),
-            Span::styled(
-                format!(" · {}", truncate(&child.summary, 40)),
-                Style::default().fg(muted()),
-            ),
-        ]));
+    lines
+}
+
+/// The facts panel's kv pairs, in display order — shared by `facts_kv_lines`
+/// (two per row) and `folded_facts_line` (one compact summary).
+fn facts_pairs(detail: &IssueDetail, updated: &str) -> Vec<(&'static str, String)> {
+    let mut pairs = vec![(
+        "assignee",
+        detail
+            .assignee
+            .clone()
+            .unwrap_or_else(|| "unassigned".into()),
+    )];
+    if let Some(reporter) = &detail.reporter {
+        pairs.push(("reporter", reporter.clone()));
     }
-    lines.push(divider());
+    if let Some(parent) = &detail.parent {
+        pairs.push(("parent", parent.clone()));
+    }
+    if !detail.components.is_empty() {
+        pairs.push(("components", detail.components.join(", ")));
+    }
+    if !detail.labels.is_empty() {
+        pairs.push(("labels", detail.labels.join(", ")));
+    }
+    pairs.push(("updated", updated.to_string()));
+    pairs
+}
 
-    // Description (ADF)
-    let desc = adf::render(&detail.description);
-    lines.extend(desc.lines);
+/// Narrow Detail's facts panel body (SPEC.md §6): "two-pairs-per-row kv
+/// grid".
+fn facts_kv_lines(detail: &IssueDetail, updated: &str) -> Vec<Line<'static>> {
+    facts_pairs(detail, updated)
+        .chunks(2)
+        .map(|chunk| {
+            let mut spans = Vec::new();
+            for (i, (label, value)) in chunk.iter().enumerate() {
+                if i > 0 {
+                    spans.push(Span::raw("   "));
+                }
+                spans.push(Span::styled(
+                    format!("{label}: "),
+                    Style::default().fg(muted()),
+                ));
+                spans.push(Span::styled(
+                    value.clone(),
+                    Style::default().fg(Color::White),
+                ));
+            }
+            Line::from(spans)
+        })
+        .collect()
+}
 
-    // Acceptance criteria
+/// Narrow Detail's facts panel title, naming the `x` fold/unfold key.
+fn facts_panel_title(facts_folded: bool) -> Line<'static> {
+    let hint = if facts_folded { "unfold" } else { "fold" };
+    Line::from(Span::styled(
+        format!("facts · x to {hint}"),
+        Style::default().fg(accent()).add_modifier(Modifier::BOLD),
+    ))
+}
+
+/// The facts panel folded to one line (`x` key, narrow Detail only).
+fn folded_facts_line(detail: &IssueDetail, updated: &str) -> Line<'static> {
+    Line::from(Span::styled(
+        format!(
+            "{} · {} · updated {updated}",
+            detail
+                .assignee
+                .clone()
+                .unwrap_or_else(|| "unassigned".into()),
+            detail.status,
+        ),
+        Style::default().fg(muted()),
+    ))
+}
+
+/// The workflow/transition strip: each status as a chip, the current one
+/// solid+bold (SPEC.md §6). Shared by the legacy flat document, the wide
+/// layout's workflow rail panel, and the narrow layout's facts panel.
+fn workflow_lines(detail: &IssueDetail) -> Vec<Line<'static>> {
+    if detail.transitions.is_empty() {
+        return Vec::new();
+    }
+    let mut strip = Vec::new();
+    for (i, t) in detail.transitions.iter().enumerate() {
+        let current = t.to == detail.status || t.name == detail.status;
+        strip.push(workflow_chip(&t.name, current));
+        if i + 1 < detail.transitions.len() {
+            strip.push(Span::styled(" → ", Style::default().fg(muted())));
+        }
+    }
+    vec![
+        Line::from(strip),
+        Line::from(Span::styled(
+            "t to change",
+            Style::default().fg(muted()).add_modifier(Modifier::ITALIC),
+        )),
+    ]
+}
+
+/// "relates to" reads fern/`ok()`; every other relation (blocks, is blocked
+/// by, duplicates, ...) reads ember/`danger()` (SPEC.md §6/§7).
+fn relation_colour(relation: &str) -> Color {
+    if relation.contains("relates") {
+        ok()
+    } else {
+        danger()
+    }
+}
+
+fn links_lines(detail: &IssueDetail) -> Vec<Line<'static>> {
+    detail
+        .links
+        .iter()
+        .map(|link| {
+            Line::from(vec![
+                Span::styled(
+                    format!("{} ", link.relation),
+                    Style::default().fg(relation_colour(&link.relation)),
+                ),
+                Span::styled(link.key.clone(), Style::default().fg(accent())),
+                Span::styled(
+                    format!(" · {}", truncate(&link.summary, 40)),
+                    Style::default().fg(muted()),
+                ),
+            ])
+        })
+        .collect()
+}
+
+fn children_lines(detail: &IssueDetail) -> Vec<Line<'static>> {
+    detail
+        .children
+        .iter()
+        .map(|child| {
+            // Jira has no single "children" field — an Epic's child stories
+            // and a Story/Task's sub-tasks are both just "child" here (see
+            // `meta_lines`'s "parent" comment for the matching asymmetry).
+            Line::from(vec![
+                Span::styled("child ", Style::default().fg(accent2())),
+                Span::styled(child.key.clone(), Style::default().fg(accent())),
+                Span::raw(" "),
+                chip(&child.issue_type, type_colour(&child.issue_type)),
+                Span::raw(" "),
+                chip(&child.status, status_colour(&child.status)),
+                Span::styled(
+                    format!(" · {}", truncate(&child.summary, 40)),
+                    Style::default().fg(muted()),
+                ),
+            ])
+        })
+        .collect()
+}
+
+/// Narrow Detail's "linked" panel (SPEC.md §6): links and children merged
+/// into one list.
+fn linked_lines(detail: &IssueDetail) -> Vec<Line<'static>> {
+    let mut lines = links_lines(detail);
+    lines.extend(children_lines(detail));
+    lines
+}
+
+fn linked_panel_title(detail: &IssueDetail) -> Line<'static> {
+    Line::from(Span::styled(
+        format!(
+            "linked · {} link{} · {} child{}",
+            detail.links.len(),
+            if detail.links.len() == 1 { "" } else { "s" },
+            detail.children.len(),
+            if detail.children.len() == 1 {
+                ""
+            } else {
+                "ren"
+            },
+        ),
+        Style::default().fg(accent2()).add_modifier(Modifier::BOLD),
+    ))
+}
+
+fn description_lines(detail: &IssueDetail) -> Vec<Line<'static>> {
+    let mut lines = adf::render(&detail.description).lines;
     if let Some(ac) = &detail.acceptance_criteria {
         lines.push(divider());
         lines.push(Line::from(Span::styled(
@@ -157,51 +380,30 @@ pub fn issue_detail_lines(detail: &IssueDetail) -> IssueLines {
         )));
         lines.extend(adf::render(ac).lines);
     }
+    lines
+}
 
-    // Quick transitions strip (preview only — mutation lands in a later phase).
-    if !detail.transitions.is_empty() {
-        lines.push(divider());
-        let mut strip = vec![Span::styled("transitions  ", Style::default().fg(muted()))];
-        for (i, t) in detail.transitions.iter().enumerate() {
-            let current = t.to == detail.status || t.name == detail.status;
-            let colour = if current { accent() } else { Color::White };
-            let modifier = if current {
-                Modifier::BOLD | Modifier::UNDERLINED
-            } else {
-                Modifier::empty()
-            };
-            strip.push(Span::styled(
-                t.name.clone(),
-                Style::default().fg(colour).add_modifier(modifier),
-            ));
-            if i + 1 < detail.transitions.len() {
-                strip.push(Span::styled(" → ", Style::default().fg(muted())));
-            }
-        }
-        strip.push(Span::styled(
-            "   (t to change)",
-            Style::default().fg(muted()).add_modifier(Modifier::ITALIC),
-        ));
-        lines.push(Line::from(strip));
-    }
-
-    // Comments — rendered ADF body per comment, oldest first.
-    let mut comments_header = None;
-    let mut comment_starts = Vec::with_capacity(detail.comments.len());
-    if !detail.comments.is_empty() {
-        lines.push(divider());
-        comments_header = Some(lines.len());
+/// Today's plain comment rendering (legacy flat document / quick view):
+/// author+timestamp header, ADF body, no card styling. Returns section-local
+/// line offsets (0-based within just this section) — composers add their own
+/// running total when concatenating.
+fn activity_lines_plain(comments: &[Comment]) -> (Vec<Line<'static>>, Option<usize>, Vec<usize>) {
+    let mut lines = Vec::new();
+    let mut header = None;
+    let mut starts = Vec::with_capacity(comments.len());
+    if !comments.is_empty() {
+        header = Some(lines.len());
         lines.push(Line::from(Span::styled(
             format!(
                 "💬 {} comment{}",
-                detail.comments.len(),
-                if detail.comments.len() == 1 { "" } else { "s" }
+                comments.len(),
+                if comments.len() == 1 { "" } else { "s" }
             ),
             Style::default().fg(accent()).add_modifier(Modifier::BOLD),
         )));
-        for comment in &detail.comments {
+        for comment in comments {
             lines.push(Line::default());
-            comment_starts.push(lines.len());
+            starts.push(lines.len());
             lines.push(Line::from(vec![
                 Span::styled(
                     comment.author.clone(),
@@ -217,14 +419,203 @@ pub fn issue_detail_lines(detail: &IssueDetail) -> IssueLines {
             lines.extend(adf::render(&comment.body).lines);
         }
     }
+    (lines, header, starts)
+}
 
-    let links = linkify(&mut lines);
+/// The wide/narrow layouts' comment-card rendering (SPEC.md §6): a 2-cell
+/// left rule — maple for the current user's own comments, orchid otherwise
+/// — ahead of the author/timestamp header and every ADF body line. Same
+/// section-local-offset contract as `activity_lines_plain`.
+fn activity_lines_cards(
+    comments: &[Comment],
+    current_user: &str,
+) -> (Vec<Line<'static>>, Option<usize>, Vec<usize>) {
+    let mut lines = Vec::new();
+    let mut header = None;
+    let mut starts = Vec::with_capacity(comments.len());
+    if !comments.is_empty() {
+        header = Some(lines.len());
+        lines.push(Line::from(Span::styled(
+            format!(
+                "💬 {} comment{} · n/p to jump",
+                comments.len(),
+                if comments.len() == 1 { "" } else { "s" }
+            ),
+            Style::default().fg(accent2()).add_modifier(Modifier::BOLD),
+        )));
+        for comment in comments {
+            let rule = if comment.author == current_user {
+                maple()
+            } else {
+                accent2()
+            };
+            lines.push(Line::default());
+            starts.push(lines.len());
+            lines.push(Line::from(vec![
+                Span::styled("▌ ", Style::default().fg(rule)),
+                Span::styled(
+                    comment.author.clone(),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(" · {}", comment.created),
+                    Style::default().fg(muted()),
+                ),
+            ]));
+            for body_line in adf::render(&comment.body).lines {
+                let mut spans = vec![Span::styled("▌ ", Style::default().fg(rule))];
+                spans.extend(body_line.spans);
+                lines.push(Line::from(spans));
+            }
+        }
+    }
+    (lines, header, starts)
+}
 
+/// Render an issue's fields, ADF body (description, acceptance criteria),
+/// workflow strip, and comments as one flat document — the quick-view
+/// panel's rendering, unchanged in shape since before the wide/narrow
+/// Detail-screen split (SPEC.md phase 7 revisits quick view itself).
+pub fn issue_detail_lines(detail: &IssueDetail) -> IssueLines {
+    let mut lines = identity_lines(detail);
+    lines.extend(meta_lines(detail, None));
+    lines.extend(links_lines(detail));
+    lines.extend(children_lines(detail));
+    lines.push(divider());
+    lines.extend(description_lines(detail));
+
+    let workflow = workflow_lines(detail);
+    if !workflow.is_empty() {
+        lines.push(divider());
+        lines.extend(workflow);
+    }
+
+    let (activity, header, starts) = activity_lines_plain(&detail.comments);
+    if !activity.is_empty() {
+        lines.push(divider());
+    }
+    let base = lines.len();
+    lines.extend(activity);
+    let comments_header = header.map(|h| h + base);
+    let comment_starts = starts.into_iter().map(|s| s + base).collect();
+
+    let links = linkify(&mut lines, DetailPane::Main);
     IssueLines {
         lines,
         comments_header,
         comment_starts,
         links,
+    }
+}
+
+fn linkify_panel(mut lines: Vec<Line<'static>>, pane: DetailPane) -> Panel {
+    let links = linkify(&mut lines, pane);
+    Panel { lines, links }
+}
+
+/// The Detail screen's wide layout (SPEC.md §6). `main` is the scrollable
+/// column (description + activity); the other four fields are the static
+/// side rail, each independently linkified and pane-tagged so `{`/`}`
+/// cycling reaches every one of them even though only `main` gets mouse
+/// hit-testing (see `app::mouse::link_at`).
+pub fn wide_detail(detail: &IssueDetail, current_user: &str, updated: &str) -> WideDetail {
+    let identity = linkify_panel(identity_lines(detail), DetailPane::Identity);
+    let workflow = linkify_panel(workflow_lines(detail), DetailPane::Workflow);
+    let meta = linkify_panel(meta_lines(detail, Some(updated)), DetailPane::Meta);
+    let links = linkify_panel(links_lines(detail), DetailPane::Links);
+    let children = linkify_panel(children_lines(detail), DetailPane::Children);
+
+    let mut main_lines = description_lines(detail);
+    let (activity, header, starts) = activity_lines_cards(&detail.comments, current_user);
+    if !activity.is_empty() {
+        main_lines.push(divider());
+    }
+    let base = main_lines.len();
+    main_lines.extend(activity);
+    let comments_header = header.map(|h| h + base);
+    let comment_starts = starts.into_iter().map(|s| s + base).collect();
+    let main_links = linkify(&mut main_lines, DetailPane::Main);
+
+    WideDetail {
+        identity,
+        main: IssueLines {
+            lines: main_lines,
+            comments_header,
+            comment_starts,
+            links: main_links,
+        },
+        workflow,
+        meta,
+        links,
+        children,
+    }
+}
+
+/// The wide layout's link-cycling order: identity, then `main` (description
+/// and activity, reading all the way down the primary column), then the
+/// side rail top-to-bottom (workflow, meta, links, children) — so `{`/`}`
+/// cycling reaches every link in the layout, not just `main`'s. Shared by
+/// `app::links::active_links` and `ui::detail`'s highlight logic so both
+/// agree on what `link_index` N actually refers to.
+pub fn wide_detail_links(wide: &WideDetail) -> Vec<LinkTarget> {
+    wide.identity
+        .links
+        .iter()
+        .chain(wide.main.links.iter())
+        .chain(wide.workflow.links.iter())
+        .chain(wide.meta.links.iter())
+        .chain(wide.links.links.iter())
+        .chain(wide.children.links.iter())
+        .cloned()
+        .collect()
+}
+
+/// The Detail screen's narrow layout (SPEC.md §6): identity → facts panel
+/// (foldable) → description → linked → activity, all one scrollable
+/// document (same single-pane model as `issue_detail_lines`).
+pub fn narrow_detail(
+    detail: &IssueDetail,
+    current_user: &str,
+    updated: &str,
+    facts_folded: bool,
+) -> NarrowDetail {
+    let mut lines = identity_lines(detail);
+    lines.push(facts_panel_title(facts_folded));
+    if facts_folded {
+        lines.push(folded_facts_line(detail, updated));
+    } else {
+        lines.extend(facts_kv_lines(detail, updated));
+        lines.extend(workflow_lines(detail));
+    }
+    lines.push(divider());
+    lines.extend(description_lines(detail));
+
+    let linked = linked_lines(detail);
+    if !linked.is_empty() {
+        lines.push(divider());
+        lines.push(linked_panel_title(detail));
+        lines.extend(linked);
+    }
+
+    let (activity, header, starts) = activity_lines_cards(&detail.comments, current_user);
+    if !activity.is_empty() {
+        lines.push(divider());
+    }
+    let base = lines.len();
+    lines.extend(activity);
+    let comments_header = header.map(|h| h + base);
+    let comment_starts = starts.into_iter().map(|s| s + base).collect();
+
+    let links = linkify(&mut lines, DetailPane::Main);
+    NarrowDetail {
+        lines: IssueLines {
+            lines,
+            comments_header,
+            comment_starts,
+            links,
+        },
     }
 }
 
@@ -277,9 +668,9 @@ fn restyle_range(line: Line<'static>, start: usize, end: usize, extra: Style) ->
 
 /// Scan every line for issue keys and bare URLs, restyling matched spans
 /// with an underline (in addition to whatever colour/weight they already
-/// carry) and returning their locations for keyboard navigation. Mutates
-/// `lines` in place.
-fn linkify(lines: &mut [Line<'static>]) -> Vec<LinkTarget> {
+/// carry) and returning their locations for keyboard navigation, tagged
+/// with the pane they were found in. Mutates `lines` in place.
+fn linkify(lines: &mut [Line<'static>], pane: DetailPane) -> Vec<LinkTarget> {
     let mut targets = Vec::new();
     for (i, line) in lines.iter_mut().enumerate() {
         let owned = std::mem::take(line);
@@ -291,6 +682,7 @@ fn linkify(lines: &mut [Line<'static>]) -> Vec<LinkTarget> {
                 start,
                 end,
                 kind,
+                pane,
             });
         }
     }
@@ -461,5 +853,43 @@ mod link_tests {
             assert!(target.end <= len);
             assert!(target.start < target.end);
         }
+    }
+
+    #[test]
+    fn relation_colour_distinguishes_relates_from_everything_else() {
+        assert_eq!(relation_colour("relates to"), ok());
+        assert_eq!(relation_colour("is blocked by"), danger());
+        assert_eq!(relation_colour("blocks"), danger());
+    }
+
+    #[test]
+    fn wide_detail_main_offsets_are_valid_indices() {
+        let detail = demo_detail(&demo_issues()[1].key);
+        let wide = wide_detail(&detail, "you", "12m ago");
+        if let Some(header) = wide.main.comments_header {
+            assert!(header < wide.main.lines.len());
+        }
+        for start in &wide.main.comment_starts {
+            assert!(*start < wide.main.lines.len());
+        }
+        for panel in [
+            &wide.identity,
+            &wide.workflow,
+            &wide.meta,
+            &wide.links,
+            &wide.children,
+        ] {
+            for target in &panel.links {
+                assert!(target.line < panel.lines.len());
+            }
+        }
+    }
+
+    #[test]
+    fn narrow_detail_folded_facts_has_fewer_lines_than_unfolded() {
+        let detail = demo_detail(&demo_issues()[1].key);
+        let folded = narrow_detail(&detail, "you", "12m ago", true);
+        let unfolded = narrow_detail(&detail, "you", "12m ago", false);
+        assert!(folded.lines.lines.len() < unfolded.lines.lines.len());
     }
 }

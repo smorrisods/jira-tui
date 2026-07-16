@@ -1,6 +1,8 @@
 //! Mouse mode: click-to-select/open, drag-to-copy, and keyboard/quick-view
 //! focus tracking.
 
+use crate::render::DetailPane;
+
 use super::{App, Screen};
 
 /// Which panel arrow keys/PageUp/PageDown affect when the quick-view panel is
@@ -88,22 +90,38 @@ impl App {
     /// lines (`parent:`, the links section) rather than long wrapped
     /// description/comment text — those are still reachable via `{`/`}`
     /// keyboard cycling regardless of wrap.
+    ///
+    /// On the Detail screen's wide layout, only the main column (identity's
+    /// `DetailPane::Main` targets) is clickable this phase — the side rail
+    /// (workflow/meta/links/children) has no Rect recorded for hit-testing,
+    /// so its links are keyboard-`{`/`}`-only. The returned index is still
+    /// an index into `active_links()`'s full cross-pane ordering, so it
+    /// stays consistent with `next_link`/`prev_link`/highlighting.
     pub fn link_at(&self, x: u16, y: u16) -> Option<usize> {
-        let (area, scroll) = if self.screen == Screen::Detail {
-            (self.detail_area.get(), self.detail_scroll)
-        } else if self.point_in_quick_view(x, y) {
-            (self.quick_view_area.get(), self.quick_view_scroll)
-        } else {
-            return None;
-        };
-        if !Self::point_in(area, x, y) {
-            return None;
+        if self.screen == Screen::Detail {
+            let area = self.detail_main_area.get();
+            if !Self::point_in(area, x, y) {
+                return None;
+            }
+            let line = self.detail_scroll as usize + (y - area.y) as usize;
+            let col = (x - area.x) as usize;
+            return self.active_links().iter().position(|t| {
+                t.pane == DetailPane::Main && t.line == line && col >= t.start && col < t.end
+            });
         }
-        let line = scroll as usize + (y - area.y) as usize;
-        let col = (x - area.x) as usize;
-        self.active_links()
-            .iter()
-            .position(|t| t.line == line && col >= t.start && col < t.end)
+        if self.point_in_quick_view(x, y) {
+            let area = self.quick_view_area.get();
+            if !Self::point_in(area, x, y) {
+                return None;
+            }
+            let line = self.quick_view_scroll as usize + (y - area.y) as usize;
+            let col = (x - area.x) as usize;
+            return self
+                .active_links()
+                .iter()
+                .position(|t| t.line == line && col >= t.start && col < t.end);
+        }
+        None
     }
 
     pub fn mouse_down(&mut self, y: u16) {

@@ -11,6 +11,21 @@ impl App {
         self.issues.get(self.selected)
     }
 
+    /// The list-summary "updated" relative timestamp for `key`, if it's
+    /// present in the currently loaded list data — `IssueDetail` itself
+    /// carries no `updated` field, so the Detail screen's people & meta /
+    /// facts panels borrow it from whichever `IssueSummary` list already
+    /// has it, falling back to an em dash for an issue opened outside the
+    /// current view (e.g. followed via an in-body link).
+    pub(crate) fn issue_updated(&self, key: &str) -> &str {
+        self.all_issues
+            .iter()
+            .chain(self.issues.iter())
+            .find(|i| i.key == key)
+            .map(|i| i.updated.as_str())
+            .unwrap_or("—")
+    }
+
     /// The terminal window title for the app's current state: the key and
     /// summary of the issue actually being viewed (full detail, its preview
     /// or edit flow, or the quick-view panel), falling back to a plain

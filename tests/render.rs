@@ -78,6 +78,97 @@ fn detail_screen_shows_an_epics_children() {
 }
 
 #[test]
+fn detail_screen_wide_layout_shows_side_rail_panels() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.open_by_key("DS-2722");
+    let text = render_at(&app, 120, 34);
+    assert!(
+        text.contains("workflow"),
+        "wide Detail should show a workflow rail panel"
+    );
+    assert!(
+        text.contains("children"),
+        "wide Detail should show a children rail panel"
+    );
+    assert!(
+        text.contains("child DS-2725"),
+        "the children panel should list the Epic's child"
+    );
+    assert!(
+        text.contains("Acceptance"),
+        "the main column should still show acceptance criteria"
+    );
+    // Regression test: the workflow/meta rail panels used to be sized from
+    // their logical (unwrapped) line count, so a wrapped chip strip or a
+    // long components/labels line would silently push the panel's own
+    // trailing content (the "t to change" hint, the "updated:" line) off
+    // the bottom of its allotted height.
+    assert!(
+        text.contains("t to change"),
+        "the workflow panel's hint line must not be clipped by a wrapped chip strip"
+    );
+    assert!(
+        text.contains("updated:"),
+        "the people & meta panel's trailing 'updated:' line must not be clipped"
+    );
+}
+
+#[test]
+fn detail_screen_narrow_layout_shows_facts_and_linked_panels() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.open_by_key("DS-2722");
+    let text = render_at(&app, 84, 46);
+    assert!(
+        text.contains("facts"),
+        "narrow Detail should show a facts panel"
+    );
+    assert!(
+        text.contains("linked"),
+        "narrow Detail should show a linked panel"
+    );
+    assert!(
+        text.contains("Acceptance"),
+        "the description should still show acceptance criteria"
+    );
+    let first_author = app.detail.as_ref().unwrap().comments[0].author.clone();
+    assert!(
+        text.contains(&first_author),
+        "activity should still show comments"
+    );
+}
+
+#[test]
+fn detail_screen_narrow_facts_panel_folds_with_x() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.open_by_key("DS-2722");
+    // Populate `detail_area` at the narrow breakpoint before folding.
+    let _ = render_at(&app, 84, 46);
+    let unfolded = render_at(&app, 84, 46);
+    assert!(
+        unfolded.contains("reporter:"),
+        "unfolded facts panel should show every field"
+    );
+
+    app.toggle_facts_folded();
+    let folded = render_at(&app, 84, 46);
+    assert!(
+        !folded.contains("reporter:"),
+        "folding the facts panel should hide the per-field kv lines"
+    );
+
+    // The fold is narrow-only: at the wide breakpoint the rail's people &
+    // meta panel shows in full regardless of `facts_folded`.
+    let wide = render_at(&app, 120, 34);
+    assert!(
+        wide.contains("reporter:"),
+        "the wide rail's meta panel must not be affected by the narrow fold state"
+    );
+}
+
+#[test]
 fn detail_screen_shows_comment_indicator_and_jumps_to_comments() {
     let mut app = demo_app();
     app.screen = Screen::Home;
@@ -86,6 +177,12 @@ fn detail_screen_shows_comment_indicator_and_jumps_to_comments() {
     let comment_count = app.detail.as_ref().unwrap().comments.len();
     assert!(comment_count > 0, "demo detail should have canned comments");
 
+    // `jump_to_comments` picks the Wide/Narrow layout's comment offset from
+    // the last-rendered `detail_area`'s width, so it needs a real render
+    // first — before this phase there was only one document shape, so call
+    // order didn't matter, but now it must mirror real usage (screen always
+    // draws before a keypress is handled).
+    let _ = render(&app);
     // The comments section header (with its count) lives below the fold
     // until you scroll or jump to it.
     app.jump_to_comments();
@@ -586,6 +683,13 @@ fn board_footer_shows_every_group_at_the_default_test_width() {
     assert!(text.contains("GO"), "GO group should render");
     assert!(text.contains("all keys"), "the pinned tail should render");
 }
+
+// The Detail footer's NAV group (which the `x` "fold facts" hint joins) is
+// already wide enough to get dropped by `fit_footer_groups`' width-fit at
+// typical terminal sizes, even before this phase — a pre-existing footer
+// content/width tradeoff, not something to re-litigate here. See
+// `ui::footer::tests::detail_nav_group_advertises_fold_facts_only_when_narrow`
+// for a unit test against the pre-fit group content instead.
 
 #[test]
 fn footer_status_truncates_with_an_ellipsis_instead_of_hard_clipping() {

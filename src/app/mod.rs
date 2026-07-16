@@ -77,6 +77,14 @@ pub struct App {
     pub screen: Screen,
     pub detail: Option<IssueDetail>,
     pub detail_scroll: u16,
+    /// Narrow Detail's facts panel folded to one line (`x`, SPEC.md §6).
+    /// Reset to `false` only in `App::show_issue`, i.e. only when actually
+    /// navigating to an issue (fresh open, or stepping through in-body
+    /// links) — deliberately *not* reset by a same-issue `r` refresh
+    /// (`apply_detail_loaded`/`refresh_detail`), matching how `link_index`
+    /// is already handled, so refreshing doesn't silently unfold a panel
+    /// the user just collapsed.
+    pub facts_folded: bool,
     pub source: Source,
     /// When `all_issues`/`source` were last loaded for the current view —
     /// drives the header's sync pill (SPEC.md §2). `None` only briefly,
@@ -141,7 +149,19 @@ pub struct App {
     // Draw geometry recorded during render, for mapping mouse coordinates.
     pub list_area: Cell<Rect>,
     pub list_start: Cell<usize>,
+    /// The Detail screen's whole inner area — used only to pick the
+    /// Wide/Narrow layout breakpoint (`app::links`/`app::comments`), since
+    /// its width is the true terminal width regardless of the wide layout's
+    /// rail. Mouse hit-testing uses `detail_main_area` instead (see below).
     pub detail_area: Cell<Rect>,
+    /// The Rect `detail_scroll` actually scrolls: the wide layout's main
+    /// column (excluding the identity block and the side rail), or the
+    /// whole inner area in the narrow layout, where there's only one
+    /// column. Kept separate from `detail_area` because the main column is
+    /// narrower than the whole screen once the rail is showing, and mouse
+    /// hit-testing (`app::mouse::link_at`) needs the exact scrolled Rect,
+    /// not the breakpoint-decision width.
+    pub detail_main_area: Cell<Rect>,
     pub quick_view_area: Cell<Rect>,
     /// The board's inner rendering area, recorded during render so keyboard
     /// navigation (which has no access to layout at input time) can compute
@@ -280,6 +300,7 @@ impl App {
             },
             detail: None,
             detail_scroll: 0,
+            facts_folded: false,
             source,
             last_synced: Some(std::time::Instant::now()),
             git,
@@ -312,6 +333,7 @@ impl App {
             list_area: Cell::new(Rect::default()),
             list_start: Cell::new(0),
             detail_area: Cell::new(Rect::default()),
+            detail_main_area: Cell::new(Rect::default()),
             quick_view_area: Cell::new(Rect::default()),
             board_area: Cell::new(Rect::default()),
             onboarding: OnboardingState::default(),

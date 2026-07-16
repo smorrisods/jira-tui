@@ -316,6 +316,11 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         {
             app.prev_comment();
         }
+        // Fold/unfold the narrow Detail layout's facts panel (SPEC.md §6).
+        // Unconditionally on-screen rather than width-gated — a no-op in
+        // the wide layout, matching this codebase's existing Screen-only
+        // gating style (e.g. `t`/`e` above).
+        KeyCode::Char('x') if app.screen == Screen::Detail => app.toggle_facts_folded(),
 
         // In-body link navigation: issue keys and URLs mentioned in the
         // description/comments/parent/links fields are underlined; `{`/`}`
@@ -521,6 +526,26 @@ mod tests {
         assert_eq!(
             app.current_view, before,
             "view-flipping is scoped to Home/List, not Board"
+        );
+    }
+
+    #[test]
+    fn x_toggles_facts_folded_on_detail_only() {
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        assert!(!app.facts_folded);
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('x')));
+        assert!(app.facts_folded, "'x' should fold the facts panel");
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('x')));
+        assert!(!app.facts_folded, "'x' again should unfold it");
+
+        app.screen = Screen::Home;
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('x')));
+        assert!(
+            !app.facts_folded,
+            "'x' is scoped to Detail, not Home/List/Board"
         );
     }
 }
