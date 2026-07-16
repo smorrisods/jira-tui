@@ -112,6 +112,17 @@ fn detail_screen_wide_layout_shows_side_rail_panels() {
         text.contains("updated:"),
         "the people & meta panel's trailing 'updated:' line must not be clipped"
     );
+    // Regression test: the rail panels used to have no border at all —
+    // just a plain title line with the body text running straight to the
+    // pane's edge — so each panel now gets its own rounded card frame.
+    // Every screen's header/footer chrome also has rounded corners, so
+    // this counts at least the outer Detail card plus its 4 rail panels
+    // (5) on top of whatever header/footer/etc. contribute, rather than
+    // asserting an exact total.
+    assert!(
+        text.matches('╭').count() >= 5,
+        "the outer Detail card plus all 4 rail panels should each have their own border"
+    );
 }
 
 #[test]
