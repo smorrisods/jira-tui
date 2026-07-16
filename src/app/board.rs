@@ -189,12 +189,20 @@ impl App {
     }
 
     /// Wide layout (SPEC.md §7: "Fully-done lanes collapse behind `pgdn`").
-    /// A lane is "fully done" when every issue in it has the status of the
-    /// workflow's terminal (last) column — derived positionally so this
-    /// still works whatever that column is actually named.
+    /// A lane is "fully done" when every issue in it has the workflow's
+    /// "Done" status — preferring the literal `"Done"` column when present
+    /// (`board_columns` appends any non-preferred status alphabetically
+    /// *after* "Done", so `cols.last()` is only "Done" when the workflow
+    /// has no custom statuses at all) and falling back to the last column
+    /// positionally for a workflow that doesn't use that name.
     pub(crate) fn board_wide_lanes(&self) -> (Vec<Option<String>>, usize) {
         let cols = self.board_columns();
-        let Some(done) = cols.last().cloned() else {
+        let Some(done) = cols
+            .iter()
+            .find(|c| c.as_str() == "Done")
+            .or_else(|| cols.last())
+            .cloned()
+        else {
             return (self.board_lanes(), 0);
         };
         self.board_visible_lanes(|lane| {
@@ -235,21 +243,30 @@ impl App {
         (prev, next)
     }
 
+    /// The deepest column cell in a lane, for the wide grid — the number of
+    /// stacked card slots every column in that lane's row gets, floored at
+    /// 1 so an all-empty lane (shouldn't happen per `board_lanes`'s own
+    /// invariant, but not relied on here) still reserves a row. Shared by
+    /// `board_lane_height` and `ui::board::draw_wide_lane` so the height
+    /// reserved for a lane and the grid actually drawn into it can never
+    /// disagree — two independent computations of this exact number is
+    /// exactly the kind of drift that silently clips or misaligns content.
+    pub(crate) fn board_max_rows_wide(&self, lane: &Option<String>) -> usize {
+        self.board_columns()
+            .iter()
+            .map(|s| self.board_cell(lane, s).len())
+            .max()
+            .unwrap_or(0)
+            .max(1)
+    }
+
     /// How many rows a lane's band occupies in a given layout — shared by
     /// the renderer (to decide how many lanes fit) and `board_ensure_visible`
     /// (to scroll the selection into view), so the two can never disagree.
     pub(crate) fn board_lane_height(&self, lane: &Option<String>, layout: BoardLayout) -> u16 {
         let cols = self.board_columns();
         match layout {
-            BoardLayout::Wide => {
-                let max_rows = cols
-                    .iter()
-                    .map(|s| self.board_cell(lane, s).len())
-                    .max()
-                    .unwrap_or(0)
-                    .max(1);
-                1 + max_rows as u16 * CARD_HEIGHT
-            }
+            BoardLayout::Wide => 1 + self.board_max_rows_wide(lane) as u16 * CARD_HEIGHT,
             BoardLayout::Narrow => {
                 let status = cols.get(self.board_sel.col).cloned().unwrap_or_default();
                 let n = self.board_cell(lane, &status).len().max(1);
@@ -273,6 +290,18 @@ impl App {
     fn board_ensure_visible(&mut self) {
         let area = self.board_area.get();
         if area.height == 0 {
+            return;
+        }
+        // The renderer splits off a 1-row column-header/tab-strip line
+        // before handing the rest to its own "how many lanes fit" pass
+        // (`fit_lanes` in `ui::board`) — match that exactly, or this can
+        // conclude a lane fits when the renderer's smaller budget would
+        // drop it, silently scrolling the selection off-screen with no
+        // further keypress able to fix it (both budgets must agree on what
+        // "fits" means for the same reason `board_lane_height` is shared
+        // between renderer and scroll code at all).
+        let body_height = area.height.saturating_sub(1);
+        if body_height == 0 {
             return;
         }
         let layout = board_columns::board_layout_for_width(area.width);
@@ -303,7 +332,7 @@ impl App {
         let mut last_fit = scroll;
         for (i, lane) in visible.iter().enumerate().skip(scroll) {
             let h = self.board_lane_height(lane, layout) + 1;
-            if used + h > area.height && i > scroll {
+            if used + h > body_height && i > scroll {
                 break;
             }
             used += h;

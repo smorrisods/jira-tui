@@ -199,6 +199,38 @@ fn board_wide_lanes_collapses_a_fully_done_lane_but_not_a_mixed_one() {
     assert_eq!(hidden, 1);
 }
 
+/// Regression test: `board_columns` appends any non-preferred status
+/// alphabetically *after* every preferred one (including "Done"), so
+/// `cols.last()` is only "Done" when the workflow has no custom statuses —
+/// a workflow with a custom terminal status (e.g. "Won't Do", "Zzz-custom")
+/// would otherwise make "fully done" mean the wrong column entirely.
+#[test]
+fn board_wide_lanes_prefers_the_literal_done_column_over_the_positional_last_one() {
+    let mut app = demo_app();
+    app.issues = vec![
+        issue("DS-1", Some("EPIC-A"), "Done"),
+        issue("DS-2", Some("EPIC-A"), "Done"),
+        issue("DS-3", Some("EPIC-B"), "Zzz-custom"),
+    ];
+    let cols = app.board_columns();
+    assert_eq!(
+        cols.last().map(String::as_str),
+        Some("Zzz-custom"),
+        "test fixture needs a custom status sorting after \"Done\""
+    );
+    app.board_sel.lane = app
+        .board_lanes()
+        .iter()
+        .position(|l| l.as_deref() == Some("EPIC-B"))
+        .unwrap();
+    let (visible, hidden) = app.board_wide_lanes();
+    assert!(
+        !visible.iter().any(|l| l.as_deref() == Some("EPIC-A")),
+        "EPIC-A is fully Done and should collapse, even though \"Done\" isn't the last column"
+    );
+    assert_eq!(hidden, 1);
+}
+
 #[test]
 fn board_wide_lanes_never_collapses_the_selected_lane() {
     let mut app = demo_app();

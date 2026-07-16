@@ -74,4 +74,31 @@ mod tests {
         assert_eq!(board_card_col_width(50, 1), 50);
         assert_eq!(board_card_col_width(50, 0), 50);
     }
+
+    /// Regression test, ported from the old text-grid's
+    /// `row_width_never_exceeds_the_pane_when_not_floor_clamped` (deleted
+    /// along with `board_col_width`): the total width the wide grid actually
+    /// lays out (`n` cards at `board_card_col_width` plus a 1-col gap
+    /// between each, matching `Layout::horizontal(...).spacing(1)`) must
+    /// never exceed the pane — unless the 18-char floor is doing the
+    /// clamping, which (like the old floor) is an accepted narrow-terminal
+    /// tradeoff for a wide workflow with many status columns, not a bug.
+    #[test]
+    fn card_grid_width_never_exceeds_the_pane_when_not_floor_clamped() {
+        for n in 1..=8usize {
+            for inner_width in [90u16, 96, 110, 140, 200] {
+                let gaps = n.saturating_sub(1) as u16;
+                let unclamped = inner_width.saturating_sub(gaps) / (n.max(1) as u16);
+                if unclamped < 18 {
+                    continue; // the floor is clamping; overflow is expected here
+                }
+                let col_width = board_card_col_width(inner_width, n);
+                let total = n as u16 * col_width + gaps;
+                assert!(
+                    total <= inner_width,
+                    "n={n} inner_width={inner_width}: grid width {total} exceeds pane"
+                );
+            }
+        }
+    }
 }

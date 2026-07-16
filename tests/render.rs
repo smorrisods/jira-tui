@@ -1054,3 +1054,31 @@ fn board_screen_narrow_collapses_empty_lanes() {
         "the collapsed lane itself must not also render expanded"
     );
 }
+
+#[test]
+fn board_screen_wide_scrolls_the_selected_lane_into_actual_view() {
+    // Regression test: `board_ensure_visible`'s "how many lanes fit" budget
+    // must match the renderer's own `fit_lanes` budget exactly (both must
+    // account for the 1-row column-header line). An earlier version of
+    // this budgeted one row too many, so a lane `board_ensure_visible`
+    // considered already in view could still be silently dropped by the
+    // renderer — a numeric scroll-bound assertion wouldn't catch that, only
+    // checking the actual rendered output does.
+    let mut app = board_fixture_app();
+    // Populate `board_area` with this size's real geometry before
+    // navigating, mirroring the established pattern for nav functions that
+    // read back render-time state (see Detail's `jump_to_comments` tests).
+    let _ = render_at(&app, 120, 10);
+    let lanes = app.board_lanes();
+    let lanes_len = lanes.len();
+    for _ in 0..lanes_len - 1 {
+        app.board_move_lane(1);
+    }
+    let label = app.board_lane_label(&lanes[app.board_sel.lane]);
+    let text = render_at(&app, 120, 10);
+    assert!(
+        text.contains(&label),
+        "the selected lane ({label:?}) must actually render on screen after \
+         scrolling to it, not just satisfy a numeric scroll bound"
+    );
+}

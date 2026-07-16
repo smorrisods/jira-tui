@@ -15,7 +15,7 @@ use crate::domain::IssueSummary;
 use super::board_columns::{self, BoardLayout, CARD_HEIGHT};
 use super::{
     accent, accent2, card, chip, danger, faint, initials, maple, muted, priority_glyph,
-    priority_style, selection_bg, status_colour, truncate, type_colour,
+    priority_style, selected_style, status_colour, truncate, type_colour,
 };
 
 pub(crate) fn draw_board(f: &mut Frame, app: &App, area: Rect) {
@@ -164,7 +164,9 @@ fn draw_wide_lane(
 ) {
     let cells: Vec<Vec<&IssueSummary>> = cols.iter().map(|s| app.board_cell(lane, s)).collect();
     let lane_count: usize = cells.iter().map(|c| c.len()).sum();
-    let max_rows = cells.iter().map(|c| c.len()).max().unwrap_or(0).max(1);
+    // Shared with `App::board_lane_height` so the height reserved for this
+    // lane and the grid actually drawn into it can never disagree.
+    let max_rows = app.board_max_rows_wide(lane);
 
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -350,13 +352,11 @@ fn ghost_line(text: &str) -> Paragraph<'static> {
 /// rail instead, so it never needs one).
 fn draw_card(f: &mut Frame, area: Rect, issue: &IssueSummary, selected: bool, peek: Option<&str>) {
     let border_colour = if selected { maple() } else { muted() };
-    let mut block = Block::default()
+    let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(border_colour));
-    if selected {
-        block = block.style(Style::default().bg(selection_bg()));
-    }
+        .border_style(Style::default().fg(border_colour))
+        .style(selected_style(Style::default(), selected));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
