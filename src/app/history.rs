@@ -50,4 +50,14 @@ impl App {
         }
         self.show_issue(&target);
     }
+
+    /// Records `key` as most-recently opened, for Home's "recent" card/strip
+    /// (SPEC.md §5) — move-to-front-or-insert, capped at 3. Called once from
+    /// `open_by_key`, not from `show_issue`/history navigation, so following
+    /// in-body links within a single Detail session doesn't reshuffle it.
+    pub(crate) fn note_recent(&mut self, key: &str) {
+        self.recent.retain(|k| k != key);
+        self.recent.insert(0, key.to_string());
+        self.recent.truncate(3);
+    }
 }

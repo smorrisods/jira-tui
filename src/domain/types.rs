@@ -57,6 +57,11 @@ pub struct IssueSummary {
     pub assignee: Option<String>,
     pub blocked: bool,
     pub updated: String,
+    /// Parsed form of `updated`, used only for time-window queries (e.g.
+    /// "done this week", `App::done_this_week`) — `updated` itself stays a
+    /// display string and is unaffected. `None` when the source didn't
+    /// provide a parseable timestamp.
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Parent (usually Epic) key, used to group issues into board swimlanes.
     pub epic: Option<String>,
 }

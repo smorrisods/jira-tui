@@ -60,11 +60,11 @@ impl Cache {
 
         for (position, issue) in issues.iter().enumerate() {
             tx.execute(
-                "INSERT INTO issues (site_id, key, summary, issue_type, status, priority, assignee, blocked, updated, epic)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                "INSERT INTO issues (site_id, key, summary, issue_type, status, priority, assignee, blocked, updated, updated_at, epic)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                  ON CONFLICT(site_id, key) DO UPDATE SET
                     summary = ?3, issue_type = ?4, status = ?5, priority = ?6,
-                    assignee = ?7, blocked = ?8, updated = ?9, epic = ?10",
+                    assignee = ?7, blocked = ?8, updated = ?9, updated_at = ?10, epic = ?11",
                 params![
                     site_id,
                     issue.key,
@@ -75,6 +75,7 @@ impl Cache {
                     issue.assignee,
                     issue.blocked,
                     issue.updated,
+                    issue.updated_at.map(|t| t.to_rfc3339()),
                     issue.epic,
                 ],
             )?;
@@ -112,7 +113,7 @@ impl Cache {
         };
 
         let mut stmt = self.conn.prepare(
-            "SELECT i.key, i.summary, i.issue_type, i.status, i.priority, i.assignee, i.blocked, i.updated, i.epic
+            "SELECT i.key, i.summary, i.issue_type, i.status, i.priority, i.assignee, i.blocked, i.updated, i.updated_at, i.epic
              FROM view_issues vi
              JOIN issues i ON i.id = vi.issue_id
              WHERE vi.view_id = ?1
@@ -120,6 +121,7 @@ impl Cache {
         )?;
         let rows = stmt.query_map(params![view_id], |row| {
             let priority_label: String = row.get(4)?;
+            let updated_at: Option<String> = row.get(8)?;
             Ok(IssueSummary {
                 key: row.get(0)?,
                 summary: row.get(1)?,
@@ -129,7 +131,12 @@ impl Cache {
                 assignee: row.get(5)?,
                 blocked: row.get(6)?,
                 updated: row.get(7)?,
-                epic: row.get(8)?,
+                updated_at: updated_at.and_then(|s| {
+                    chrono::DateTime::parse_from_rfc3339(&s)
+                        .ok()
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                }),
+                epic: row.get(9)?,
             })
         })?;
 

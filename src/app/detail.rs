@@ -38,6 +38,7 @@ impl App {
     /// genuine live session dispatches the fetch off the render thread and
     /// navigates to `Screen::Detail` once it lands — see `dispatch_detail_fetch`.
     pub fn open_by_key(&mut self, key: &str) {
+        self.note_recent(key);
         if self.screen == Screen::Detail {
             if let Some(current) = self.detail.as_ref().map(|d| d.key.clone()) {
                 if current != key {

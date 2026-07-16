@@ -5,15 +5,15 @@
 //!
 //! The link list itself isn't cached: it's recomputed on demand from
 //! whichever detail is currently shown (via `active_comment_detail` +
-//! `render::issue_detail_lines`), the same "recompute, don't cache"
-//! approach `app::comments` already uses for jumping to/stepping between
-//! comments. `render::issue_detail_lines` is a pure function of the
-//! `IssueDetail`, so this always agrees with what `ui::detail`/
-//! `ui::list::draw_quick_view` actually rendered.
+//! `render::wide_detail`/`narrow_detail`/`quick_view_wide`/`quick_view_narrow`),
+//! the same "recompute, don't cache" approach `app::comments` already uses
+//! for jumping to/stepping between comments — this always agrees with what
+//! `ui::detail`/`ui::quick_view` actually rendered.
 
 use crate::infra;
 use crate::render::{self, LinkTarget};
 use crate::ui::detail_columns::{detail_layout_for_width, DetailLayout};
+use crate::ui::quick_view_columns::{quick_view_layout_for_width, QuickViewLayout};
 
 use super::{App, Screen};
 
@@ -23,13 +23,21 @@ impl App {
     /// top-to-bottom — see `render::wide_detail_links`) or narrow layout
     /// (one document), picked via the last-rendered `detail_area`'s width
     /// (same idiom `app::mouse::link_at` and `app::comments` already use);
-    /// the quick-view panel's unchanged flat document everywhere else.
+    /// the quick-view panel's wide (description then meta) or narrow (one
+    /// document) layout everywhere else, picked via `quick_view_area`'s
+    /// width the same way.
     pub(crate) fn active_links(&self) -> Vec<LinkTarget> {
         let Some(detail) = self.active_comment_detail() else {
             return Vec::new();
         };
         if self.screen != Screen::Detail {
-            return render::issue_detail_lines(detail).links;
+            let updated = self.issue_updated(&detail.key).to_string();
+            return match quick_view_layout_for_width(self.quick_view_area.get().width) {
+                QuickViewLayout::Wide => {
+                    render::quick_view_wide_links(&render::quick_view_wide(detail, &updated))
+                }
+                QuickViewLayout::Narrow => render::quick_view_narrow(detail, &updated).lines.links,
+            };
         }
         let current_user = self.current_user_display();
         let updated = self.issue_updated(&detail.key).to_string();

@@ -103,4 +103,23 @@ impl App {
     pub fn blocked(&self) -> Vec<&IssueSummary> {
         self.all_issues.iter().filter(|i| i.blocked).collect()
     }
+
+    pub fn in_review(&self) -> Vec<&IssueSummary> {
+        self.all_issues
+            .iter()
+            .filter(|i| i.status == "In Review")
+            .collect()
+    }
+
+    /// Issues marked `Done` and updated within the last 7 days. Recomputed
+    /// from `updated_at` each call rather than cached, matching every other
+    /// query here — issues with no parseable timestamp (`updated_at: None`)
+    /// are excluded rather than assumed recent.
+    pub fn done_this_week(&self) -> Vec<&IssueSummary> {
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(7);
+        self.all_issues
+            .iter()
+            .filter(|i| i.status == "Done" && i.updated_at.is_some_and(|t| t >= cutoff))
+            .collect()
+    }
 }
