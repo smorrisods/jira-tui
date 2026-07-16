@@ -131,6 +131,10 @@ pub struct App {
 
     // Swimlane board.
     pub board_sel: BoardSelection,
+    /// Index of the first visible swimlane (SPEC.md §7) — not a text-row
+    /// offset, since a lane's own band is a variable number of multi-row
+    /// bordered cards rather than one packed text line. Mouse wheel
+    /// (`board_scroll_by`) moves it by whole lanes, one notch per lane.
     pub board_scroll: u16,
 
     /// Ambient Jax companion (pure entertainment 🦦).
