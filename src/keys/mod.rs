@@ -222,14 +222,14 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('Y') => yank_url(app),
         KeyCode::Char('q') => back_or_quit(app),
 
-        // Detail issue-navigation history: `←`/`→` step back/forward
-        // through issues followed via in-body links (see `app::history`),
-        // falling through to their prior meaning — exit Detail / open the
-        // selected issue — once there's nothing left to step through.
-        KeyCode::Left if app.screen == Screen::Detail && app.can_go_back() => app.go_back(),
+        // Detail issue-navigation history: `←` steps back through issues
+        // followed via in-body links (see `app::history`), falling through
+        // to its prior meaning — exit Detail — once there's nothing left to
+        // step through; see `go_back_or_out` (shared with right-click).
+        KeyCode::Left => go_back_or_out(app),
         KeyCode::Right if app.screen == Screen::Detail && app.can_go_forward() => app.go_forward(),
 
-        KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => back_or_quit(app),
+        KeyCode::Esc | KeyCode::Char('h') | KeyCode::Backspace => back_or_quit(app),
 
         // Sort + filter on the work list.
         KeyCode::Char('s') if matches!(app.screen, Screen::Home | Screen::List) => app.cycle_sort(),
@@ -408,6 +408,18 @@ fn back_or_quit(app: &mut App) {
         Screen::FieldMapping => app.close_field_mapping(),
         Screen::List | Screen::Detail | Screen::Board => app.screen = Screen::Home,
         Screen::About => app.screen = app.about_return_screen,
+    }
+}
+
+/// `←` on Detail steps back through in-body-link history first, falling
+/// through to `back_or_quit` once there's nothing left to step through.
+/// Shared with the mouse's right-click "back" gesture (`keys::mouse`) so
+/// the two stay in lockstep by construction rather than by comment.
+fn go_back_or_out(app: &mut App) {
+    if app.screen == Screen::Detail && app.can_go_back() {
+        app.go_back();
+    } else {
+        back_or_quit(app);
     }
 }
 

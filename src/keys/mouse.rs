@@ -18,6 +18,26 @@ pub(crate) fn handle_mouse(app: &mut App, me: MouseEvent) {
     if me.modifiers.contains(KeyModifiers::SHIFT) {
         return;
     }
+    // A modal/overlay captures keyboard input exclusively (see the flag
+    // checks at the top of `handle_key`) — mouse input must be swallowed
+    // the same way, or a click could mutate `app.screen` (or list/quick-view
+    // state) while the modal's own flag stays set, orphaning it over
+    // whatever screen is now showing underneath.
+    if app.show_help || app.picker_open || app.view_picker_open || app.assignee_picker_open {
+        return;
+    }
+    // Any button other than a continuing Left-button drag cancels an
+    // in-flight one — e.g. right-click navigating away mid-drag, or a
+    // dropped button-release — so a stale `selecting` can't keep painting
+    // the drag's inverted highlight over whatever's now on screen.
+    if !matches!(
+        me.kind,
+        MouseEventKind::Down(MouseButton::Left)
+            | MouseEventKind::Drag(MouseButton::Left)
+            | MouseEventKind::Up(MouseButton::Left)
+    ) {
+        app.mouse.selecting = false;
+    }
     match me.kind {
         MouseEventKind::ScrollUp => scroll_at(app, me.column, me.row, -1),
         MouseEventKind::ScrollDown => scroll_at(app, me.column, me.row, 1),
@@ -33,19 +53,15 @@ pub(crate) fn handle_mouse(app: &mut App, me: MouseEvent) {
             app.toggle_quick_view();
         }
         // Right-click steps back (see this module's doc comment for why
-        // right-click, not an actual back button). Mirrors `←`'s own
-        // Detail-history-then-back-out chain exactly. Deliberately excludes
-        // Home: `back_or_quit` quits the app there, and a stray right-click
-        // shouldn't be able to do that the way a deliberate `Esc` keypress
-        // can.
+        // right-click, not an actual back button) — shares `go_back_or_out`
+        // with the `←` key so the two stay in lockstep by construction.
+        // Deliberately excludes Home: `back_or_quit` quits the app there,
+        // and a stray right-click shouldn't be able to do that the way a
+        // deliberate `Esc` keypress can.
         MouseEventKind::Down(MouseButton::Right)
             if matches!(app.screen, Screen::Detail | Screen::List | Screen::Board) =>
         {
-            if app.screen == Screen::Detail && app.can_go_back() {
-                app.go_back();
-            } else {
-                super::back_or_quit(app);
-            }
+            super::go_back_or_out(app);
         }
         _ => {}
     }
@@ -244,6 +260,39 @@ mod tests {
         handle_mouse(&mut app, right_click(5));
         assert_eq!(app.screen, Screen::Home);
         assert!(!app.should_quit);
+    }
+
+    /// A modal/overlay captures keyboard input exclusively (`handle_key`
+    /// checks these flags before anything else) — mouse input must be
+    /// swallowed the same way, or a click could navigate away while the
+    /// modal's own flag stays set, orphaning it over whatever's now shown.
+    #[test]
+    fn mouse_input_is_swallowed_while_a_modal_is_open() {
+        let mut app = demo_app();
+        app.screen = Screen::Detail;
+        app.picker_open = true;
+
+        handle_mouse(&mut app, right_click(5));
+
+        assert_eq!(app.screen, Screen::Detail, "picker must stay in front");
+        assert!(app.picker_open, "picker must not be silently dismissed");
+    }
+
+    /// A stale in-flight drag (e.g. right-click navigating away mid-drag,
+    /// or a dropped button-release) must not keep painting its inverted
+    /// highlight over whatever screen is now shown — any non-Left-button
+    /// event cancels it.
+    #[test]
+    fn a_non_left_button_event_cancels_a_stale_drag() {
+        let mut app = demo_app();
+        app.mouse.selecting = true;
+
+        handle_mouse(&mut app, right_click(5));
+
+        assert!(
+            !app.mouse.selecting,
+            "right-click should cancel a stale left-drag"
+        );
     }
 
     /// CLAUDE.md "what to keep true": "Mouse mode is opt-in: Shift-drag must
