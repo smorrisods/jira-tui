@@ -113,6 +113,10 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
         desc: "step back/forward through issues followed via links (in an issue)",
     },
     KeyHint {
+        key: "x",
+        desc: "fold/unfold the facts panel (narrow Detail layout)",
+    },
+    KeyHint {
         key: "F",
         desc: "map a custom field (e.g. Acceptance Criteria)",
     },
@@ -169,5 +173,12 @@ mod tests {
             has_key("h/j/k/l (board)"),
             "board vim-key support should be documented"
         );
+    }
+
+    /// SPEC.md §6/§10: `x` folds the narrow Detail layout's facts panel —
+    /// a new binding introduced by this phase, verified unbound before it.
+    #[test]
+    fn facts_panel_fold_key_is_registered() {
+        assert!(has_key("x"), "`x` (fold facts panel) should be documented");
     }
 }

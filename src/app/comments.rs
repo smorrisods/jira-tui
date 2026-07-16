@@ -3,6 +3,7 @@
 //! top, `n`/`p` step to the next/previous individual comment.
 
 use crate::domain::IssueDetail;
+use crate::ui::detail_columns::{detail_layout_for_width, DetailLayout};
 
 use super::{App, Screen};
 
@@ -31,13 +32,44 @@ impl App {
         }
     }
 
+    /// The comment section's header/step offsets for whichever document is
+    /// actually on screen right now: the Detail screen's wide or narrow
+    /// layout (picked via the last-rendered `detail_area`'s width, the same
+    /// idiom `app::mouse::link_at` already uses), or the quick-view panel's
+    /// unchanged flat document everywhere else. Kept in step with
+    /// `ui::detail`/`ui::list::draw_quick_view` by construction — same
+    /// "recompute, don't cache" rationale as `active_links`.
+    fn active_comment_offsets(&self, detail: &IssueDetail) -> (Option<usize>, Vec<usize>) {
+        if self.screen != Screen::Detail {
+            let rendered = crate::render::issue_detail_lines(detail);
+            return (rendered.comments_header, rendered.comment_starts);
+        }
+        let current_user = self.current_user_display();
+        let updated = self.issue_updated(&detail.key).to_string();
+        match detail_layout_for_width(self.detail_area.get().width) {
+            DetailLayout::Wide => {
+                let wide = crate::render::wide_detail(detail, &current_user, &updated);
+                (wide.main.comments_header, wide.main.comment_starts)
+            }
+            DetailLayout::Narrow => {
+                let narrow = crate::render::narrow_detail(
+                    detail,
+                    &current_user,
+                    &updated,
+                    self.facts_folded,
+                );
+                (narrow.lines.comments_header, narrow.lines.comment_starts)
+            }
+        }
+    }
+
     /// `]` — jump the scroll position to the start of the comments section.
     pub fn jump_to_comments(&mut self) {
         let Some(detail) = self.active_comment_detail() else {
             return;
         };
-        let rendered = crate::render::issue_detail_lines(detail);
-        match rendered.comments_header {
+        let (comments_header, _) = self.active_comment_offsets(detail);
+        match comments_header {
             Some(offset) => self.set_scroll(offset as u16),
             None => self.status = "no comments on this issue".into(),
         }
@@ -62,27 +94,25 @@ impl App {
         let Some(detail) = self.active_comment_detail() else {
             return;
         };
-        let rendered = crate::render::issue_detail_lines(detail);
-        if rendered.comment_starts.is_empty() {
+        let (_, comment_starts) = self.active_comment_offsets(detail);
+        if comment_starts.is_empty() {
             self.status = "no comments on this issue".into();
             return;
         }
         let current = self.current_scroll() as usize;
         let target = if dir > 0 {
-            rendered
-                .comment_starts
+            comment_starts
                 .iter()
                 .find(|&&line| line > current)
                 .copied()
-                .unwrap_or_else(|| *rendered.comment_starts.last().unwrap())
+                .unwrap_or_else(|| *comment_starts.last().unwrap())
         } else {
-            rendered
-                .comment_starts
+            comment_starts
                 .iter()
                 .rev()
                 .find(|&&line| line < current)
                 .copied()
-                .unwrap_or_else(|| rendered.comment_starts[0])
+                .unwrap_or_else(|| comment_starts[0])
         };
         self.set_scroll(target as u16);
     }

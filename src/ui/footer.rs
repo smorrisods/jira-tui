@@ -18,6 +18,7 @@ use ratatui::text::{Line, Span};
 
 use crate::app::{App, EditTarget, ListFocus, Screen, WelcomePhase};
 
+use super::detail_columns::{detail_layout_for_width, DetailLayout};
 use super::{accent, muted};
 
 #[derive(Clone)]
@@ -165,6 +166,11 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
                 hint("{/}", "cycle links"),
             ];
             nav.extend(history_hints);
+            // `x` only does anything in the narrow single-column layout —
+            // there's no facts panel to fold in the wide rail.
+            if detail_layout_for_width(app.detail_area.get().width) == DetailLayout::Narrow {
+                nav.push(hint("x", "fold facts"));
+            }
             vec![
                 group(
                     "ACT",
@@ -281,6 +287,41 @@ pub(crate) fn footer_line(app: &App, available_width: usize) -> Line<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::App;
+    use ratatui::layout::Rect;
+
+    /// Checked against the pre-fit group content directly, not a rendered
+    /// `TestBackend` frame: Detail's NAV group (which the `x` hint joins) is
+    /// already wide enough to get dropped by `fit_footer_groups` at typical
+    /// terminal sizes, regardless of this hint — a pre-existing footer
+    /// width/content tradeoff, not something this test should get tangled
+    /// up in.
+    #[test]
+    fn detail_nav_group_advertises_fold_facts_only_when_narrow() {
+        let mut app = App::new(true);
+        app.selected = 0;
+        app.open_detail();
+
+        app.detail_area.set(Rect::new(0, 0, 120, 40));
+        let wide_nav = footer_groups(&app)
+            .into_iter()
+            .find(|g| g.label == Some("NAV"))
+            .unwrap();
+        assert!(
+            !wide_nav.hints.iter().any(|h| h.key == "x"),
+            "the wide layout has no facts panel to fold"
+        );
+
+        app.detail_area.set(Rect::new(0, 0, 80, 40));
+        let narrow_nav = footer_groups(&app)
+            .into_iter()
+            .find(|g| g.label == Some("NAV"))
+            .unwrap();
+        assert!(
+            narrow_nav.hints.iter().any(|h| h.key == "x"),
+            "the narrow layout should advertise 'x' to fold the facts panel"
+        );
+    }
 
     fn g(label: Option<&'static str>, hints: Vec<(&'static str, &'static str)>) -> FooterGroup {
         let hints = hints.into_iter().map(|(k, d)| hint(k, d)).collect();

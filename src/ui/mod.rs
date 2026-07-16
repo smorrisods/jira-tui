@@ -23,6 +23,7 @@ mod about;
 mod assignee_picker;
 mod board;
 mod detail;
+pub(crate) mod detail_columns;
 mod editor;
 mod field_mapping;
 mod footer;
@@ -107,7 +108,7 @@ pub(crate) fn accent2() -> Color {
 pub(crate) fn maple() -> Color {
     theme_colour((0xE8, 0x83, 0x4A), Color::LightRed)
 }
-fn ok() -> Color {
+pub(crate) fn ok() -> Color {
     theme_colour((0x8F, 0xCB, 0x7A), Color::Green)
 }
 fn warn() -> Color {
@@ -372,6 +373,25 @@ pub(crate) fn chip(text: &str, colour: Color) -> Span<'static> {
         _ => Style::default().fg(Color::Black).bg(colour),
     };
     Span::styled(format!(" {text} "), style)
+}
+
+/// The Detail screen's workflow strip (SPEC.md §6): each status as a chip,
+/// the current one solid and bold (a terminal stand-in for the mockup's
+/// "dashed outline chip, current one solid orchid bold" — box-drawn dashed
+/// borders per chip aren't practical inline, so non-current statuses fall
+/// back to plain faint text instead).
+pub(crate) fn workflow_chip(text: &str, current: bool) -> Span<'static> {
+    if current {
+        Span::styled(
+            format!(" {text} "),
+            Style::default()
+                .fg(Color::Black)
+                .bg(accent2())
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled(text.to_string(), Style::default().fg(faint()))
+    }
 }
 
 pub(crate) fn divider() -> Line<'static> {

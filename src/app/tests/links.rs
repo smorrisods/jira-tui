@@ -73,7 +73,7 @@ fn click_on_a_detail_link_opens_it() {
         .expect("demo detail should link to another issue");
     let target = &links[idx];
 
-    app.detail_area.set(Rect::new(0, 1, 80, 20));
+    app.detail_main_area.set(Rect::new(0, 1, 80, 20));
     app.detail_scroll = 0;
     let x = target.start as u16;
     let y = 1 + target.line as u16;

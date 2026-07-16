@@ -341,7 +341,9 @@ impl App {
 
     /// Display name to attribute a locally-composed comment to before any
     /// live response comes back (or in demo/cache mode, where there is none).
-    fn current_user_display(&self) -> String {
+    /// Also the "who am I" `render::wide_detail`/`narrow_detail` use to pick
+    /// out which comment cards get the maple own-comment rule.
+    pub(crate) fn current_user_display(&self) -> String {
         match &self.source {
             Source::Live { user, .. } | Source::Cache { user } => user.clone(),
             Source::Demo => "you".into(),
