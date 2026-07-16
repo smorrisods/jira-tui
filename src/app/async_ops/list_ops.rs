@@ -160,8 +160,7 @@ impl App {
             return;
         }
         self.loading = false;
-        self.all_issues = issues;
-        self.source = source;
+        self.record_synced(issues, source);
         self.status = format!("↻ {status}");
         self.recompute_view();
     }
@@ -179,8 +178,7 @@ impl App {
             return;
         }
         self.loading = false;
-        self.all_issues = issues;
-        self.source = source;
+        self.record_synced(issues, source);
         let label = view.label();
         self.current_view = view;
         self.status = format!("↻ {status}");

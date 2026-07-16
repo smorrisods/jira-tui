@@ -26,6 +26,7 @@ mod detail;
 mod editor;
 mod field_mapping;
 mod footer;
+mod header;
 mod help;
 mod home;
 mod jax_companion;
@@ -44,6 +45,7 @@ use detail::draw_detail;
 use editor::draw_editor;
 use field_mapping::draw_field_mapping;
 use footer::footer_line;
+use header::draw_header;
 use help::draw_help_overlay;
 use home::draw_home;
 use jax_companion::draw_jax_companion;
@@ -288,70 +290,8 @@ fn draw_toast(f: &mut Frame, msg: &str, area: Rect) {
 }
 
 // ── Header ───────────────────────────────────────────────────────────────────
-fn draw_header(f: &mut Frame, app: &App, area: Rect) {
-    let spinner = ['◐', '◓', '◑', '◒'][(app.tick / 2 % 4) as usize];
-    let branch = app.git.branch.clone().unwrap_or_else(|| "no branch".into());
-    let ctx_key = app
-        .git
-        .issue_key
-        .clone()
-        .map(|k| format!(" ⇢ {k}"))
-        .unwrap_or_default();
-
-    let left = Line::from(vec![
-        Span::styled(format!(" {spinner} "), Style::default().fg(accent2())),
-        Span::styled(
-            "jira",
-            Style::default().fg(accent()).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "-tui",
-            Style::default().fg(accent2()).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("  ·  ", Style::default().fg(muted())),
-        Span::styled(app.source.label(), Style::default().fg(muted())),
-        Span::styled(
-            if app.current_view != crate::domain::ViewKind::MyWork {
-                format!("  ·  viewing: {}", app.current_view.label())
-            } else {
-                String::new()
-            },
-            Style::default().fg(accent2()).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            if app.mouse.enabled {
-                "  🖱 mouse"
-            } else {
-                ""
-            },
-            Style::default().fg(ok()),
-        ),
-    ]);
-    let right = Line::from(vec![
-        Span::styled("", Style::default()),
-        Span::styled(format!("⎇ {branch}"), Style::default().fg(Color::Blue)),
-        Span::styled(
-            ctx_key,
-            Style::default().fg(warn()).add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" "),
-    ])
-    .alignment(Alignment::Right);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(muted()));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-        .split(inner);
-    f.render_widget(Paragraph::new(left), cols[0]);
-    f.render_widget(Paragraph::new(right), cols[1]);
-}
+// The breadcrumb, sync pill, and their layout live in `header` — see its
+// module doc for the collapse-below-90-cols rule.
 
 // ── Footer ───────────────────────────────────────────────────────────────────
 /// Group content per screen, the width-measuring drop rule, and rendering

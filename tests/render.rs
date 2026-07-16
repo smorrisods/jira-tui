@@ -2,6 +2,7 @@
 //! and assert the composed screen text, so each screen is exercised in CI.
 
 use jira_tui::app::{App, Screen, WelcomePhase};
+use jira_tui::domain::Source;
 use jira_tui::ui;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -259,14 +260,34 @@ fn assignee_picker_keeps_the_selection_in_view_on_a_short_terminal() {
 }
 
 #[test]
-fn switching_to_a_teammate_view_shows_in_the_header() {
+fn switching_to_a_teammate_view_shows_a_confirmation_toast() {
+    // Renamed from "...shows_in_the_header": this asserts on the transient
+    // flash toast `switch_view` raises (`App::flash`), not the header —
+    // the old header literally said "viewing: X" and this test's name
+    // predates the phase-3 breadcrumb rework, which dropped that text in
+    // favour of the breadcrumb itself (see the test below).
     let mut app = demo_app();
     app.screen = Screen::Home;
     app.switch_view(jira_tui::domain::ViewKind::Teammate("alex.chen".into()));
     let text = render(&app);
     assert!(
         text.contains("viewing: alex.chen's Work"),
-        "header should indicate the active non-default view"
+        "switching views should show a confirmation toast"
+    );
+}
+
+#[test]
+fn switching_to_a_teammate_view_shows_in_the_header_breadcrumb() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.switch_view(jira_tui::domain::ViewKind::Teammate("alex.chen".into()));
+    // Expire the confirmation toast so only the header's own breadcrumb
+    // text is left to satisfy the assertion.
+    app.tick = app.flash_until;
+    let text = render(&app);
+    assert!(
+        text.contains("alex.chen's Work"),
+        "the header breadcrumb should show the active non-default view"
     );
 }
 
@@ -615,5 +636,149 @@ fn footer_renders_at_the_84x46_reference_size() {
     assert!(
         text.contains("all keys"),
         "the board footer's pinned tail should render at the 84-col reference size"
+    );
+}
+
+#[test]
+fn header_breadcrumb_shows_the_current_view_on_home() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    let text = render(&app);
+    assert!(
+        text.contains("My Work"),
+        "Home's breadcrumb should show the current view"
+    );
+}
+
+#[test]
+fn header_breadcrumb_shows_view_and_screen_on_list() {
+    let mut app = demo_app();
+    app.screen = Screen::List;
+    let text = render(&app);
+    assert!(
+        text.contains("My Work") && text.contains("List"),
+        "List's breadcrumb should show both the view and the screen"
+    );
+}
+
+#[test]
+fn header_breadcrumb_shows_the_issue_key_and_back_count_on_detail() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    let text = render(&app);
+    let key = app.detail.as_ref().unwrap().key.clone();
+    assert!(
+        text.contains(&key),
+        "Detail's breadcrumb should show the open issue's key"
+    );
+}
+
+#[test]
+fn header_breadcrumb_shows_the_active_filter() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.cycle_filter();
+    let text = render(&app);
+    assert!(
+        text.contains("filter"),
+        "an active filter should appear as a breadcrumb crumb"
+    );
+}
+
+#[test]
+fn header_sync_pill_shows_demo_in_demo_mode() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    let text = render(&app);
+    assert!(text.contains("demo"), "the sync pill should show demo mode");
+}
+
+#[test]
+fn header_sync_pill_shows_live_and_synced_when_wide() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.source = Source::Live {
+        site: "example.atlassian.net".into(),
+        user: "me".into(),
+    };
+    // Deterministic branch name: this test must not depend on whatever
+    // branch happens to be checked out when it runs (the real GitContext
+    // otherwise reflects the actual repo state) — an unrelated long branch
+    // name sharing the header's right column with the sync pill previously
+    // pushed "live" off the edge here.
+    app.git.branch = Some("main".into());
+    let text = render(&app);
+    assert!(
+        text.contains("live") && text.contains("synced"),
+        "a wide terminal should show the full sync pill"
+    );
+}
+
+#[test]
+fn header_sync_pill_shows_cache_and_synced_when_wide() {
+    // Every other sync-pill test exercises only Source::Live — this covers
+    // the Cache arm (amber LED, username as the detail segment) so a future
+    // regression specific to Cache isn't invisible to the whole suite.
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.source = Source::Cache { user: "me".into() };
+    app.git.branch = Some("main".into());
+    let text = render(&app);
+    assert!(
+        text.contains("cache") && text.contains("synced"),
+        "a wide terminal should show the full sync pill for a cached source"
+    );
+}
+
+#[test]
+fn header_sync_pill_degrades_gracefully_instead_of_clipping_mid_word() {
+    // Regression test: the sync pill's site/user detail segment used to be
+    // included unconditionally, which combined with a long branch name and
+    // a long site hostname overflowed the header's un-wrapped right column
+    // and silently clipped words off mid-way (e.g. "syn" instead of
+    // "synced"). With a genuinely pathological branch + site name, there's
+    // no room for the full pill — the correct outcome is a clean drop to
+    // the collapsed LED + short-duration form, never a broken fragment.
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.source = Source::Live {
+        site: "an-unusually-long-jira-site-hostname.atlassian.net".into(),
+        user: "me".into(),
+    };
+    app.git.branch = Some("an-unusually-long-feature-branch-name-here".into());
+    let text = render(&app);
+    // Scoped to the header row specifically — the demo data happens to
+    // include an unrelated issue titled "...breaks sync-docs", so a
+    // whole-screen substring check would false-positive on that.
+    let header_line = text.lines().nth(1).unwrap_or("");
+    assert!(
+        header_line.contains('●'),
+        "the sync pill's LED should still render"
+    );
+    // If "sync" appears in the header at all, the complete word "synced"
+    // must too — a bare "sync"/"syn" fragment would mean the pill got
+    // clipped mid-word rather than cleanly dropping to the collapsed form.
+    assert!(
+        !header_line.contains("sync") || header_line.contains("synced"),
+        "the pill must never clip \"synced\" mid-word: {header_line:?}"
+    );
+}
+
+#[test]
+fn header_sync_pill_collapses_to_led_and_short_duration_when_narrow() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.source = Source::Live {
+        site: "example.atlassian.net".into(),
+        user: "me".into(),
+    };
+    let backend = TestBackend::new(70, 20);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(|f| ui::draw(f, &app)).unwrap();
+    let text = dump(terminal.backend().buffer());
+    assert!(
+        !text.contains("synced"),
+        "below the collapse width the pill should drop to just the LED and a short duration"
     );
 }
