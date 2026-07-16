@@ -72,12 +72,21 @@ fn draw_wide(
         ])
         .split(area);
 
-    let identity_height = wide.identity.lines.len() as u16;
+    // The identity block's summary line has no fixed length — a long one
+    // needs more than its 2 logical lines once wrapped at the main
+    // column's width, the same under-allocation bug the rail panels had
+    // (see `wrapped_row_count`'s own doc comment): sizing from the raw
+    // line count and never calling `.wrap()` on the Paragraph meant a long
+    // summary was silently hard-clipped mid-word instead of wrapping.
+    let identity_height = wrapped_row_count(&wide.identity.lines, cols[0].width);
     let main_rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(identity_height), Constraint::Min(3)])
         .split(cols[0]);
-    f.render_widget(Paragraph::new(wide.identity.lines), main_rows[0]);
+    f.render_widget(
+        Paragraph::new(wide.identity.lines).wrap(Wrap { trim: false }),
+        main_rows[0],
+    );
     app.detail_main_area.set(main_rows[1]);
     f.render_widget(
         Paragraph::new(wide.main.lines)

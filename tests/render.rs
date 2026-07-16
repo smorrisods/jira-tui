@@ -126,6 +126,31 @@ fn detail_screen_wide_layout_shows_side_rail_panels() {
 }
 
 #[test]
+fn detail_screen_wide_layout_wraps_a_long_summary_instead_of_clipping_it() {
+    // Regression test: the identity block (key/summary/chips) was sized
+    // from its raw logical line count and never wrapped, so a summary
+    // longer than the main column's width was silently hard-clipped
+    // mid-word at the terminal edge instead of wrapping onto another row —
+    // the same under-allocation bug already fixed for the rail panels via
+    // `wrapped_row_count`, just missed here.
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.open_by_key("DS-2722");
+    let mut detail = app.detail.clone().unwrap();
+    detail.summary = "A deliberately long summary meant to exceed the main \
+        column's width so it wraps onto another row instead of being cut \
+        off mid word RIGHTMOST"
+        .to_string();
+    app.detail = Some(detail);
+    let text = render_at(&app, 120, 34);
+    assert!(
+        text.contains("RIGHTMOST"),
+        "a long summary must wrap onto additional rows, not get hard-clipped \
+         at the main column's width"
+    );
+}
+
+#[test]
 fn detail_screen_narrow_layout_shows_facts_and_linked_panels() {
     let mut app = demo_app();
     app.screen = Screen::Home;
