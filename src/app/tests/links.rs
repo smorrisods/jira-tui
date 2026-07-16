@@ -82,3 +82,50 @@ fn click_on_a_detail_link_opens_it() {
     app.mouse_up(x, y);
     assert_eq!(app.detail.as_ref().unwrap().key, key);
 }
+
+/// Regression coverage for the Wide Detail layout's main-column mouse-click
+/// path (SPEC.md §6): the test above only ever exercises the Narrow layout,
+/// since it never sets `app.detail_area` to a Wide (>=90 col) width. Demo
+/// data's canned description/comments don't mention any issue key, so the
+/// description is overridden here with one that does, giving the Main pane
+/// something to click on.
+#[test]
+fn click_on_a_detail_link_opens_it_in_the_wide_layout() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+
+    let mut detail = app.detail.clone().unwrap();
+    detail.description = serde_json::json!({
+        "type": "doc",
+        "version": 1,
+        "content": [{
+            "type": "paragraph",
+            "content": [{ "type": "text", "text": "See DS-2603 for details." }]
+        }]
+    });
+    app.detail = Some(detail);
+
+    app.detail_area.set(Rect::new(0, 0, 120, 40));
+    let links = app.active_links();
+    let (idx, key) = links
+        .iter()
+        .enumerate()
+        .find_map(|(i, t)| match (&t.kind, t.pane) {
+            (crate::render::LinkKind::Issue(k), crate::render::DetailPane::Main) => {
+                Some((i, k.clone()))
+            }
+            _ => None,
+        })
+        .expect("the overridden description should link to DS-2603 in the Main pane");
+    let target = &links[idx];
+
+    app.detail_main_area.set(Rect::new(0, 1, 80, 20));
+    app.detail_scroll = 0;
+    let x = target.start as u16;
+    let y = 1 + target.line as u16;
+
+    app.mouse_down(y);
+    app.mouse_up(x, y);
+    assert_eq!(app.detail.as_ref().unwrap().key, key);
+}

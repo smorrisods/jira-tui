@@ -78,8 +78,12 @@ pub struct App {
     pub detail: Option<IssueDetail>,
     pub detail_scroll: u16,
     /// Narrow Detail's facts panel folded to one line (`x`, SPEC.md §6).
-    /// Reset to `false` whenever a different issue is (re)loaded into
-    /// Detail — see `App::show_issue` and `apply_detail_loaded`.
+    /// Reset to `false` only in `App::show_issue`, i.e. only when actually
+    /// navigating to an issue (fresh open, or stepping through in-body
+    /// links) — deliberately *not* reset by a same-issue `r` refresh
+    /// (`apply_detail_loaded`/`refresh_detail`), matching how `link_index`
+    /// is already handled, so refreshing doesn't silently unfold a panel
+    /// the user just collapsed.
     pub facts_folded: bool,
     pub source: Source,
     /// When `all_issues`/`source` were last loaded for the current view —

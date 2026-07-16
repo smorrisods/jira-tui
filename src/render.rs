@@ -209,7 +209,7 @@ fn facts_pairs(detail: &IssueDetail, updated: &str) -> Vec<(&'static str, String
         pairs.push(("parent", parent.clone()));
     }
     if !detail.components.is_empty() {
-        pairs.push(("component", detail.components.join(", ")));
+        pairs.push(("components", detail.components.join(", ")));
     }
     if !detail.labels.is_empty() {
         pairs.push(("labels", detail.labels.join(", ")));

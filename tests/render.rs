@@ -99,6 +99,19 @@ fn detail_screen_wide_layout_shows_side_rail_panels() {
         text.contains("Acceptance"),
         "the main column should still show acceptance criteria"
     );
+    // Regression test: the workflow/meta rail panels used to be sized from
+    // their logical (unwrapped) line count, so a wrapped chip strip or a
+    // long components/labels line would silently push the panel's own
+    // trailing content (the "t to change" hint, the "updated:" line) off
+    // the bottom of its allotted height.
+    assert!(
+        text.contains("t to change"),
+        "the workflow panel's hint line must not be clipped by a wrapped chip strip"
+    );
+    assert!(
+        text.contains("updated:"),
+        "the people & meta panel's trailing 'updated:' line must not be clipped"
+    );
 }
 
 #[test]

@@ -214,7 +214,6 @@ impl App {
         self.detail_cache.insert(key.clone(), (*detail).clone());
         if navigate {
             self.detail_scroll = 0;
-            self.facts_folded = false;
             self.detail = Some(*detail);
             self.screen = Screen::Detail;
             if let Some(pos) = self.issues.iter().position(|i| i.key == key) {

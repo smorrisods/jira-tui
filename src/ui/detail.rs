@@ -13,7 +13,9 @@ use crate::app::App;
 use crate::domain::IssueDetail;
 use crate::render::{self, DetailPane, Panel};
 
-use super::detail_columns::{detail_layout_for_width, rail_width_for, DetailLayout};
+use super::detail_columns::{
+    detail_layout_for_width, rail_width_for, wrapped_row_count, DetailLayout,
+};
 use super::{accent, accent2, card};
 
 pub(crate) fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
@@ -106,9 +108,13 @@ fn draw_wide(
 }
 
 /// The static side rail: four unbordered mini-panels, sized to their own
-/// content except the last which takes whatever's left. Deliberately
-/// non-scrolling — panels are short/bounded, and clipping on overflow is an
-/// accepted scope cut for this phase (see the module doc's plan reference).
+/// wrapped content (via `wrapped_row_count` — the logical line count alone
+/// under-allocates height once a line wraps at the rail's width, silently
+/// clipping trailing lines) except the last panel, which takes whatever's
+/// left. Deliberately non-scrolling — panels are short/bounded, and
+/// clipping on genuine overflow (more content than the rail area has room
+/// for at all) is an accepted scope cut for this phase (see the module
+/// doc's plan reference).
 fn draw_rail(f: &mut Frame, area: Rect, panels: [(String, Color, Panel); 4]) {
     let last = panels.len() - 1;
     let constraints: Vec<Constraint> = panels
@@ -118,7 +124,7 @@ fn draw_rail(f: &mut Frame, area: Rect, panels: [(String, Color, Panel); 4]) {
             if i == last {
                 Constraint::Min(1)
             } else {
-                Constraint::Length(panel.lines.len() as u16 + 1)
+                Constraint::Length(wrapped_row_count(&panel.lines, area.width) + 1)
             }
         })
         .collect();
