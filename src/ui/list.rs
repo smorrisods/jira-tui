@@ -61,8 +61,13 @@ pub(crate) fn draw_list(f: &mut Frame, app: &App, area: Rect, full: bool) {
     let columns = column_set_for_width(inner.width);
     let rows = app.tree_rows_detailed();
     let mut lines: Vec<Line> = vec![column_header_line(&columns)];
-    // One line already spent on the header above.
-    let height = (inner.height as usize).saturating_sub(1);
+    // One line already spent on the header above, plus one more when the
+    // (always-visible) selected row grows a second line, so the row budget
+    // below never counts on more lines than `inner.height` actually holds.
+    let mut height = (inner.height as usize).saturating_sub(1);
+    if columns.two_line {
+        height = height.saturating_sub(1);
+    }
     let cur_pos = rows.iter().position(|r| r.idx == app.selected).unwrap_or(0);
     // simple scroll window around the selection
     let start = cur_pos.saturating_sub(height.saturating_sub(2).max(1) / 2);
@@ -71,7 +76,7 @@ pub(crate) fn draw_list(f: &mut Frame, app: &App, area: Rect, full: bool) {
         lines.extend(issue_row(&app.issues[row.idx], is_selected, row, &columns));
     }
     // Record geometry so mouse clicks can be mapped back to issues (via
-    // `tree_rows` again — `list_start` is a position within it, not a raw
+    // `tree_rows_detailed` — `list_start` is a position within it, not a raw
     // index into `app.issues`).
     app.list_area.set(inner);
     app.list_start.set(start);
@@ -85,7 +90,14 @@ fn column_header_line(columns: &ColumnSet) -> Line<'static> {
     if columns.type_chip {
         spans.push(Span::styled(format!("{:<6} ", "TYPE"), style));
     }
-    spans.push(Span::styled(format!("{:<STATUS_WIDTH$} ", "STATUS"), style));
+    // `chip()` wraps its text in a leading + trailing space, so the header
+    // label needs 2 extra columns to line up with the rendered chip below —
+    // the same compensation TYPE's hardcoded width-6 header already applies
+    // against the chip's 4-char inner width.
+    spans.push(Span::styled(
+        format!("{:<width$} ", "STATUS", width = STATUS_WIDTH + 2),
+        style,
+    ));
     spans.push(Span::styled(
         format!("{:<SUMMARY_WIDTH$}", "SUMMARY"),
         style,
@@ -199,7 +211,7 @@ fn tree_guide(guide: &TreeRow, selected: bool) -> Span<'static> {
         }
     } else {
         let mut s = String::new();
-        for &continues in &guide.rails[..guide.depth - 1] {
+        for &continues in &guide.rails {
             s.push_str(if continues { "│ " } else { "  " });
         }
         s.push_str(if guide.is_last { "└─ " } else { "├─ " });
@@ -282,7 +294,7 @@ pub(crate) fn issue_row(
 
     if columns.type_chip {
         spans.push(chip(
-            &format!("{:<4}", issue.issue_type),
+            &format!("{:<4}", truncate(&issue.issue_type, 4)),
             type_colour(&issue.issue_type),
         ));
         spans.push(Span::styled(
@@ -307,11 +319,13 @@ pub(crate) fn issue_row(
 
     if columns.assignee {
         let name = issue.assignee.as_deref().unwrap_or("unassigned");
-        let text = format!(
-            "  {} {}",
-            initials(name),
-            truncate(name, ASSIGNEE_WIDTH.saturating_sub(3))
-        );
+        let cell_width = ASSIGNEE_WIDTH.saturating_sub(2);
+        // Truncate the whole formatted cell (not just the name) to
+        // `cell_width` before padding, so a long name can't push the
+        // UPDATED column right regardless of how many columns `initials()`
+        // happens to use.
+        let cell = truncate(&format!("{} {}", initials(name), name), cell_width);
+        let text = format!("  {cell:<cell_width$}");
         spans.push(Span::styled(text, secondary_style));
     }
     if columns.updated {

@@ -21,9 +21,11 @@ pub enum ListViewMode {
 /// One row of the tree-mode listing, with everything `issue_row` needs to
 /// draw box-drawing guides: whether this row has children (`▾ `), whether
 /// it's the last child of its parent (`└─ ` vs `├─ `), and — for every
-/// ancestor level above it — whether that ancestor still has more siblings
-/// coming, which is what determines a `│` continuation mark in that
-/// column. `rails.len() == depth`.
+/// non-root ancestor (depths `1..depth`, ending with the immediate parent) —
+/// whether that ancestor still has more siblings coming, which is what
+/// determines a `│` continuation mark in that column. Root-level items
+/// (depth 0) never contribute a rail themselves — they sit flush-left with
+/// no connecting line of their own — so `rails.len() == depth.saturating_sub(1)`.
 pub(crate) struct TreeRow {
     pub idx: usize,
     pub depth: usize,
@@ -103,9 +105,16 @@ impl App {
             for &root in &roots {
                 mark_visited(root, &children, &mut dry_visited);
             }
-            for (i, visited) in dry_visited.iter().enumerate() {
-                if !visited {
+            // Mirror `tree_rows()`'s own leftover-cycle loop: mark each
+            // newly-discovered leftover's whole subtree visited as it's
+            // found, so later members of the same leftover subtree aren't
+            // each counted as their own separate top-level slot (which would
+            // inflate `top_level.len()` and corrupt the true last item's
+            // `is_last`).
+            for i in 0..self.issues.len() {
+                if !dry_visited[i] {
                     top_level.push(i);
+                    mark_visited(i, &children, &mut dry_visited);
                 }
             }
         }
@@ -214,7 +223,12 @@ fn push_subtree_detailed(
     if let Some(kids) = kids {
         let n = kids.len();
         let mut child_rails = rails;
-        child_rails.push(!is_last);
+        // A root (depth 0) never contributes a rail bit of its own — only
+        // non-root ancestors do, since the immediate parent's continuation
+        // is already encoded by the child's own connector (`is_last`).
+        if depth > 0 {
+            child_rails.push(!is_last);
+        }
         for (i, &kid) in kids.iter().enumerate() {
             push_subtree_detailed(
                 kid,
@@ -328,32 +342,85 @@ mod tests {
     }
 
     #[test]
-    fn detailed_rows_propagate_rails_through_every_ancestor_level() {
-        // Two root epics, each with children — DS-1 (not the last root) has
-        // a child DS-2; DS-3 (the last root) has a child DS-4, which itself
-        // has a grandchild DS-5. DS-2 and DS-4/DS-5's rail at depth 0 must
-        // reflect whether DS-1/DS-3 (their respective root ancestors) still
-        // have more root siblings coming.
+    fn detailed_rows_never_carry_a_rail_for_the_root_level() {
+        // A depth-1 child's rail set is always empty: the root's own
+        // continuation is never relevant (roots sit flush-left with no
+        // connecting line), and the immediate parent's continuation is
+        // already encoded by the child's own connector (`is_last`), not a
+        // rail. DS-1 is not the last root (DS-3 follows) and DS-3 is the
+        // last root — neither's children should carry any rail bit.
         let app = app_with(vec![
             issue("DS-1", None),
             issue("DS-2", Some("DS-1")),
             issue("DS-3", None),
             issue("DS-4", Some("DS-3")),
-            issue("DS-5", Some("DS-4")),
+        ]);
+        let rows = app.tree_rows_detailed();
+        let by_idx: std::collections::HashMap<usize, &TreeRow> =
+            rows.iter().map(|r| (r.idx, r)).collect();
+        assert_eq!(by_idx[&1].rails, Vec::<bool>::new());
+        assert_eq!(by_idx[&3].rails, Vec::<bool>::new());
+    }
+
+    #[test]
+    fn detailed_rows_propagate_only_non_root_ancestor_rails() {
+        // Root1 (not last: Root2 follows) has two children: A (not last: B
+        // follows) and B (last). A has an only child X, which has an only
+        // child Y. The rail that matters for X/Y is A's own continuation
+        // (A is NOT last, so a "│" must run all the way down through A's
+        // whole subtree) — Root1's continuation must never appear, since
+        // roots don't contribute a rail. This distinguishes "rails track
+        // non-root ancestors" from a construction that (wrongly) threads
+        // the root's own bit through instead.
+        let app = app_with(vec![
+            issue("Root1", None),
+            issue("A", Some("Root1")),
+            issue("B", Some("Root1")),
+            issue("X", Some("A")),
+            issue("Y", Some("X")),
+            issue("Root2", None),
         ]);
         let rows = app.tree_rows_detailed();
         let by_idx: std::collections::HashMap<usize, &TreeRow> =
             rows.iter().map(|r| (r.idx, r)).collect();
 
-        // DS-2 (idx 1) is under DS-1 (idx 0), which is NOT the last root
-        // (DS-3 follows) — its rail at depth 0 must be true (continues).
-        assert_eq!(by_idx[&1].rails, vec![true]);
-        // DS-4 (idx 3) is under DS-3 (idx 2), the LAST root — rail false.
-        assert_eq!(by_idx[&3].rails, vec![false]);
-        // DS-5 (idx 4) is DS-4's only child (so DS-4 is last) and DS-4's
-        // own rail was [false] — DS-5's rails extend that with DS-4's
-        // last-ness (true, since DS-4 IS last, so !is_last = false).
-        assert_eq!(by_idx[&4].rails, vec![false, false]);
+        assert_eq!(by_idx[&1].rails, Vec::<bool>::new(), "A: depth 1, no rail");
+        assert_eq!(by_idx[&2].rails, Vec::<bool>::new(), "B: depth 1, no rail");
+        assert!(!by_idx[&1].is_last, "A is not Root1's last child");
+        assert!(by_idx[&2].is_last, "B is Root1's last child");
+
+        // X (depth 2) is under A, which is NOT last — its rail carries A's
+        // continuation (true), not Root1's.
+        assert_eq!(by_idx[&3].rails, vec![true]);
+        assert!(by_idx[&3].is_last, "X is A's only (thus last) child");
+
+        // Y (depth 3) extends X's rails with X's own last-ness (X IS last,
+        // so !is_last = false).
+        assert_eq!(by_idx[&4].rails, vec![true, false]);
+        assert!(by_idx[&4].is_last, "Y is X's only (thus last) child");
+    }
+
+    #[test]
+    fn detailed_rows_give_the_true_final_top_level_group_is_last() {
+        // One real root, followed by a leftover 2-cycle the roots-walk can't
+        // reach. The cycle is a SINGLE extra top-level group (its two
+        // members resolve each other, so only the entry point — Cycle1 —
+        // counts as a new top-level slot), not two — the dry run must mark
+        // Cycle2 visited as soon as Cycle1 is discovered, or the phantom
+        // extra slot pushes the true last group's `is_last` to false.
+        let app = app_with(vec![
+            issue("Root", None),
+            issue("Cycle1", Some("Cycle2")),
+            issue("Cycle2", Some("Cycle1")),
+        ]);
+        let rows = app.tree_rows_detailed();
+        let by_idx: std::collections::HashMap<usize, &TreeRow> =
+            rows.iter().map(|r| (r.idx, r)).collect();
+        assert!(!by_idx[&0].is_last, "Root: the cycle group still follows");
+        assert!(
+            by_idx[&1].is_last,
+            "Cycle1 is the true final top-level group"
+        );
     }
 
     #[test]

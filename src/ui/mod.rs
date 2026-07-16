@@ -403,8 +403,12 @@ pub(crate) fn status_colour(s: &str) -> Color {
         "Done" => ok(),
         "In Progress" => accent(),
         "In Review" => accent2(),
-        "To Do" | "Backlog" => muted(),
-        _ => Color::White,
+        // Everything else — including "To Do"/"Backlog" and any workflow
+        // status this codebase doesn't special-case (e.g. "Blocked", "In
+        // QA") — falls back to the theme-aware muted tone rather than a
+        // bare `Color::White`, so an unrecognized status still reads as a
+        // subdued chip instead of a jarring solid-white block.
+        _ => muted(),
     }
 }
 
