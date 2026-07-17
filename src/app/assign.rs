@@ -5,7 +5,7 @@
 
 use crate::domain::{AssignableUser, Source};
 
-use super::{async_ops, App};
+use super::{async_ops, App, Screen};
 
 /// One row in the assignee picker: either the "Unassign" action or a
 /// specific teammate.
@@ -53,13 +53,19 @@ impl App {
     }
 
     /// The key of the issue the picker should act on: the open Detail issue,
-    /// or the quick-view panel's issue if quick view is showing one.
-    /// Mirrors `refresh_detail`'s target resolution.
+    /// or the quick-view panel's issue if quick view is showing one. Screen-
+    /// gated the same way `comment_target_key`/`refresh_detail` resolve
+    /// their own targets — regression fix: this used to check `self.detail`
+    /// unconditionally regardless of screen, so a stale `self.detail` left
+    /// over from a previous Detail visit could silently outrank the issue
+    /// actually showing in quick view.
     fn assignee_target_key(&self) -> Option<String> {
-        if let Some(detail) = self.detail.as_ref() {
-            return Some(detail.key.clone());
+        match self.screen {
+            Screen::Detail | Screen::Preview | Screen::Edit => {
+                self.detail.as_ref().map(|d| d.key.clone())
+            }
+            _ => self.quick_view_detail().map(|d| d.key.clone()),
         }
-        self.quick_view_detail().map(|d| d.key.clone())
     }
 
     /// Every assignable user for the current source: the live-fetched list

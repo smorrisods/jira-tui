@@ -36,6 +36,7 @@ mod jax_companion;
 mod keymap;
 mod list;
 mod list_columns;
+mod palette;
 mod preview;
 mod quick_view;
 pub(crate) mod quick_view_columns;
@@ -56,6 +57,7 @@ use help::draw_help_overlay;
 use home::draw_home;
 use jax_companion::{draw_jax_companion, draw_jax_mini, JaxMode, MINI_DOCK_WIDTH};
 use list::draw_list;
+use palette::draw_palette;
 use preview::draw_preview;
 use quick_view::draw_quick_view;
 use search::draw_search;
@@ -259,6 +261,10 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     if app.assignee_picker_open {
         draw_assignee_picker(f, app, f.area());
+    }
+
+    if app.palette_open {
+        draw_palette(f, app, f.area());
     }
 
     // Highlight the active drag selection by inverting the covered rows.

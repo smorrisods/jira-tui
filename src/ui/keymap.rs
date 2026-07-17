@@ -149,6 +149,10 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
         desc: "refresh — the list, or the open issue/focused quick view",
     },
     KeyHint {
+        key: "⌃K",
+        desc: "command palette — search every action, from any screen",
+    },
+    KeyHint {
         key: "? / q",
         desc: "toggle help / quit",
     },
@@ -180,5 +184,17 @@ mod tests {
     #[test]
     fn facts_panel_fold_key_is_registered() {
         assert!(has_key("x"), "`x` (fold facts panel) should be documented");
+    }
+
+    /// SPEC.md §8: `ctrl-k` opens the command palette — a new binding
+    /// introduced by this phase, verified unbound before it. Not
+    /// screen-scoped footer real estate (the palette's own discoverability
+    /// is the point of this phase), so the help overlay is where it lives.
+    #[test]
+    fn command_palette_key_is_registered() {
+        assert!(
+            has_key("⌃K"),
+            "`ctrl-k` (command palette) should be documented"
+        );
     }
 }
