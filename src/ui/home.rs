@@ -5,7 +5,7 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Padding, Paragraph};
 use ratatui::Frame;
 
 use crate::app::App;
@@ -79,7 +79,7 @@ fn draw_narrow(f: &mut Frame, app: &App, area: Rect) {
         .constraints(constraints)
         .split(area);
 
-    let context_block = card("  context  ", accent());
+    let context_block = card("  context  ", accent()).padding(Padding::left(1));
     let context_inner = context_block.inner(rows[0]);
     f.render_widget(context_block, rows[0]);
     f.render_widget(Paragraph::new(home_context_strip_line(app)), context_inner);
@@ -287,7 +287,8 @@ fn draw_glance_tiles(f: &mut Frame, app: &App, area: Rect, short: bool) {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(muted()));
+            .border_style(Style::default().fg(muted()))
+            .padding(Padding::left(1));
         let inner = block.inner(*col);
         f.render_widget(block, *col);
         let tile = Text::from(vec![
