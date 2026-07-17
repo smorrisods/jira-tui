@@ -1,5 +1,9 @@
 # jira-tui Interaction Spec
 
+> **Historical:** the original pre-implementation interaction spec.
+> Superseded in practice by the shipped codebase. Kept for historical
+> reference only.
+
 ## Purpose
 
 This document translates the product and wireframe docs into screen-level interaction behaviour for implementation.

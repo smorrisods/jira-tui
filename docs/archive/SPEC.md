@@ -1,5 +1,10 @@
 # jira-tui Specification
 
+> **Historical:** the original pre-implementation spec. Superseded in practice
+> by the shipped codebase (see `CLAUDE.md`/`AGENTS.md`) and by
+> `docs/archive/design/SPEC.md` for the later UI-refresh phase. Kept for
+> historical reference only.
+
 ## 1. Vision
 
 Build a modern Rust TUI for Jira that feels as clean and task-oriented as `gh`, while respecting Jira's more complex data model.

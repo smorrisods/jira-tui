@@ -1,6 +1,6 @@
 //! Shared `(key, description)` keybinding registry.
 //!
-//! Single source of truth for the help overlay today; `docs/design/SPEC.md`
+//! Single source of truth for the help overlay today; `docs/archive/design/SPEC.md`
 //! §13 suggests later UI-refresh phases (footer hint groups, command
 //! palette) could render from a table like this instead of hand-packed
 //! per-screen strings. Deliberately kept to just `key`/`desc` for now — the
