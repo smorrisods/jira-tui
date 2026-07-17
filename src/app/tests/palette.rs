@@ -79,7 +79,7 @@ fn build_palette_rows_includes_assign_comment_transitions_only_with_detail() {
     assert!(has_action(&app, |a| matches!(a, PaletteAction::Comment)));
     assert!(has_action(&app, |a| matches!(
         a,
-        PaletteAction::Transition(_)
+        PaletteAction::Transition { .. }
     )));
 
     let mut bare = demo_app();
@@ -95,20 +95,97 @@ fn build_palette_rows_includes_assign_comment_transitions_only_with_detail() {
         "comment shouldn't be offered without a fetched IssueDetail"
     );
     assert!(
-        !has_action(&bare, |a| matches!(a, PaletteAction::Transition(_))),
+        !has_action(&bare, |a| matches!(a, PaletteAction::Transition { .. })),
         "transitions shouldn't be offered without a fetched IssueDetail"
     );
     // Copy/open-in-browser only need a resolved key, not a fetched detail.
-    assert!(has_action(&bare, |a| matches!(a, PaletteAction::CopyKey)));
-    assert!(has_action(&bare, |a| matches!(a, PaletteAction::CopyUrl)));
     assert!(has_action(&bare, |a| matches!(
         a,
-        PaletteAction::OpenInBrowser
+        PaletteAction::CopyKey(_)
+    )));
+    assert!(has_action(&bare, |a| matches!(
+        a,
+        PaletteAction::CopyUrl(_)
+    )));
+    assert!(has_action(&bare, |a| matches!(
+        a,
+        PaletteAction::OpenInBrowser(_)
     )));
 }
 
 #[test]
+fn build_palette_rows_gates_transitions_to_the_detail_only_screens() {
+    // Regression test: `confirm_transition` only ever acts on `self.detail`,
+    // so a Transition row offered while quick-viewing (a different
+    // `IssueDetail`, not `self.detail`) would silently no-op when
+    // confirmed. Transitions must stay Detail/Preview/Edit-only, matching
+    // the direct `t` key's own existing `Screen::Detail`-only gate.
+    let mut app = demo_app();
+    app.screen = Screen::List;
+    app.selected = 0;
+    app.quick_view = true;
+    app.ensure_quick_view_loaded();
+    app.open_palette();
+    assert!(
+        has_action(&app, |a| matches!(a, PaletteAction::Assign)),
+        "assign should still be offered from a loaded quick view"
+    );
+    assert!(
+        !has_action(&app, |a| matches!(a, PaletteAction::Transition { .. })),
+        "transitions must not be offered from quick view, only Detail/Preview/Edit"
+    );
+}
+
+#[test]
+fn build_palette_rows_omits_field_mapping_outside_home_and_list() {
+    // The direct `F` key is Home/List-only; `close_field_mapping` always
+    // returns to Home rather than tracking an origin screen, so offering
+    // it elsewhere would strand the user away from where they opened it.
+    let mut app = demo_app();
+    app.open_board();
+    app.open_palette();
+    assert!(!has_action(&app, |a| matches!(
+        a,
+        PaletteAction::OpenFieldMapping
+    )));
+}
+
+#[test]
+fn build_palette_rows_carries_the_board_selected_key_not_selected_issue() {
+    // Regression test: `App.selected` (the flat List index) and
+    // `App.board_sel` (Board's own lane/column/card selection) are
+    // independent — `open_board()` never syncs the two. `CopyKey`/`CopyUrl`/
+    // `OpenInBrowser` must carry the key `palette_context()` (i.e.
+    // `board_selected_issue()`) resolved, not whatever `self.selected`
+    // happens to be, or dispatch would silently act on the wrong issue.
+    let mut app = demo_app();
+    app.selected = 0;
+    let list_key = app.selected_issue().unwrap().key.clone();
+    app.open_board();
+    let board_key = app.board_selected_issue().unwrap().key.clone();
+    assert_ne!(
+        list_key, board_key,
+        "test needs the List selection and Board selection to genuinely differ"
+    );
+
+    app.open_palette();
+    let copy_key_action = app
+        .palette
+        .all_rows
+        .iter()
+        .find_map(|r| match &r.action {
+            PaletteAction::CopyKey(k) => Some(k.clone()),
+            _ => None,
+        })
+        .expect("Board context should offer copy issue key");
+    assert_eq!(copy_key_action, board_key);
+}
+
+#[test]
 fn build_palette_rows_view_and_app_groups_are_always_present() {
+    // `field mapping` is deliberately excluded here — see
+    // `build_palette_rows_omits_field_mapping_outside_home_and_list` — every
+    // other view/app row is offered from any screen, including Board.
     let mut app = demo_app();
     app.screen = Screen::Board; // no on-key context beyond a bare card
     app.open_palette();
@@ -122,7 +199,6 @@ fn build_palette_rows_view_and_app_groups_are_always_present() {
         PaletteAction::Refresh,
         PaletteAction::ToggleMouse,
         PaletteAction::ToggleJax,
-        PaletteAction::OpenFieldMapping,
         PaletteAction::OpenAbout,
         PaletteAction::OpenHelp,
     ] {

@@ -25,18 +25,31 @@ pub(crate) enum PaletteGroup {
 /// `src/keys/mod.rs` matches this to the real call. `pub`, not
 /// `pub(crate)`: the binary crate's `keys/mod.rs` (a separate crate from
 /// this library) needs to name these variants for dispatch.
+///
+/// `CopyKey`/`CopyUrl`/`OpenInBrowser`/`Transition` all carry the key (and,
+/// for `Transition`, the issue it belongs to) that `build_palette_rows`
+/// already resolved via `palette_context`/`board_selected_issue`, rather
+/// than having dispatch re-resolve "the current issue" through a second,
+/// narrower path (`selected_issue()`/`self.detail`) that can disagree with
+/// what the palette actually showed — e.g. Board's selected card is never
+/// reflected in `self.selected`, so a dispatcher that fell back to
+/// `selected_issue()` there would silently act on the wrong issue.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PaletteAction {
-    /// A specific workflow transition, by id (looked up in
-    /// `detail.transitions` at dispatch time, then routed through
-    /// `App::confirm_transition` — the exact function the direct `t`-then-
-    /// select flow calls).
-    Transition(String),
+    /// A specific workflow transition on `key`, by id — dispatch verifies
+    /// `self.detail`'s key still matches before routing through
+    /// `App::confirm_transition` (the exact function the direct `t`-then-
+    /// select flow calls), in case an async detail refresh landed while the
+    /// palette was open.
+    Transition {
+        key: String,
+        transition_id: String,
+    },
     Assign,
     Comment,
-    CopyKey,
-    CopyUrl,
-    OpenInBrowser,
+    CopyKey(String),
+    CopyUrl(String),
+    OpenInBrowser(String),
     FlipView,
     CycleSort,
     CycleFilter,
@@ -158,24 +171,24 @@ impl App {
     fn build_palette_rows(&self) -> Vec<PaletteRow> {
         let mut rows = Vec::new();
         let (key, detail) = self.palette_context();
-        if key.is_some() {
+        if let Some(key) = key.clone() {
             rows.push(PaletteRow {
                 label: "copy issue key".into(),
                 hint: "y",
                 group: PaletteGroup::OnKey,
-                action: PaletteAction::CopyKey,
+                action: PaletteAction::CopyKey(key.clone()),
             });
             rows.push(PaletteRow {
                 label: "copy issue URL".into(),
                 hint: "Y",
                 group: PaletteGroup::OnKey,
-                action: PaletteAction::CopyUrl,
+                action: PaletteAction::CopyUrl(key.clone()),
             });
             rows.push(PaletteRow {
                 label: "open in browser".into(),
                 hint: "",
                 group: PaletteGroup::OnKey,
-                action: PaletteAction::OpenInBrowser,
+                action: PaletteAction::OpenInBrowser(key.clone()),
             });
             if let Some(detail) = detail {
                 rows.push(PaletteRow {
@@ -190,13 +203,25 @@ impl App {
                     group: PaletteGroup::OnKey,
                     action: PaletteAction::Comment,
                 });
-                for t in &detail.transitions {
-                    rows.push(PaletteRow {
-                        label: format!("Transition {} → {}", detail.key, t.to),
-                        hint: "t",
-                        group: PaletteGroup::OnKey,
-                        action: PaletteAction::Transition(t.id.clone()),
-                    });
+                // `confirm_transition` only ever acts on `self.detail`, and
+                // the direct `t` key is already gated to `Screen::Detail`
+                // only — so transitions must stay gated to the screens
+                // where `detail` is guaranteed to have come from
+                // `self.detail` (not a loaded-but-different quick view),
+                // matching that same boundary rather than silently
+                // no-oping when confirmed from a quick view.
+                if matches!(self.screen, Screen::Detail | Screen::Preview | Screen::Edit) {
+                    for t in &detail.transitions {
+                        rows.push(PaletteRow {
+                            label: format!("Transition {key} → {}", t.to),
+                            hint: "t",
+                            group: PaletteGroup::OnKey,
+                            action: PaletteAction::Transition {
+                                key: key.clone(),
+                                transition_id: t.id.clone(),
+                            },
+                        });
+                    }
                 }
             }
         }
@@ -260,12 +285,6 @@ impl App {
                 action: PaletteAction::ToggleJax,
             },
             PaletteRow {
-                label: "field mapping".into(),
-                hint: "F",
-                group: PaletteGroup::App,
-                action: PaletteAction::OpenFieldMapping,
-            },
-            PaletteRow {
                 label: "about".into(),
                 hint: "a",
                 group: PaletteGroup::App,
@@ -278,6 +297,19 @@ impl App {
                 action: PaletteAction::OpenHelp,
             },
         ]);
+        // The direct `F` key is Home/List-only (mapping a custom field only
+        // makes sense against the work list), and `close_field_mapping`
+        // always returns to `Screen::Home` rather than tracking an origin
+        // screen — offering it from elsewhere would strand the user
+        // somewhere other than where they opened it from.
+        if matches!(self.screen, Screen::Home | Screen::List) {
+            rows.push(PaletteRow {
+                label: "field mapping".into(),
+                hint: "F",
+                group: PaletteGroup::App,
+                action: PaletteAction::OpenFieldMapping,
+            });
+        }
 
         rows
     }

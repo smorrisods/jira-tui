@@ -90,7 +90,7 @@ impl App {
     /// `selected_issue_url` and the command palette (`app::palette`, SPEC.md
     /// §8), which needs to build a URL for a Board-selected card that isn't
     /// necessarily `selected_issue()`.
-    pub(crate) fn issue_url_for(&self, key: &str) -> String {
+    pub fn issue_url_for(&self, key: &str) -> String {
         let site = match &self.source {
             Source::Live { site, .. } => site.clone(),
             // Demo data has no real Jira site behind it; use an obviously
@@ -105,24 +105,38 @@ impl App {
         Some(self.issue_url_for(&self.selected_issue()?.key))
     }
 
-    /// `y` (or the command palette's "copy issue key"): copy the selected
-    /// issue's key to the clipboard via OSC 52.
+    /// `y`: copy the selected issue's key to the clipboard via OSC 52.
+    /// The command palette's "copy issue key" calls `copy_key_value`
+    /// directly with its own already-resolved key (e.g. a Board-selected
+    /// card, which `selected_issue()` doesn't reflect) rather than through
+    /// this entry point — see `app::palette`.
     pub fn copy_key(&mut self) {
         let Some(issue) = self.selected_issue() else {
             return;
         };
         let key = issue.key.clone();
-        let _ = crate::infra::osc52_copy(&key);
+        self.copy_key_value(&key);
+    }
+
+    pub fn copy_key_value(&mut self, key: &str) {
+        let _ = crate::infra::osc52_copy(key);
         self.status = format!("copied {key} to clipboard");
         self.flash(format!("✓ copied {key}"));
     }
 
-    /// `Y` (or the command palette's "copy issue URL"): copy the selected
-    /// issue's browse URL to the clipboard via OSC 52.
+    /// `Y`: copy the selected issue's browse URL to the clipboard via OSC
+    /// 52. See `copy_key`'s doc comment — the palette calls
+    /// `copy_url_for_key` with its own resolved key instead.
     pub fn copy_url(&mut self) {
-        let Some(url) = self.selected_issue_url() else {
+        let Some(issue) = self.selected_issue() else {
             return;
         };
+        let key = issue.key.clone();
+        self.copy_url_for_key(&key);
+    }
+
+    pub fn copy_url_for_key(&mut self, key: &str) {
+        let url = self.issue_url_for(key);
         let _ = crate::infra::osc52_copy(&url);
         self.status = format!("copied {url} to clipboard");
         self.flash("✓ copied issue URL");
@@ -130,13 +144,20 @@ impl App {
 
     /// The command palette's "open in browser" (SPEC.md §8) — no direct key
     /// reaches this today (only in-body links, via `app::links`); the
-    /// palette is the first caller. Reuses the same `issue_url_for`/
-    /// `infra::open_url` primitives `copy_url`/`open_highlighted_link`
-    /// already use.
+    /// palette is the first caller, via `open_in_browser_for_key` with its
+    /// own resolved key (see `copy_key`'s doc comment). Reuses the same
+    /// `issue_url_for`/`infra::open_url` primitives `copy_url`/
+    /// `open_highlighted_link` already use.
     pub fn open_selected_in_browser(&mut self) {
-        let Some(url) = self.selected_issue_url() else {
+        let Some(issue) = self.selected_issue() else {
             return;
         };
+        let key = issue.key.clone();
+        self.open_in_browser_for_key(&key);
+    }
+
+    pub fn open_in_browser_for_key(&mut self, key: &str) {
+        let url = self.issue_url_for(key);
         match crate::infra::open_url(&url) {
             Ok(()) => self.flash(format!("↗ opened {url}")),
             Err(_) => self.status = format!("couldn't open {url}"),
