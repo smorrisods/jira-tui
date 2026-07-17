@@ -32,7 +32,7 @@ Guidelines for humans and AI agents working in `jira-tui`.
 ## Writing style (commits, PRs, issues, docs)
 
 - **Don't hard-wrap prose at a fixed column.** Write each paragraph, bullet, or list item as one continuous line — no manual line breaks in the middle of a sentence just to keep it under ~80 columns. This applies everywhere prose gets rendered somewhere that reflows it anyway: commit bodies, PR descriptions, GitHub issues, and Markdown docs (`README.md`, `AGENTS.md`, `docs/**`). Hard-wrapped source lines look fine in a terminal `cat`, but render as awkward, unnecessary line breaks in GitHub's PR/issue viewer, in Markdown previews, and in most editors with soft-wrap enabled.
-- This doesn't apply to fixed-width content where line length is part of the format itself — e.g. the ASCII wireframes in `docs/WIREFRAMES.md`, code blocks, or tables.
+- This doesn't apply to fixed-width content where line length is part of the format itself — e.g. the ASCII wireframes in `docs/archive/WIREFRAMES.md`, code blocks, or tables.
 - Commit bodies specifically: use `git commit -F <message-file>` (see Commits below) so long unwrapped lines and backticks survive verbatim rather than getting mangled by shell quoting or an editor's auto-wrap.
 
 ## Commits

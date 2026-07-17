@@ -6,7 +6,7 @@
 //! fits, so a narrow terminal loses whole groups instead of wrapping or
 //! truncating mid-hint.
 //!
-//! Per-screen content deliberately mirrors `docs/design/ui-refresh.html`'s
+//! Per-screen content deliberately mirrors `docs/archive/design/ui-refresh.html`'s
 //! mockup footers where they cover a screen; screens the mockup doesn't
 //! show keep their existing hint set, just restructured into groups. Hints
 //! dropped from a group when width is tight still work — they live in the

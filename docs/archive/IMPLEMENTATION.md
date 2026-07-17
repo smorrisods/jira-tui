@@ -1,5 +1,9 @@
 # jira-tui Implementation Notes
 
+> **Historical:** notes from the original implementation pass. Superseded in
+> practice by the shipped codebase and by `CLAUDE.md`/`AGENTS.md`. Kept for
+> historical reference only.
+
 ## Purpose
 
 This document translates the product spec into a practical implementation plan for a Rust-based Jira TUI.

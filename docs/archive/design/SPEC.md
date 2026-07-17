@@ -1,5 +1,9 @@
 # UI refresh — implementation spec
 
+> **Historical:** this spec has been fully implemented (issue #45, all 9
+> phases merged) — kept as the historical behavioural record, not as a live
+> spec to implement against.
+
 This is the hand-off spec for implementing the UI refresh mocked up in `ui-refresh.html` (landscape) and `ui-refresh-portrait.html` (portrait). The mockups are the visual source of truth; this document is the behavioural source of truth. Read `AGENTS.md` and `CLAUDE.md` before starting — commit format, Canadian spelling, the ADF-first rule, and the CI feature matrix all apply.
 
 ## Scope and phasing

@@ -1,5 +1,10 @@
 # UI refresh proposal
 
+> **Historical:** this proposal has been fully implemented (issue #45, all 9
+> phases merged). Kept as the historical design record — the shipped
+> behaviour in `CLAUDE.md`/`AGENTS.md` and the codebase itself are now the
+> source of truth, not this mockup.
+
 Two sets of static HTML mockups for a refreshed jira-tui UI — open either in
 any browser (no build step, no network):
 

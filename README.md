@@ -280,31 +280,54 @@ src/
                    conversion + demo-data fallback, shared by src/bin/jira_mcp.rs
   app/             App state, split by concern:
     mod.rs           core struct, constructor, selection/flash helpers, load_issues
+    loader.rs        top-level data loader + on-disk cache lifecycle
+    query.rs         cross-cutting query helpers: selection, window title, toasts, glance counts
     sort_filter.rs   sort + filter cycling for the work list
+    tree.rs          parent/child tree view mode for the work list
     quick_view.rs    quick-view panel loading and scroll
     search.rs        search screen state + query matching
+    view_switch.rs   switching between My Work / All Project Issues / a teammate's work
     board.rs         swimlane board selection + navigation
     transitions.rs   status transition picker
+    assign.rs        assignee picker (reassign/unassign)
     edit.rs          round-trip Markdown edit + new-comment compose (begin/commit/apply)
     comments.rs      jump-to-comments / step-between-comments scroll navigation
+    links.rs         cycling/opening in-body issue-key and URL links
+    history.rs       back/forward navigation through followed links
     onboarding.rs    welcome flow + credential form
     mouse.rs         list focus + click/drag selection
     detail.rs        issue detail loading
-    tests.rs         App unit tests
+    field_mapping.rs live field discovery for the Acceptance Criteria mapping
+    palette.rs       command palette action list + dispatch
+    async_ops/       spawn_blocking wrappers for live Jira calls (binary-only render thread stays unblocked)
+    tests/           App unit tests, split by concern (mirrors this list)
   ui/              ratatui rendering, split by screen:
-    mod.rs           draw() dispatcher, theme, header/footer/toast chrome, shared helpers
+    mod.rs           draw() dispatcher, theme, shared chrome/helpers
     welcome.rs       welcome + credential form screen
     home.rs          home/context screen
+    home_columns.rs  Home's responsive breakpoint logic
     list.rs          work list screen
-    detail.rs        issue detail screen + quick-view panel
+    list_columns.rs  work list's column-drop breakpoint logic
+    quick_view.rs    quick-view panel
+    quick_view_columns.rs  quick-view panel's breakpoint logic
+    detail.rs        issue detail screen
+    detail_columns.rs  Detail screen's breakpoint logic
     search.rs        search + goto screen
     board.rs         swimlane board screen
+    board_columns.rs board's card-grid-vs-pager breakpoint logic
     preview.rs       pending-edit preview screen
     transition_picker.rs  status transition picker overlay
+    assignee_picker.rs  assignee picker overlay
     editor.rs        in-TUI Markdown editor
+    field_mapping.rs field-mapping screen
+    view_picker.rs   view-switcher picker overlay
+    palette.rs       command palette overlay
     jax_companion.rs Jax mascot overlay
     about.rs         animated about screen
     help.rs          help overlay
+    header.rs        header breadcrumb + sync pill
+    footer.rs        footer hint groups
+    keymap.rs        shared (key, description) keybinding registry backing the help overlay
   lib.rs           library surface (so tests can drive the real code)
   render.rs        shared issue-detail-to-Lines rendering (used by app for scroll
                    offsets and by ui for actual drawing)
@@ -312,12 +335,19 @@ src/
   cli.rs           clap `Cli` definition — single source of truth shared with
                    build.rs (which generates the man page from it) so --help and
                    the man page can never drift apart (binary-only module)
-  keys.rs          keyboard + mouse event handling (binary-only module)
+  keys/            keyboard + mouse event handling (binary-only module):
+    mod.rs           main handle_key dispatch
+    mouse.rs         mouse input handling
+    welcome.rs       the onboarding screen's own key map
   editor_launch.rs external $EDITOR suspend/resume (binary-only module)
+  suspend.rs       Ctrl+Z shell suspend/resume (binary-only module)
+  test_support.rs  test-only support shared across unit tests
   bin/jira_mcp.rs  thin `jira-mcp` binary entry point (feature: mcp)
 build.rs    generates jira-tui.1 (man page) from src/cli.rs via clap_mangen
-tests/      cli.rs (process) + render.rs (headless TestBackend)
-docs/       product + technical design specs (SPEC, IMPLEMENTATION, …)
+tests/      cli.rs (process) + render.rs (headless TestBackend) + mcp.rs
+docs/       docs/release/ (current release process), docs/archive/ (historical
+            pre-implementation and UI-refresh planning docs, superseded by the
+            shipped codebase)
 scripts/    release tooling: prepare-release-version.sh, build-release-archive.sh,
             build-linux-packages.sh, install.sh
 ```

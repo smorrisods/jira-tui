@@ -1,5 +1,9 @@
 # jira-tui Low-Fidelity Wireframes
 
+> **Historical:** describes the first implementation pass, since superseded
+> by the shipped UI (and by the later UI-refresh mockups in
+> `docs/archive/design/`). Kept for historical reference only.
+
 These wireframes describe rough terminal layouts for the first implementation pass. They focus on information hierarchy and interaction flow rather than styling details.
 
 ## 1. Home Dashboard
