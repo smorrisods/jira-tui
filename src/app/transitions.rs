@@ -74,6 +74,9 @@ impl App {
             }
             self.status = format!("moved {key} → {}", t.to);
             self.flash(format!("✓ moved to {}", t.to));
+            if t.to == "Done" {
+                self.trigger_jax_party();
+            }
             return;
         }
 

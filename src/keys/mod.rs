@@ -210,14 +210,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Tab if matches!(app.screen, Screen::Home | Screen::List) => {
             app.toggle_list_focus()
         }
-        KeyCode::Char('J') => {
-            app.show_jax = !app.show_jax;
-            app.status = if app.show_jax {
-                "Jax is here to keep you company 🦦".into()
-            } else {
-                "Jax went for a nap 😴".into()
-            };
-        }
+        KeyCode::Char('J') => app.toggle_jax(),
         KeyCode::Char('y') => yank_key(app),
         KeyCode::Char('Y') => yank_url(app),
         KeyCode::Char('q') => back_or_quit(app),

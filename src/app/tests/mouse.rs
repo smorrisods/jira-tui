@@ -95,6 +95,55 @@ fn point_in_quick_view_respects_recorded_area_and_visibility() {
 }
 
 #[test]
+fn point_in_jax_mini_respects_jax_popped_and_hidden_screens() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.jax_mini_area.set(Rect::new(60, 10, 14, 1));
+
+    // Not popped, visible screen: the recorded area is live.
+    assert!(app.point_in_jax_mini(62, 10));
+    assert!(!app.point_in_jax_mini(0, 0));
+
+    // Popped out (full box showing instead): a stale mini area must not
+    // still resolve.
+    app.jax_popped = true;
+    assert!(!app.point_in_jax_mini(62, 10));
+    app.jax_popped = false;
+
+    // A screen where Jax is hidden entirely: same stale-area guard.
+    for screen in [Screen::Welcome, Screen::Edit, Screen::About] {
+        app.screen = screen;
+        assert!(!app.point_in_jax_mini(62, 10));
+    }
+}
+
+#[test]
+fn clicking_the_jax_mini_dock_toggles_jax_popped() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.jax_mini_area.set(Rect::new(60, 10, 14, 1));
+    assert!(!app.jax_popped);
+
+    app.mouse_down(10);
+    app.mouse_up(62, 10);
+    assert!(
+        app.jax_popped,
+        "clicking the mini dock should pop the full box out"
+    );
+
+    // Clicking again while popped shouldn't hit the (now stale) mini area —
+    // `J`/a real click target would be needed to toggle it back off, but a
+    // click at the same coordinates must not misfire against a leftover
+    // mini `Rect` while the full box is what's actually showing.
+    app.mouse_down(10);
+    app.mouse_up(62, 10);
+    assert!(
+        app.jax_popped,
+        "a click at the mini dock's old coordinates must not affect the popped-out full box"
+    );
+}
+
+#[test]
 fn link_at_ignores_the_wide_quick_views_meta_column() {
     // Regression test: quick view's wide layout (SPEC.md §4) puts the
     // description in a left column and a compact meta grid in a right

@@ -22,6 +22,34 @@ fn confirm_transition_updates_status_locally() {
     );
 }
 
+#[test]
+fn confirm_transition_to_done_triggers_the_jax_party_scene() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.open_transitions();
+    app.picker_index = 3; // "Done", per the demo transitions list.
+    app.confirm_transition();
+    assert!(
+        app.jax_party_until > app.tick,
+        "transitioning to Done should trigger a reactive party moment"
+    );
+}
+
+#[test]
+fn confirm_transition_to_a_non_done_status_does_not_trigger_the_jax_party_scene() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.open_transitions();
+    app.picker_index = 1; // "In Progress", per the demo transitions list.
+    app.confirm_transition();
+    assert_eq!(
+        app.jax_party_until, 0,
+        "transitioning to a non-Done status should not trigger a party moment"
+    );
+}
+
 #[tokio::test]
 async fn confirm_transition_against_a_live_source_dispatches_and_applies_on_completion() {
     let _guard = crate::test_support::lock_env_async().await;

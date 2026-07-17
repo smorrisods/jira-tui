@@ -31,6 +31,10 @@ fn begin_comment_from_detail_composes_and_apply_appends_it() {
         crate::adf::to_markdown(&newest.body).trim(),
         "Looks good to me."
     );
+    assert!(
+        app.jax_party_until > app.tick,
+        "a successful comment post should trigger a reactive party moment"
+    );
 }
 
 #[test]

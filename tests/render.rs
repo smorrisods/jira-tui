@@ -768,7 +768,7 @@ fn list_screen_drops_optional_columns_and_shows_two_line_selected_row_at_84x46()
 fn jax_companion_appears_when_toggled() {
     let mut app = demo_app();
     app.screen = Screen::Home;
-    app.show_jax = true;
+    app.jax_popped = true;
     let text = render(&app);
     assert!(text.contains("jax"), "the Jax companion box should render");
 }
@@ -777,7 +777,7 @@ fn jax_companion_appears_when_toggled() {
 fn jax_companion_sits_above_quick_view_not_overlapping() {
     let mut app = demo_app();
     app.screen = Screen::Home;
-    app.show_jax = true;
+    app.jax_popped = true;
     app.quick_view = true;
     app.selected = 0;
     let text = render(&app);
@@ -793,6 +793,115 @@ fn jax_companion_sits_above_quick_view_not_overlapping() {
     assert!(
         jax_row < quick_view_row,
         "Jax (row {jax_row}) should appear above the quick-view panel (row {quick_view_row})"
+    );
+}
+
+#[test]
+fn jax_companion_shows_a_mood_line_when_popped_out() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.jax_popped = true;
+    let text = render(&app);
+    assert!(
+        text.contains("mood:"),
+        "the popped-out Jax box should show a mood line (SPEC.md §9)"
+    );
+}
+
+#[test]
+fn jax_docks_into_the_footer_at_narrow_widths_instead_of_the_full_box() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    // Below the 90-col threshold, Jax should be the ambient mini dock —
+    // present even though `jax_popped` was never toggled on.
+    let text = render_at(&app, 80, 40);
+    assert!(
+        text.contains("●‿●") && text.contains("jax"),
+        "mini-Jax should dock into the footer at narrow widths"
+    );
+    assert!(
+        !text.contains("mood:"),
+        "the full box (with its mood line) should not render at narrow widths"
+    );
+}
+
+#[test]
+fn jax_mini_dock_appears_at_exactly_the_same_90_col_threshold_as_the_header_pill() {
+    // Regression test: `draw_footer` originally fed jax_mode the footer's
+    // post-border `inner.width`, while `draw()`'s own full-box check used
+    // the pre-border `body_area.width` — two columns narrower for the same
+    // terminal size, so the mini dock's effective cutoff was ~92, not the
+    // documented 90 every other breakpoint (including the header's sync
+    // pill) actually uses.
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+
+    let at_90 = render_at(&app, 90, 40);
+    assert!(
+        !at_90.contains("●‿●"),
+        "at exactly 90 cols the mini dock should already be gone, matching the header pill's own 90-col threshold"
+    );
+
+    let at_89 = render_at(&app, 89, 40);
+    assert!(
+        at_89.contains("●‿●"),
+        "at 89 cols (just below the threshold) the mini dock should be showing"
+    );
+}
+
+#[test]
+fn resizing_wide_after_a_narrow_render_clears_the_stale_mini_jax_hitbox() {
+    // Regression test: a click landing at the mini dock's old coordinates
+    // must not misfire once the terminal is wide enough that the dock no
+    // longer shows — `draw_footer` must clear `jax_mini_area` on every
+    // frame it doesn't draw the dock, not just leave a stale `Rect` behind.
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+
+    let text = render_at(&app, 80, 40);
+    // Search for the exact 3-char "●‿●" face, not a bare '●' — the header's
+    // sync-status LED is also a plain '●' and would otherwise match first.
+    let (row, col) = text
+        .lines()
+        .enumerate()
+        .find_map(|(y, line)| {
+            let chars: Vec<char> = line.chars().collect();
+            chars
+                .windows(3)
+                .position(|w| w == ['●', '‿', '●'])
+                .map(|x| (y, x))
+        })
+        .expect("the mini dock's face should render at 80 cols");
+    let (mini_x, mini_y) = (col as u16, row as u16);
+    assert!(app.point_in_jax_mini(mini_x, mini_y));
+
+    let _ = render_at(&app, 120, 40);
+    assert!(
+        !app.point_in_jax_mini(mini_x, mini_y),
+        "a click at the mini dock's old coordinates must not resolve after resizing wide"
+    );
+}
+
+#[test]
+fn jax_j_key_pops_the_full_box_out_even_at_a_narrow_width() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.toggle_jax();
+    let text = render_at(&app, 80, 40);
+    assert!(
+        text.contains("mood:"),
+        "an explicit pop-out should show the full box even below the wide threshold"
+    );
+}
+
+#[test]
+fn jax_mini_is_absent_on_welcome() {
+    let mut app = demo_app();
+    app.screen = Screen::Welcome;
+    let text = render_at(&app, 80, 40);
+    assert!(
+        !text.contains("●‿●"),
+        "mini-Jax must stay hidden on Welcome, matching the full box's existing rule"
     );
 }
 

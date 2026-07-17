@@ -43,6 +43,30 @@ impl App {
         self.quick_view && Self::point_in(self.quick_view_area.get(), x, y)
     }
 
+    /// Whether the point is over the mini-Jax footer dock (SPEC.md §9).
+    /// Re-checks the same gates `ui::jax_companion::jax_mode` uses (not
+    /// just the recorded `Rect`), so a stale area from a previous
+    /// mini-showing frame can't misfire once `jax_popped` flips true (the
+    /// full box pops out instead) or the screen changes to one where Jax
+    /// is hidden entirely.
+    pub fn point_in_jax_mini(&self, x: u16, y: u16) -> bool {
+        !self.jax_popped
+            && !matches!(self.screen, Screen::Welcome | Screen::Edit | Screen::About)
+            && Self::point_in(self.jax_mini_area.get(), x, y)
+    }
+
+    /// `J`, or a click on the mini-Jax footer dock in mouse mode: pop the
+    /// full Jax box out (or tuck it back away). See `jax_popped`'s doc
+    /// comment for exactly what this flag means.
+    pub fn toggle_jax(&mut self) {
+        self.jax_popped = !self.jax_popped;
+        self.status = if self.jax_popped {
+            "Jax is here to keep you company 🦦".into()
+        } else {
+            "Jax went for a nap 😴".into()
+        };
+    }
+
     /// Toggle the quick-view panel (`v`, or a middle-click on Home/List —
     /// see `keys::mouse::handle_mouse`). Closing it forces keyboard focus
     /// back to the list, matching `toggle_list_focus`'s own rule, so arrow
@@ -168,6 +192,8 @@ impl App {
             } else if let Some(idx) = self.link_at(x, y) {
                 self.link_index = idx;
                 self.open_highlighted_link();
+            } else if self.point_in_jax_mini(x, y) {
+                self.toggle_jax();
             }
         } else {
             let a = self.mouse.sel_start_y.min(self.mouse.sel_end_y);

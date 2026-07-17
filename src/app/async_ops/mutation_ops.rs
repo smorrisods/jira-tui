@@ -213,6 +213,9 @@ impl App {
         }
         self.status = format!("moved {key} → {to}");
         self.flash(format!("✓ moved to {to}"));
+        if to == "Done" {
+            self.trigger_jax_party();
+        }
     }
 
     /// Applies `AppEvent::DescriptionUpdated` — see
@@ -242,6 +245,7 @@ impl App {
         }
         self.status = format!("updated {key} description");
         self.flash("✓ description updated");
+        self.trigger_jax_party();
     }
 
     /// Applies `AppEvent::CommentAdded` — see `dispatch_add_comment` above.
@@ -275,6 +279,7 @@ impl App {
         }
         self.status = format!("added comment to {key}");
         self.flash("✓ comment added");
+        self.trigger_jax_party();
     }
 
     /// Applies `AppEvent::AssigneeApplied` — see `dispatch_assign` above.

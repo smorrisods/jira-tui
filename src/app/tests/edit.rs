@@ -26,6 +26,19 @@ fn edit_flow_previews_then_applies() {
 }
 
 #[test]
+fn a_successful_description_edit_triggers_the_jax_party_scene() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.finish_edit("## Edited\n\nBrand new body.");
+    app.apply_edit();
+    assert!(
+        app.jax_party_until > app.tick,
+        "a successful description edit should trigger a reactive party moment"
+    );
+}
+
+#[test]
 fn cancel_edit_discards_pending() {
     let mut app = demo_app();
     app.selected = 0;
