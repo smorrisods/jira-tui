@@ -46,7 +46,7 @@ pub use async_ops::AppEvent;
 pub use board::BoardSelection;
 pub use edit::{EditTarget, EditorState};
 pub use field_mapping::{FieldMappingOutcome, FieldMappingState};
-pub use mouse::{ListFocus, MouseState};
+pub use mouse::{ListFocus, MouseState, SelectionSpan};
 pub use onboarding::{Field, OnboardingState, WelcomePhase};
 pub use palette::{PaletteAction, PaletteState};
 pub(crate) use palette::{PaletteGroup, PaletteRow};

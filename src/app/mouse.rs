@@ -1,6 +1,8 @@
 //! Mouse mode: click-to-select/open, drag-to-copy, and keyboard/quick-view
 //! focus tracking.
 
+use ratatui::layout::Rect;
+
 use crate::render::DetailPane;
 use crate::ui::quick_view_columns::{meta_width_for, quick_view_layout_for_width, QuickViewLayout};
 
@@ -24,9 +26,26 @@ pub struct MouseState {
     pub sel_start_y: u16,
     pub sel_end_x: u16,
     pub sel_end_y: u16,
-    /// The finalized drag span (inclusive, screen coords, reading order —
-    /// see `App::selection_range`) whose exact text should be copied.
-    pub pending_copy: Option<((u16, u16), (u16, u16))>,
+    /// The panel the drag started in (see `App::selection_bounds_at`),
+    /// fixed for the rest of the drag regardless of where the pointer
+    /// wanders afterward.
+    pub sel_bounds: Rect,
+    /// The finalized drag span whose exact text should be copied — see
+    /// `App::selection_range`.
+    pub pending_copy: Option<SelectionSpan>,
+}
+
+/// A drag-selection span (inclusive), in reading order — `start <= end` as
+/// `(y, x)` tuples — plus the panel it's clipped to. Without `bounds`, a
+/// multi-row drag's "fill the whole row" behavior for a screen's shared
+/// text column would bleed into an unrelated column sharing the same
+/// absolute rows — e.g. Detail's wide layout, where the main text and the
+/// side rail occupy the same rows but are entirely different content.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SelectionSpan {
+    pub start: (u16, u16),
+    pub end: (u16, u16),
+    pub bounds: Rect,
 }
 
 impl App {
@@ -208,6 +227,37 @@ impl App {
         self.mouse.sel_start_y = y;
         self.mouse.sel_end_x = x;
         self.mouse.sel_end_y = y;
+        self.mouse.sel_bounds = self.selection_bounds_at(x, y);
+    }
+
+    /// The panel a drag-selection starting at `(x, y)` should stay clipped
+    /// to: whichever tracked panel area contains the point (Detail's main
+    /// column or one of its 4 rail panels, quick view, the list, or the
+    /// board), falling back to an effectively unbounded `Rect` for screens
+    /// that are genuinely one column end-to-end (the render/copy side still
+    /// clips against the real frame size regardless). Checked once at
+    /// `mouse_down`, not recomputed per `mouse_drag`, so dragging past a
+    /// panel's edge clips rather than jumping to whatever's under the
+    /// pointer next — matching how selection works in a real terminal.
+    fn selection_bounds_at(&self, x: u16, y: u16) -> Rect {
+        [
+            self.detail_main_area.get(),
+            self.detail_workflow_area.get(),
+            self.detail_meta_area.get(),
+            self.detail_links_area.get(),
+            self.detail_children_area.get(),
+            self.quick_view_area.get(),
+            self.list_area.get(),
+            self.board_area.get(),
+        ]
+        .into_iter()
+        .find(|area| Self::point_in(*area, x, y))
+        .unwrap_or(Rect {
+            x: 0,
+            y: 0,
+            width: u16::MAX,
+            height: u16::MAX,
+        })
     }
 
     pub fn mouse_drag(&mut self, x: u16, y: u16) {
@@ -240,30 +290,31 @@ impl App {
             }
         } else {
             // `selection_range` is gated on `mouse.selecting`, already
-            // cleared above — use the raw endpoints directly.
-            self.mouse.pending_copy = Some(self.normalized_endpoints());
+            // cleared above — build the span directly.
+            self.mouse.pending_copy = Some(self.normalized_span());
         }
     }
 
     /// `(sel_start, sel_end)` reordered into reading order — `(y0, x0) <=
     /// (y1, x1)` as a `(y, x)` tuple comparison, not per-axis independently,
     /// so a drag that moves up-and-left still normalizes to (earlier point,
-    /// later point) rather than an arbitrary bounding box.
-    fn normalized_endpoints(&self) -> ((u16, u16), (u16, u16)) {
+    /// later point) rather than an arbitrary bounding box — paired with the
+    /// bounds recorded at `mouse_down`.
+    fn normalized_span(&self) -> SelectionSpan {
         let a = (self.mouse.sel_start_y, self.mouse.sel_start_x);
         let b = (self.mouse.sel_end_y, self.mouse.sel_end_x);
-        if a <= b {
-            (a, b)
-        } else {
-            (b, a)
+        let (start, end) = if a <= b { (a, b) } else { (b, a) };
+        SelectionSpan {
+            start,
+            end,
+            bounds: self.mouse.sel_bounds,
         }
     }
 
-    /// The active drag-selection span (inclusive), in reading order —
-    /// `((y0, x0), (y1, x1))` — for highlighting (`ui::draw`) and, once
-    /// finalized into `pending_copy`, extracting the exact covered text
-    /// (`editor_launch::read_span`).
-    pub fn selection_range(&self) -> Option<((u16, u16), (u16, u16))> {
-        self.mouse.selecting.then(|| self.normalized_endpoints())
+    /// The active drag-selection span, for highlighting (`ui::draw`) and,
+    /// once finalized into `pending_copy`, extracting the exact covered
+    /// text (`editor_launch::read_span`).
+    pub fn selection_range(&self) -> Option<SelectionSpan> {
+        self.mouse.selecting.then(|| self.normalized_span())
     }
 }

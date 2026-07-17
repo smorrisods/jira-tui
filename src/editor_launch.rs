@@ -11,30 +11,45 @@ use crossterm::terminal::{
 };
 use ratatui::buffer::Buffer;
 
-use jira_tui::app::App;
+use jira_tui::app::{App, SelectionSpan};
 
 use crate::Term;
 
-/// Reconstruct the plain text of an inclusive, character-precise selection
-/// span from the last rendered frame's buffer (used for drag-to-copy) —
-/// mirrors `ui::draw`'s highlight rendering exactly: the first and last row
-/// are trimmed to their own start/end column, and only rows genuinely in
-/// between (a multi-row drag) are read in full. Takes the buffer directly
-/// rather than `Term` — `Terminal::draw` swaps its double buffer before
-/// returning, so `terminal.current_buffer_mut()` called after the fact
-/// would hand back the blank buffer being prepared for the *next* frame,
-/// not the content that's actually on screen. The caller clones
-/// `CompletedFrame::buffer` right after `draw()`, while it still refers to
-/// the frame just rendered.
-pub(crate) fn read_span(buf: &Buffer, start: (u16, u16), end: (u16, u16)) -> String {
+/// Reconstruct the plain text of a character-precise selection span from
+/// the last rendered frame's buffer (used for drag-to-copy) — mirrors
+/// `ui::draw`'s highlight rendering exactly: the first and last row are
+/// trimmed to their own start/end column, only rows genuinely in between
+/// (a multi-row drag) are read in full, and everything is further clipped
+/// to `span.bounds` (the panel the drag started in) so a multi-row
+/// selection can't bleed into an unrelated column sharing the same rows.
+/// Takes the buffer directly rather than `Term` — `Terminal::draw` swaps
+/// its double buffer before returning, so `terminal.current_buffer_mut()`
+/// called after the fact would hand back the blank buffer being prepared
+/// for the *next* frame, not the content that's actually on screen. The
+/// caller clones `CompletedFrame::buffer` right after `draw()`, while it
+/// still refers to the frame just rendered.
+pub(crate) fn read_span(buf: &Buffer, span: &SelectionSpan) -> String {
     let area = *buf.area();
-    let (y0, x0) = start;
-    let (y1, x1) = end;
+    let (y0, x0) = span.start;
+    let (y1, x1) = span.end;
+    let bounds = span.bounds;
     let x_max = area.width.saturating_sub(1);
     let y_max = area.height.saturating_sub(1);
-    let y1c = y1.min(y_max);
+    let clip_x0 = bounds.x;
+    let clip_x1 = bounds
+        .x
+        .saturating_add(bounds.width)
+        .saturating_sub(1)
+        .min(x_max);
+    let clip_y0 = bounds.y;
+    let clip_y1 = bounds
+        .y
+        .saturating_add(bounds.height)
+        .saturating_sub(1)
+        .min(y_max);
+    let y1c = y1.min(clip_y1);
     let mut out = String::new();
-    for y in y0.min(y_max)..=y1c {
+    for y in y0.max(clip_y0)..=y1c {
         let (row_x0, row_x1) = if y0 == y1 {
             (x0, x1)
         } else if y == y0 {
@@ -44,7 +59,8 @@ pub(crate) fn read_span(buf: &Buffer, start: (u16, u16), end: (u16, u16)) -> Str
         } else {
             (0, x_max)
         };
-        let row_x1 = row_x1.min(x_max);
+        let row_x0 = row_x0.max(clip_x0);
+        let row_x1 = row_x1.min(x_max).min(clip_x1);
         let mut line = String::new();
         if row_x0 <= row_x1 {
             for x in row_x0..=row_x1 {
@@ -117,9 +133,11 @@ pub(crate) fn edit_in_editor(terminal: &mut Term, app: &mut App) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use ratatui::layout::Rect;
     use ratatui::widgets::Paragraph;
     use ratatui::Terminal;
+
+    use super::*;
 
     fn render_text(text: &str, width: u16, height: u16) -> Buffer {
         let backend = ratatui::backend::TestBackend::new(width, height);
@@ -130,10 +148,26 @@ mod tests {
         terminal.backend().buffer().clone()
     }
 
+    /// A span with no panel to additionally clip to, matching
+    /// `App::selection_bounds_at`'s own fallback for a screen that's
+    /// genuinely one column end-to-end.
+    fn unbounded(start: (u16, u16), end: (u16, u16)) -> SelectionSpan {
+        SelectionSpan {
+            start,
+            end,
+            bounds: Rect {
+                x: 0,
+                y: 0,
+                width: u16::MAX,
+                height: u16::MAX,
+            },
+        }
+    }
+
     #[test]
     fn read_span_extracts_only_the_selected_columns_on_a_single_row() {
         let buf = render_text("hello world", 20, 1);
-        assert_eq!(read_span(&buf, (0, 0), (0, 4)), "hello\n");
+        assert_eq!(read_span(&buf, &unbounded((0, 0), (0, 4))), "hello\n");
     }
 
     #[test]
@@ -141,7 +175,7 @@ mod tests {
         let buf = render_text("aaaaaaaaaa\nbbbbbbbbbb\ncccccccccc", 10, 3);
         // Start at row 0, column 5; end at row 2, column 2 (inclusive, so
         // columns 0..=2 of the last row — 3 characters, "ccc").
-        let text = read_span(&buf, (0, 5), (2, 2));
+        let text = read_span(&buf, &unbounded((0, 5), (2, 2)));
         assert_eq!(text, "aaaaa\nbbbbbbbbbb\nccc\n");
     }
 
@@ -149,7 +183,27 @@ mod tests {
     fn read_span_clamps_a_row_past_the_buffers_height() {
         let buf = render_text("only one row", 20, 1);
         // end row (5) is past the 1-row buffer — must clamp, not panic.
-        let text = read_span(&buf, (0, 0), (5, 3));
+        let text = read_span(&buf, &unbounded((0, 0), (5, 3)));
         assert_eq!(text, "only one row\n");
+    }
+
+    /// Regression coverage: a multi-row selection's middle row must not
+    /// read the whole terminal row when `bounds` narrows it — e.g. Detail's
+    /// wide layout, where an unrelated side rail sits to the right of the
+    /// main column on those same rows.
+    #[test]
+    fn read_span_clips_middle_rows_to_bounds_not_the_whole_buffer_width() {
+        let buf = render_text("left0 right0\nleft1 right1\nleft2 right2", 13, 3);
+        let span = SelectionSpan {
+            start: (0, 2),
+            end: (2, 2),
+            bounds: Rect::new(0, 0, 5, 3),
+        };
+        let text = read_span(&buf, &span);
+        assert_eq!(
+            text, "ft0\nleft1\nlef\n",
+            "the middle row must stay within the 5-col bounds, not read the \
+             full 13-col buffer width"
+        );
     }
 }
