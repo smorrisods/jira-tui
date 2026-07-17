@@ -11,6 +11,17 @@ impl App {
         self.issues.get(self.selected)
     }
 
+    /// `a` (or the command palette's "about"): open the About screen,
+    /// remembering where it was opened from (issue #38) so backing out
+    /// restores it — but only when not already in About, or a second call
+    /// would overwrite that memory with About itself.
+    pub fn open_about(&mut self) {
+        if self.screen != Screen::About {
+            self.about_return_screen = self.screen;
+        }
+        self.screen = Screen::About;
+    }
+
     /// The list-summary "updated" relative timestamp for `key`, if it's
     /// present in the currently loaded list data — `IssueDetail` itself
     /// carries no `updated` field, so the Detail screen's people & meta /
@@ -75,16 +86,61 @@ impl App {
         self.jax_party_until = self.tick + 36;
     }
 
-    /// The Jira URL for the selected issue, when we know the site.
-    pub fn selected_issue_url(&self) -> Option<String> {
-        let issue = self.selected_issue()?;
+    /// The Jira browse URL for an arbitrary issue key — shared by
+    /// `selected_issue_url` and the command palette (`app::palette`, SPEC.md
+    /// §8), which needs to build a URL for a Board-selected card that isn't
+    /// necessarily `selected_issue()`.
+    pub(crate) fn issue_url_for(&self, key: &str) -> String {
         let site = match &self.source {
             Source::Live { site, .. } => site.clone(),
             // Demo data has no real Jira site behind it; use an obviously
             // fake placeholder host rather than a real organization's Jira.
             _ => "demo.atlassian.net".to_string(),
         };
-        Some(format!("https://{site}/browse/{}", issue.key))
+        format!("https://{site}/browse/{key}")
+    }
+
+    /// The Jira URL for the selected issue, when we know the site.
+    pub fn selected_issue_url(&self) -> Option<String> {
+        Some(self.issue_url_for(&self.selected_issue()?.key))
+    }
+
+    /// `y` (or the command palette's "copy issue key"): copy the selected
+    /// issue's key to the clipboard via OSC 52.
+    pub fn copy_key(&mut self) {
+        let Some(issue) = self.selected_issue() else {
+            return;
+        };
+        let key = issue.key.clone();
+        let _ = crate::infra::osc52_copy(&key);
+        self.status = format!("copied {key} to clipboard");
+        self.flash(format!("✓ copied {key}"));
+    }
+
+    /// `Y` (or the command palette's "copy issue URL"): copy the selected
+    /// issue's browse URL to the clipboard via OSC 52.
+    pub fn copy_url(&mut self) {
+        let Some(url) = self.selected_issue_url() else {
+            return;
+        };
+        let _ = crate::infra::osc52_copy(&url);
+        self.status = format!("copied {url} to clipboard");
+        self.flash("✓ copied issue URL");
+    }
+
+    /// The command palette's "open in browser" (SPEC.md §8) — no direct key
+    /// reaches this today (only in-body links, via `app::links`); the
+    /// palette is the first caller. Reuses the same `issue_url_for`/
+    /// `infra::open_url` primitives `copy_url`/`open_highlighted_link`
+    /// already use.
+    pub fn open_selected_in_browser(&mut self) {
+        let Some(url) = self.selected_issue_url() else {
+            return;
+        };
+        match crate::infra::open_url(&url) {
+            Ok(()) => self.flash(format!("↗ opened {url}")),
+            Err(_) => self.status = format!("couldn't open {url}"),
+        }
     }
 
     pub fn move_selection(&mut self, delta: isize) {

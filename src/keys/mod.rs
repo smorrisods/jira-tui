@@ -8,8 +8,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use jira_tui::app::{self, App, Screen};
-use jira_tui::infra;
+use jira_tui::app::{self, App, PaletteAction, Screen};
 
 mod mouse;
 mod welcome;
@@ -84,6 +83,34 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char(c) => app.assignee_picker_input_char(c),
             _ => {}
         }
+        return;
+    }
+
+    // Modal: the command palette (SPEC.md §8). Type-to-filter like the
+    // assignee picker above.
+    if app.palette_open {
+        match key.code {
+            KeyCode::Esc => app.close_palette(),
+            KeyCode::Enter => {
+                if let Some(action) = app.palette_selected_action().cloned() {
+                    run_palette_action(app, &action);
+                }
+                app.close_palette();
+            }
+            KeyCode::Up => app.palette_move(-1),
+            KeyCode::Down => app.palette_move(1),
+            KeyCode::Backspace => app.palette_backspace(),
+            KeyCode::Char(c) => app.palette_input_char(c),
+            _ => {}
+        }
+        return;
+    }
+
+    // Global: `ctrl-k` opens the command palette from any screen (SPEC.md
+    // §8) — placed after every other modal's own early-return above, so it
+    // can't fire while one of them is already open.
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('k') {
+        app.open_palette();
         return;
     }
 
@@ -177,15 +204,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
 
     match key.code {
         KeyCode::Char('?') => app.show_help = true,
-        KeyCode::Char('a') => {
-            // Remember where About was opened from (see #38) so backing out
-            // restores it — but only when not already in About, or a second
-            // `a` press would overwrite that memory with About itself.
-            if app.screen != Screen::About {
-                app.about_return_screen = app.screen;
-            }
-            app.screen = Screen::About;
-        }
+        KeyCode::Char('a') => app.open_about(),
         KeyCode::Char('g') => app.screen = Screen::Home,
         // `r` refreshes whatever's actually being looked at: the open
         // issue in Detail, or the quick-view panel once it has keyboard
@@ -211,8 +230,8 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             app.toggle_list_focus()
         }
         KeyCode::Char('J') => app.toggle_jax(),
-        KeyCode::Char('y') => yank_key(app),
-        KeyCode::Char('Y') => yank_url(app),
+        KeyCode::Char('y') => app.copy_key(),
+        KeyCode::Char('Y') => app.copy_url(),
         KeyCode::Char('q') => back_or_quit(app),
 
         // Detail issue-navigation history: `←` steps back through issues
@@ -356,20 +375,43 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-fn yank_key(app: &mut App) {
-    if let Some(issue) = app.selected_issue() {
-        let key = issue.key.clone();
-        let _ = infra::osc52_copy(&key);
-        app.status = format!("copied {key} to clipboard");
-        app.flash(format!("✓ copied {key}"));
-    }
-}
-
-fn yank_url(app: &mut App) {
-    if let Some(url) = app.selected_issue_url() {
-        let _ = infra::osc52_copy(&url);
-        app.status = format!("copied {url} to clipboard");
-        app.flash("✓ copied issue URL");
+/// Runs a confirmed command-palette row (SPEC.md §8) — matches each
+/// `PaletteAction` to the exact same call its direct key makes. Lives here,
+/// not in `app::palette`, because `ToggleMouse` needs real terminal I/O
+/// (`mouse::toggle_mouse`'s `crossterm::execute!`) that only this binary
+/// crate can perform — keeping every action's dispatch in one match instead
+/// of splitting it across the app/binary boundary.
+fn run_palette_action(app: &mut App, action: &PaletteAction) {
+    match action {
+        PaletteAction::Transition(id) => {
+            let Some(detail) = app.detail.as_ref() else {
+                return;
+            };
+            let Some(idx) = detail.transitions.iter().position(|t| &t.id == id) else {
+                return;
+            };
+            app.picker_index = idx;
+            app.confirm_transition();
+        }
+        PaletteAction::Assign => app.open_assignee_picker(),
+        PaletteAction::Comment => app.begin_comment(),
+        PaletteAction::CopyKey => app.copy_key(),
+        PaletteAction::CopyUrl => app.copy_url(),
+        PaletteAction::OpenInBrowser => app.open_selected_in_browser(),
+        PaletteAction::FlipView => app.cycle_view(1),
+        PaletteAction::CycleSort => app.cycle_sort(),
+        PaletteAction::CycleFilter => app.cycle_filter(),
+        PaletteAction::ToggleTree => app.toggle_list_view_mode(),
+        PaletteAction::ToggleQuickView => app.toggle_quick_view(),
+        PaletteAction::OpenBoard => app.open_board(),
+        PaletteAction::Refresh => app.refresh(),
+        PaletteAction::ToggleMouse => mouse::toggle_mouse(app),
+        PaletteAction::ToggleJax => app.toggle_jax(),
+        PaletteAction::OpenFieldMapping => {
+            app.open_field_mapping();
+        }
+        PaletteAction::OpenAbout => app.open_about(),
+        PaletteAction::OpenHelp => app.show_help = true,
     }
 }
 
@@ -492,6 +534,101 @@ mod tests {
         assert_eq!(app.screen, Screen::About);
         handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
         assert_eq!(app.screen, Screen::Detail);
+    }
+
+    #[test]
+    fn ctrl_k_opens_the_palette_from_any_screen() {
+        for screen in [Screen::Home, Screen::List, Screen::Detail, Screen::Board] {
+            let mut app = demo_app();
+            app.screen = screen;
+            handle_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL),
+            );
+            assert!(
+                app.palette_open,
+                "ctrl-k should open the palette from {screen:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn palette_esc_closes_without_side_effects() {
+        let mut app = demo_app();
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL),
+        );
+        assert!(app.palette_open);
+        handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
+        assert!(!app.palette_open);
+        assert_eq!(app.screen, Screen::Home, "Esc must not run any action");
+    }
+
+    #[test]
+    fn palette_confirm_runs_the_selected_action_and_closes() {
+        let mut app = demo_app();
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL),
+        );
+        for c in "about".chars() {
+            handle_key(&mut app, KeyEvent::from(KeyCode::Char(c)));
+        }
+        handle_key(&mut app, KeyEvent::from(KeyCode::Enter));
+        assert!(!app.palette_open, "confirming should close the palette");
+        assert_eq!(
+            app.screen,
+            Screen::About,
+            "should dispatch the same open_about() 'a' calls"
+        );
+    }
+
+    #[test]
+    fn palette_transition_dispatch_uses_confirm_transition() {
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        assert_ne!(
+            app.detail.as_ref().unwrap().status,
+            "Done",
+            "test needs an issue not already Done"
+        );
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL),
+        );
+        // Filter to the "Transition {key} → Done" row specifically, so this
+        // exercises a real status change rather than a same-status one
+        // (the demo transitions list includes a "→ {current status}" entry,
+        // which would be a false-negative no-op for this assertion).
+        for c in "→ done".chars() {
+            handle_key(&mut app, KeyEvent::from(KeyCode::Char(c)));
+        }
+        handle_key(&mut app, KeyEvent::from(KeyCode::Enter));
+        assert!(!app.palette_open);
+        assert_eq!(
+            app.detail.as_ref().unwrap().status,
+            "Done",
+            "confirming a Transition row should actually run confirm_transition"
+        );
+    }
+
+    #[test]
+    fn ctrl_k_does_not_open_the_palette_while_another_modal_owns_input() {
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        app.open_assignee_picker();
+        assert!(app.assignee_picker_open);
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL),
+        );
+        assert!(
+            !app.palette_open,
+            "ctrl-k should be swallowed as filter input by the already-open assignee picker"
+        );
     }
 
     #[test]

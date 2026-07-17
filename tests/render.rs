@@ -415,6 +415,83 @@ fn assignee_picker_keeps_the_selection_in_view_on_a_short_terminal() {
 }
 
 #[test]
+fn command_palette_shows_on_key_view_and_app_groups_with_transitions() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.open_palette();
+    let text = render(&app);
+    assert!(
+        text.contains("command palette"),
+        "palette should show a title"
+    );
+    assert!(
+        text.contains("ON DS-"),
+        "palette should show the on-key group header"
+    );
+    assert!(text.contains("VIEW"), "palette should show the view group");
+    assert!(text.contains("APP"), "palette should show the app group");
+    assert!(
+        text.contains("Transition"),
+        "an issue with a fetched detail should list its transitions"
+    );
+    assert!(
+        text.contains("assign/unassign"),
+        "an issue with a fetched detail should offer assign"
+    );
+}
+
+#[test]
+fn command_palette_omits_detail_only_actions_without_a_fetched_issue_detail() {
+    let mut app = demo_app();
+    app.screen = Screen::List;
+    app.selected = 0;
+    app.open_palette();
+    let text = render(&app);
+    assert!(
+        text.contains("copy issue key"),
+        "a bare selection should still offer copy/open actions"
+    );
+    assert!(
+        !text.contains("assign/unassign"),
+        "a bare selection with no fetched detail shouldn't offer assign"
+    );
+    assert!(
+        !text.contains("Transition"),
+        "a bare selection with no fetched detail shouldn't offer transitions"
+    );
+}
+
+#[test]
+fn command_palette_filters_and_highlights_the_matched_text() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.open_palette();
+    for c in "about".chars() {
+        app.palette_input_char(c);
+    }
+    let text = render(&app);
+    assert!(
+        text.contains("about"),
+        "the matching row should still render"
+    );
+    assert!(
+        !text.contains("refresh"),
+        "non-matching rows should be filtered out"
+    );
+}
+
+#[test]
+fn command_palette_esc_closes_it() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.open_palette();
+    assert!(render(&app).contains("command palette"));
+    app.close_palette();
+    assert!(!render(&app).contains("command palette"));
+}
+
+#[test]
 fn switching_to_a_teammate_view_shows_a_confirmation_toast() {
     // Renamed from "...shows_in_the_header": this asserts on the transient
     // flash toast `switch_view` raises (`App::flash`), not the header —

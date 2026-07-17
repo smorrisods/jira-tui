@@ -345,21 +345,27 @@ impl App {
 
     /// Open the currently selected card's issue.
     pub fn board_open(&mut self) {
-        let lanes = self.board_lanes();
-        let cols = self.board_columns();
-        let Some(lane) = lanes.get(self.board_sel.lane) else {
-            return;
-        };
-        let Some(status) = cols.get(self.board_sel.col) else {
-            return;
-        };
-        let cell = self.board_cell(lane, status);
-        match cell.get(self.board_sel.card) {
+        match self.board_selected_issue() {
             Some(issue) => {
                 let key = issue.key.clone();
                 self.open_by_key(&key);
             }
             None => self.status = "no card here".into(),
         }
+    }
+
+    /// The card currently selected on the Board screen, if any — shared by
+    /// `board_open` and the command palette's context resolver
+    /// (`app::palette`, SPEC.md §8), which needs the same lane/column/cell
+    /// lookup Board itself uses to answer "what issue is this palette
+    /// acting on" when opened from Board.
+    pub(crate) fn board_selected_issue(&self) -> Option<&IssueSummary> {
+        let lanes = self.board_lanes();
+        let cols = self.board_columns();
+        let lane = lanes.get(self.board_sel.lane)?;
+        let status = cols.get(self.board_sel.col)?;
+        self.board_cell(lane, status)
+            .get(self.board_sel.card)
+            .copied()
     }
 }

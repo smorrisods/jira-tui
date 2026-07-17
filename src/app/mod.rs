@@ -29,6 +29,7 @@ mod links;
 mod loader;
 mod mouse;
 mod onboarding;
+mod palette;
 mod query;
 mod quick_view;
 mod search;
@@ -47,6 +48,8 @@ pub use edit::{EditTarget, EditorState};
 pub use field_mapping::{FieldMappingOutcome, FieldMappingState};
 pub use mouse::{ListFocus, MouseState};
 pub use onboarding::{Field, OnboardingState, WelcomePhase};
+pub use palette::{PaletteAction, PaletteState};
+pub(crate) use palette::{PaletteGroup, PaletteRow};
 pub use search::{SearchRow, SearchState};
 pub use sort_filter::SortKey;
 pub use tree::ListViewMode;
@@ -282,6 +285,9 @@ pub struct App {
     /// Whether the assignee picker (`A`) is currently open.
     pub assignee_picker_open: bool,
     pub assignee_picker: AssigneePickerState,
+    /// Whether the command palette (`ctrl-k`, SPEC.md §8) is currently open.
+    pub palette_open: bool,
+    pub palette: PaletteState,
     /// Every assignable project member, as fetched by
     /// `async_ops::dispatch_teammate_discovery` for a live session (empty
     /// for demo/cache sessions, which fall back to
@@ -391,6 +397,8 @@ impl App {
             assignee_generation: 0,
             assignee_picker_open: false,
             assignee_picker: AssigneePickerState::default(),
+            palette_open: false,
+            palette: PaletteState::default(),
             assignable_users: Vec::new(),
             edit_pending: false,
             edit_generation: 0,
