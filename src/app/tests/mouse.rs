@@ -24,7 +24,7 @@ fn click_opens_detail() {
     let mut app = demo_app();
     app.list_area.set(Rect::new(0, 4, 80, 8));
     app.list_start.set(0);
-    app.mouse_down(5);
+    app.mouse_down(0, 5);
     app.mouse_up(0, 5);
     assert_eq!(app.screen, Screen::Detail);
     assert!(app.detail.is_some());
@@ -34,15 +34,86 @@ fn click_opens_detail() {
 #[test]
 fn drag_sets_a_pending_copy_range() {
     let mut app = demo_app();
-    app.list_area.set(Rect::new(0, 4, 80, 8));
-    app.mouse_down(5);
-    assert_eq!(app.selection_range(), Some((5, 5)));
-    app.mouse_drag(8);
-    assert_eq!(app.selection_range(), Some((5, 8)));
+    let list_area = Rect::new(0, 4, 80, 8);
+    app.list_area.set(list_area);
+    app.mouse_down(0, 5);
+    assert_eq!(
+        app.selection_range(),
+        Some(SelectionSpan {
+            start: (5, 0),
+            end: (5, 0),
+            bounds: list_area
+        })
+    );
+    app.mouse_drag(0, 8);
+    assert_eq!(
+        app.selection_range(),
+        Some(SelectionSpan {
+            start: (5, 0),
+            end: (8, 0),
+            bounds: list_area
+        })
+    );
     app.mouse_up(0, 8);
-    assert_eq!(app.mouse.pending_copy, Some((5, 8)));
+    assert_eq!(
+        app.mouse.pending_copy,
+        Some(SelectionSpan {
+            start: (5, 0),
+            end: (8, 0),
+            bounds: list_area
+        })
+    );
     assert!(!app.mouse.selecting);
     assert_eq!(app.screen, Screen::Home, "a drag must not open detail");
+}
+
+/// Regression coverage for character-precise selection: dragging up-and-
+/// left must still normalize to (earlier point, later point) in reading
+/// order, comparing `(y, x)` as a single tuple rather than each axis
+/// independently (which would otherwise produce a nonsensical "bounding
+/// box" pairing for a diagonal drag).
+#[test]
+fn selection_range_normalizes_a_backward_drag_into_reading_order() {
+    let mut app = demo_app();
+    app.mouse_down(20, 8);
+    app.mouse_drag(5, 3);
+    let range = app.selection_range().expect("a drag should be in progress");
+    assert_eq!(range.start, (3, 5));
+    assert_eq!(range.end, (8, 20));
+}
+
+/// Regression coverage: a multi-row drag inside a two-column screen (e.g.
+/// Detail's wide layout: main text beside a side rail) must not fill the
+/// *whole terminal row* for rows fully between the start and end — that
+/// would bleed into the unrelated column sharing the same rows. The
+/// selection stays clipped to whichever tracked panel it started in.
+#[test]
+fn selection_bounds_clip_to_the_panel_the_drag_started_in() {
+    let mut app = demo_app();
+    app.screen = Screen::Detail;
+    let main_area = Rect::new(0, 1, 60, 20);
+    app.detail_main_area.set(main_area);
+    app.mouse_down(5, 2);
+    app.mouse_drag(10, 5);
+    let range = app.selection_range().expect("a drag should be in progress");
+    assert_eq!(
+        range.bounds, main_area,
+        "the selection should clip to the main column it started in, \
+         not the whole terminal row"
+    );
+}
+
+#[test]
+fn a_single_point_click_is_not_a_selection_even_with_pixel_perfect_repeats() {
+    let mut app = demo_app();
+    app.list_area.set(Rect::new(0, 4, 80, 8));
+    app.mouse_down(10, 5);
+    app.mouse_drag(10, 5);
+    app.mouse_up(10, 5);
+    assert_eq!(
+        app.mouse.pending_copy, None,
+        "an exact-same-point down/drag/up is a click, not a drag-select"
+    );
 }
 
 #[test]
@@ -124,7 +195,7 @@ fn clicking_the_jax_mini_dock_toggles_jax_popped() {
     app.jax_mini_area.set(Rect::new(60, 10, 14, 1));
     assert!(!app.jax_popped);
 
-    app.mouse_down(10);
+    app.mouse_down(62, 10);
     app.mouse_up(62, 10);
     assert!(
         app.jax_popped,
@@ -135,7 +206,7 @@ fn clicking_the_jax_mini_dock_toggles_jax_popped() {
     // `J`/a real click target would be needed to toggle it back off, but a
     // click at the same coordinates must not misfire against a leftover
     // mini `Rect` while the full box is what's actually showing.
-    app.mouse_down(10);
+    app.mouse_down(62, 10);
     app.mouse_up(62, 10);
     assert!(
         app.jax_popped,

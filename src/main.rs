@@ -132,8 +132,8 @@ async fn run(terminal: &mut Term, app: &mut App) -> Result<()> {
         }
 
         // Fulfil a drag-select copy using the frame we just rendered.
-        if let Some((y0, y1)) = app.mouse.pending_copy.take() {
-            let text = editor_launch::read_rows(&last_frame, y0, y1);
+        if let Some(span) = app.mouse.pending_copy.take() {
+            let text = editor_launch::read_span(&last_frame, &span);
             let n = text.lines().filter(|l| !l.trim().is_empty()).count();
             let _ = jira_tui::infra::osc52_copy(&text);
             app.status = format!("copied {n} line(s) to clipboard");

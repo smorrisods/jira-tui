@@ -65,7 +65,7 @@ fn click_link(app: &mut App, target: &crate::render::LinkTarget) {
     app.detail_scroll = 0;
     let x = target.start as u16;
     let y = 1 + target.line as u16;
-    app.mouse_down(y);
+    app.mouse_down(x, y);
     app.mouse_up(x, y);
 }
 
@@ -184,7 +184,7 @@ fn click_on_a_link_past_the_first_wrapped_row_of_a_paragraph_opens_it() {
         crate::render::LinkKind::Issue("DS-9999".into())
     );
 
-    app.mouse_down(2);
+    app.mouse_down(2, 2);
     app.mouse_up(2, 2);
     assert_eq!(app.detail.as_ref().unwrap().key, "DS-9999");
 }
@@ -220,7 +220,7 @@ fn click_on_a_rail_panel_link_opens_it() {
     app.detail_meta_area.set(Rect::new(50, 0, 30, 10));
     let x = 50 + target.start as u16;
     let y = target.line as u16;
-    app.mouse_down(y);
+    app.mouse_down(x, y);
     app.mouse_up(x, y);
     assert_eq!(app.detail.as_ref().unwrap().key, parent_key);
 }

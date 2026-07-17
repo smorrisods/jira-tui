@@ -1505,3 +1505,138 @@ fn board_screen_wide_scrolls_the_selected_lane_into_actual_view() {
          scrolling to it, not just satisfy a numeric scroll bound"
     );
 }
+
+#[test]
+fn drag_selection_highlights_only_the_selected_columns_on_a_single_row() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.mouse.selecting = true;
+    app.mouse.sel_start_y = 5;
+    app.mouse.sel_start_x = 10;
+    app.mouse.sel_end_y = 5;
+    app.mouse.sel_end_x = 20;
+    // Unbounded (matches `App::selection_bounds_at`'s own fallback): this
+    // test is about the single-row shape, not panel clipping.
+    app.mouse.sel_bounds = ratatui::layout::Rect::new(0, 0, u16::MAX, u16::MAX);
+
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(|f| ui::draw(f, &app)).unwrap();
+    let buf = terminal.backend().buffer();
+    let reversed = |x: u16, y: u16| {
+        buf.cell((x, y))
+            .map(|c| c.modifier.contains(ratatui::style::Modifier::REVERSED))
+            .unwrap_or(false)
+    };
+
+    assert!(
+        !reversed(9, 5),
+        "just before the selected span must not be highlighted"
+    );
+    assert!(reversed(10, 5), "the selection start column");
+    assert!(reversed(20, 5), "the selection end column");
+    assert!(
+        !reversed(21, 5),
+        "just after the selected span must not be highlighted"
+    );
+    assert!(
+        !reversed(0, 5),
+        "columns before the selection on the same row must not be highlighted \
+         (regression guard: this used to invert the whole row)"
+    );
+}
+
+#[test]
+fn drag_selection_spanning_multiple_rows_only_trims_the_first_and_last() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.mouse.selecting = true;
+    app.mouse.sel_start_y = 5;
+    app.mouse.sel_start_x = 50;
+    app.mouse.sel_end_y = 7;
+    app.mouse.sel_end_x = 10;
+    // Unbounded (matches `App::selection_bounds_at`'s own fallback): this
+    // test is about the multi-row shape, not panel clipping.
+    app.mouse.sel_bounds = ratatui::layout::Rect::new(0, 0, u16::MAX, u16::MAX);
+
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(|f| ui::draw(f, &app)).unwrap();
+    let buf = terminal.backend().buffer();
+    let reversed = |x: u16, y: u16| {
+        buf.cell((x, y))
+            .map(|c| c.modifier.contains(ratatui::style::Modifier::REVERSED))
+            .unwrap_or(false)
+    };
+
+    // First row: only from its start column onward.
+    assert!(!reversed(49, 5), "before the start column on the first row");
+    assert!(reversed(50, 5), "the start column itself");
+    assert!(reversed(119, 5), "the first row highlights to its own end");
+
+    // A row fully between start and end: highlighted in full.
+    assert!(reversed(0, 6), "a middle row's first column");
+    assert!(reversed(119, 6), "a middle row's last column");
+
+    // Last row: only up to its end column.
+    assert!(reversed(0, 7), "the last row's first column");
+    assert!(reversed(10, 7), "the end column itself");
+    assert!(!reversed(11, 7), "past the end column on the last row");
+}
+
+/// End-to-end regression test for the reported bug: dragging down through
+/// several rows of the wide Detail layout's main column used to fill the
+/// *entire terminal row* for every row fully between the start and end —
+/// bleeding into the side rail, which shares those same rows but is
+/// completely unrelated content. `mouse_down` records which panel the drag
+/// started in (`App::selection_bounds_at`), and the highlight now clips to
+/// it, so a multi-row drag in the main column must never touch the rail.
+#[test]
+fn drag_selection_in_the_detail_main_column_does_not_bleed_into_the_side_rail() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.open_by_key("DS-2722");
+    // A real render first, so `detail_main_area`/the rail panel areas are
+    // actually populated the way `mouse_down` needs them.
+    let _ = render_at(&app, 120, 34);
+
+    let main_area = app.detail_main_area.get();
+    let workflow_area = app.detail_workflow_area.get();
+    assert!(
+        workflow_area.width > 0,
+        "the workflow rail panel should have a recorded area at this width"
+    );
+
+    // Start the drag a couple of rows into the main column, drag down
+    // several rows — comfortably spanning at least one "middle" row that
+    // would previously have filled the whole terminal width.
+    let start_x = main_area.x + 2;
+    let start_y = main_area.y + 1;
+    let end_y = (start_y + 4).min(main_area.y + main_area.height - 1);
+    app.mouse_down(start_x, start_y);
+    app.mouse_drag(main_area.x + 5, end_y);
+
+    let backend = TestBackend::new(120, 34);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(|f| ui::draw(f, &app)).unwrap();
+    let buf = terminal.backend().buffer();
+    let reversed = |x: u16, y: u16| {
+        buf.cell((x, y))
+            .map(|c| c.modifier.contains(ratatui::style::Modifier::REVERSED))
+            .unwrap_or(false)
+    };
+
+    // A row strictly between the drag's start and end row (a "middle" row)
+    // should be highlighted within the main column...
+    let middle_y = start_y + 2;
+    assert!(
+        reversed(main_area.x, middle_y),
+        "a middle row of the drag should be highlighted within the main column"
+    );
+    // ...but never inside the side rail on that same row.
+    assert!(
+        !reversed(workflow_area.x + 2, middle_y),
+        "the drag must not bleed into the side rail on a middle row \
+         (regression guard for the reported whole-row-highlight bug)"
+    );
+}

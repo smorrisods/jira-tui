@@ -30,6 +30,17 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Recover from a stuck mouse drag: some terminals keep tagging pointer
+    // *movement* with the last-pressed button's SGR code even after it's
+    // actually released, instead of reporting a proper release — crossterm
+    // then sees an unending stream of `MouseEventKind::Drag(Left)` with no
+    // matching `Up`, so `mouse.selecting` never clears and the drag
+    // highlight keeps growing to wherever the pointer wanders next. A real
+    // keypress is a reliable signal the user wants control back, so it
+    // always cancels an in-flight selection first, regardless of what it
+    // otherwise does.
+    app.mouse.selecting = false;
+
     // Help overlay swallows input while open.
     if app.show_help {
         app.show_help = false;
@@ -515,6 +526,27 @@ mod tests {
         assert_eq!(
             app.selected, 0,
             "the swallowed keypress must not also move the selection"
+        );
+    }
+
+    /// Regression test: a terminal that misreports pointer movement as a
+    /// continued `Drag(Left)` after the button was actually released (some
+    /// terminals stamp motion reports with the last-pressed button's SGR
+    /// code regardless of whether it's still held) leaves `mouse.selecting`
+    /// stuck true forever, since crossterm never delivers the matching
+    /// `Up`. Any real keypress must cancel it as a recovery hatch.
+    #[test]
+    fn any_keypress_cancels_a_stuck_mouse_drag() {
+        let mut app = demo_app();
+        app.mouse.selecting = true;
+        app.mouse.sel_start_y = 3;
+        app.mouse.sel_end_y = 30;
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('j')));
+
+        assert!(
+            !app.mouse.selecting,
+            "a keypress should cancel an in-flight selection, however it got stuck"
         );
     }
 

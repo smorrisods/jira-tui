@@ -41,8 +41,8 @@ pub(crate) fn handle_mouse(app: &mut App, me: MouseEvent) {
     match me.kind {
         MouseEventKind::ScrollUp => scroll_at(app, me.column, me.row, -1),
         MouseEventKind::ScrollDown => scroll_at(app, me.column, me.row, 1),
-        MouseEventKind::Down(MouseButton::Left) => app.mouse_down(me.row),
-        MouseEventKind::Drag(MouseButton::Left) => app.mouse_drag(me.row),
+        MouseEventKind::Down(MouseButton::Left) => app.mouse_down(me.column, me.row),
+        MouseEventKind::Drag(MouseButton::Left) => app.mouse_drag(me.column, me.row),
         MouseEventKind::Up(MouseButton::Left) => app.mouse_up(me.column, me.row),
         // Middle-click mirrors the `v` key: toggle the quick-view panel.
         // Scoped to Home/List, matching `v`'s own screen guard — Board and
