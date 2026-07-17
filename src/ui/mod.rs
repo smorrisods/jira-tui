@@ -267,12 +267,31 @@ pub fn draw(f: &mut Frame, app: &App) {
         draw_palette(f, app, f.area());
     }
 
-    // Highlight the active drag selection by inverting the covered rows.
-    if let Some((y0, y1)) = app.selection_range() {
+    // Highlight the active drag selection by inverting exactly the covered
+    // span, not whole rows: the first and last row are trimmed to their own
+    // start/end column, and only rows genuinely in between (a multi-row
+    // drag) get their full width.
+    if let Some(((y0, x0), (y1, x1))) = app.selection_range() {
         let area = f.area();
         let buf = f.buffer_mut();
-        for y in y0..=y1.min(area.height.saturating_sub(1)) {
-            for x in 0..area.width {
+        let x_max = area.width.saturating_sub(1);
+        let y_max = area.height.saturating_sub(1);
+        let y1c = y1.min(y_max);
+        for y in y0.min(y_max)..=y1c {
+            let (row_x0, row_x1) = if y0 == y1 {
+                (x0, x1)
+            } else if y == y0 {
+                (x0, x_max)
+            } else if y == y1c {
+                (0, x1)
+            } else {
+                (0, x_max)
+            };
+            let row_x1 = row_x1.min(x_max);
+            if row_x0 > row_x1 {
+                continue;
+            }
+            for x in row_x0..=row_x1 {
                 if let Some(cell) = buf.cell_mut((x, y)) {
                     cell.set_style(Style::default().add_modifier(Modifier::REVERSED));
                 }

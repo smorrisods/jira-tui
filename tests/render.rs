@@ -1505,3 +1505,75 @@ fn board_screen_wide_scrolls_the_selected_lane_into_actual_view() {
          scrolling to it, not just satisfy a numeric scroll bound"
     );
 }
+
+#[test]
+fn drag_selection_highlights_only_the_selected_columns_on_a_single_row() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.mouse.selecting = true;
+    app.mouse.sel_start_y = 5;
+    app.mouse.sel_start_x = 10;
+    app.mouse.sel_end_y = 5;
+    app.mouse.sel_end_x = 20;
+
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(|f| ui::draw(f, &app)).unwrap();
+    let buf = terminal.backend().buffer();
+    let reversed = |x: u16, y: u16| {
+        buf.cell((x, y))
+            .map(|c| c.modifier.contains(ratatui::style::Modifier::REVERSED))
+            .unwrap_or(false)
+    };
+
+    assert!(
+        !reversed(9, 5),
+        "just before the selected span must not be highlighted"
+    );
+    assert!(reversed(10, 5), "the selection start column");
+    assert!(reversed(20, 5), "the selection end column");
+    assert!(
+        !reversed(21, 5),
+        "just after the selected span must not be highlighted"
+    );
+    assert!(
+        !reversed(0, 5),
+        "columns before the selection on the same row must not be highlighted \
+         (regression guard: this used to invert the whole row)"
+    );
+}
+
+#[test]
+fn drag_selection_spanning_multiple_rows_only_trims_the_first_and_last() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.mouse.selecting = true;
+    app.mouse.sel_start_y = 5;
+    app.mouse.sel_start_x = 50;
+    app.mouse.sel_end_y = 7;
+    app.mouse.sel_end_x = 10;
+
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(|f| ui::draw(f, &app)).unwrap();
+    let buf = terminal.backend().buffer();
+    let reversed = |x: u16, y: u16| {
+        buf.cell((x, y))
+            .map(|c| c.modifier.contains(ratatui::style::Modifier::REVERSED))
+            .unwrap_or(false)
+    };
+
+    // First row: only from its start column onward.
+    assert!(!reversed(49, 5), "before the start column on the first row");
+    assert!(reversed(50, 5), "the start column itself");
+    assert!(reversed(119, 5), "the first row highlights to its own end");
+
+    // A row fully between start and end: highlighted in full.
+    assert!(reversed(0, 6), "a middle row's first column");
+    assert!(reversed(119, 6), "a middle row's last column");
+
+    // Last row: only up to its end column.
+    assert!(reversed(0, 7), "the last row's first column");
+    assert!(reversed(10, 7), "the end column itself");
+    assert!(!reversed(11, 7), "past the end column on the last row");
+}

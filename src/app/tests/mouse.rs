@@ -24,7 +24,7 @@ fn click_opens_detail() {
     let mut app = demo_app();
     app.list_area.set(Rect::new(0, 4, 80, 8));
     app.list_start.set(0);
-    app.mouse_down(5);
+    app.mouse_down(0, 5);
     app.mouse_up(0, 5);
     assert_eq!(app.screen, Screen::Detail);
     assert!(app.detail.is_some());
@@ -35,14 +35,40 @@ fn click_opens_detail() {
 fn drag_sets_a_pending_copy_range() {
     let mut app = demo_app();
     app.list_area.set(Rect::new(0, 4, 80, 8));
-    app.mouse_down(5);
-    assert_eq!(app.selection_range(), Some((5, 5)));
-    app.mouse_drag(8);
-    assert_eq!(app.selection_range(), Some((5, 8)));
+    app.mouse_down(0, 5);
+    assert_eq!(app.selection_range(), Some(((5, 0), (5, 0))));
+    app.mouse_drag(0, 8);
+    assert_eq!(app.selection_range(), Some(((5, 0), (8, 0))));
     app.mouse_up(0, 8);
-    assert_eq!(app.mouse.pending_copy, Some((5, 8)));
+    assert_eq!(app.mouse.pending_copy, Some(((5, 0), (8, 0))));
     assert!(!app.mouse.selecting);
     assert_eq!(app.screen, Screen::Home, "a drag must not open detail");
+}
+
+/// Regression coverage for character-precise selection: dragging up-and-
+/// left must still normalize to (earlier point, later point) in reading
+/// order, comparing `(y, x)` as a single tuple rather than each axis
+/// independently (which would otherwise produce a nonsensical "bounding
+/// box" pairing for a diagonal drag).
+#[test]
+fn selection_range_normalizes_a_backward_drag_into_reading_order() {
+    let mut app = demo_app();
+    app.mouse_down(20, 8);
+    app.mouse_drag(5, 3);
+    assert_eq!(app.selection_range(), Some(((3, 5), (8, 20))));
+}
+
+#[test]
+fn a_single_point_click_is_not_a_selection_even_with_pixel_perfect_repeats() {
+    let mut app = demo_app();
+    app.list_area.set(Rect::new(0, 4, 80, 8));
+    app.mouse_down(10, 5);
+    app.mouse_drag(10, 5);
+    app.mouse_up(10, 5);
+    assert_eq!(
+        app.mouse.pending_copy, None,
+        "an exact-same-point down/drag/up is a click, not a drag-select"
+    );
 }
 
 #[test]
@@ -124,7 +150,7 @@ fn clicking_the_jax_mini_dock_toggles_jax_popped() {
     app.jax_mini_area.set(Rect::new(60, 10, 14, 1));
     assert!(!app.jax_popped);
 
-    app.mouse_down(10);
+    app.mouse_down(62, 10);
     app.mouse_up(62, 10);
     assert!(
         app.jax_popped,
@@ -135,7 +161,7 @@ fn clicking_the_jax_mini_dock_toggles_jax_popped() {
     // `J`/a real click target would be needed to toggle it back off, but a
     // click at the same coordinates must not misfire against a leftover
     // mini `Rect` while the full box is what's actually showing.
-    app.mouse_down(10);
+    app.mouse_down(62, 10);
     app.mouse_up(62, 10);
     assert!(
         app.jax_popped,

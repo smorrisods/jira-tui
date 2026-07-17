@@ -20,10 +20,13 @@ pub enum ListFocus {
 pub struct MouseState {
     pub enabled: bool,
     pub selecting: bool,
+    pub sel_start_x: u16,
     pub sel_start_y: u16,
+    pub sel_end_x: u16,
     pub sel_end_y: u16,
-    /// Row range (inclusive, screen coords) whose text should be copied.
-    pub pending_copy: Option<(u16, u16)>,
+    /// The finalized drag span (inclusive, screen coords, reading order —
+    /// see `App::selection_range`) whose exact text should be copied.
+    pub pending_copy: Option<((u16, u16), (u16, u16))>,
 }
 
 impl App {
@@ -194,19 +197,22 @@ impl App {
             .position(|t| t.pane == pane && t.line == line && col >= t.start && col < t.end)
     }
 
-    pub fn mouse_down(&mut self, y: u16) {
+    pub fn mouse_down(&mut self, x: u16, y: u16) {
         if matches!(self.screen, Screen::Home | Screen::List) {
             if let Some(idx) = self.list_index_at(y) {
                 self.selected = idx;
             }
         }
         self.mouse.selecting = true;
+        self.mouse.sel_start_x = x;
         self.mouse.sel_start_y = y;
+        self.mouse.sel_end_x = x;
         self.mouse.sel_end_y = y;
     }
 
-    pub fn mouse_drag(&mut self, y: u16) {
+    pub fn mouse_drag(&mut self, x: u16, y: u16) {
         if self.mouse.selecting {
+            self.mouse.sel_end_x = x;
             self.mouse.sel_end_y = y;
         }
     }
@@ -216,8 +222,11 @@ impl App {
             return;
         }
         self.mouse.selecting = false;
+        self.mouse.sel_end_x = x;
         self.mouse.sel_end_y = y;
-        if self.mouse.sel_start_y == self.mouse.sel_end_y {
+        if self.mouse.sel_start_x == self.mouse.sel_end_x
+            && self.mouse.sel_start_y == self.mouse.sel_end_y
+        {
             // A click, not a drag: open the issue under the cursor, or —
             // in the Detail screen/quick-view panel — the link under it.
             if matches!(self.screen, Screen::Home | Screen::List) && self.list_index_at(y).is_some()
@@ -230,19 +239,31 @@ impl App {
                 self.toggle_jax();
             }
         } else {
-            let a = self.mouse.sel_start_y.min(self.mouse.sel_end_y);
-            let b = self.mouse.sel_start_y.max(self.mouse.sel_end_y);
-            self.mouse.pending_copy = Some((a, b));
+            // `selection_range` is gated on `mouse.selecting`, already
+            // cleared above — use the raw endpoints directly.
+            self.mouse.pending_copy = Some(self.normalized_endpoints());
         }
     }
 
-    /// The inclusive row range currently being drag-selected, for highlighting.
-    pub fn selection_range(&self) -> Option<(u16, u16)> {
-        self.mouse.selecting.then(|| {
-            (
-                self.mouse.sel_start_y.min(self.mouse.sel_end_y),
-                self.mouse.sel_start_y.max(self.mouse.sel_end_y),
-            )
-        })
+    /// `(sel_start, sel_end)` reordered into reading order — `(y0, x0) <=
+    /// (y1, x1)` as a `(y, x)` tuple comparison, not per-axis independently,
+    /// so a drag that moves up-and-left still normalizes to (earlier point,
+    /// later point) rather than an arbitrary bounding box.
+    fn normalized_endpoints(&self) -> ((u16, u16), (u16, u16)) {
+        let a = (self.mouse.sel_start_y, self.mouse.sel_start_x);
+        let b = (self.mouse.sel_end_y, self.mouse.sel_end_x);
+        if a <= b {
+            (a, b)
+        } else {
+            (b, a)
+        }
+    }
+
+    /// The active drag-selection span (inclusive), in reading order —
+    /// `((y0, x0), (y1, x1))` — for highlighting (`ui::draw`) and, once
+    /// finalized into `pending_copy`, extracting the exact covered text
+    /// (`editor_launch::read_span`).
+    pub fn selection_range(&self) -> Option<((u16, u16), (u16, u16))> {
+        self.mouse.selecting.then(|| self.normalized_endpoints())
     }
 }
