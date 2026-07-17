@@ -40,7 +40,9 @@ fn demo_app() -> App {
 fn home_screen_shows_work_and_context() {
     let mut app = demo_app();
     app.screen = Screen::Home;
-    let text = render(&app);
+    // Wide enough for Home's 3-card rail (see home_columns::WIDE_RAIL_MIN_TOTAL_WIDTH) —
+    // plain `render()`'s 120 cols only qualifies for the narrow strip layout.
+    let text = render_at(&app, 160, 40);
     assert!(text.contains("my work"), "home should list my work");
     assert!(
         text.contains("current context"),
@@ -666,7 +668,7 @@ fn home_screen_wide_shows_three_rail_cards_with_bars() {
     app.open_by_key(&key);
     app.screen = Screen::Home;
 
-    let text = render_at(&app, 120, 40);
+    let text = render_at(&app, 160, 40);
     assert!(text.contains("current context"));
     assert!(text.contains("at a glance"));
     assert!(text.contains("recent"), "the recent card should render");

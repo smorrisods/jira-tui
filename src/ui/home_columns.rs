@@ -15,10 +15,22 @@ pub(crate) enum HomeLayout {
     Narrow,
 }
 
-/// SPEC.md §11: "< 90 cols: stacked Home strips" — same threshold as
-/// Detail/Board's narrow cutoff.
+/// The wide rail claims 32% of the width, leaving the shared list panel only
+/// 68% — so SPEC.md §11's ">= 90 cols: wide rail" isn't enough on its own to
+/// guarantee the list panel actually looks "wide": at 90 cols the list panel
+/// is only ~59 cols inside its border, well under `list_columns`'s own
+/// thresholds (90 to avoid the two-line row split, 103 for every optional
+/// column). Below this width the rail would sit next to a column-starved,
+/// two-line list — worse than just collapsing the rail into strips and
+/// giving the list the full row. 154 is the smallest total width at which
+/// ratatui's `Percentage(68)` split leaves the list panel's own inner width
+/// at >= 103 (every optional column shown, never two-line) — see
+/// `list_columns::column_set_for_width`; `list_wide_enough_for_all_columns`
+/// below pins this pairing so the two breakpoints can't drift apart again.
+const WIDE_RAIL_MIN_TOTAL_WIDTH: u16 = 154;
+
 pub(crate) fn home_layout_for_width(width: u16) -> HomeLayout {
-    if width >= 90 {
+    if width >= WIDE_RAIL_MIN_TOTAL_WIDTH {
         HomeLayout::Wide
     } else {
         HomeLayout::Narrow
@@ -44,14 +56,52 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wide_at_and_above_90() {
-        assert_eq!(home_layout_for_width(90), HomeLayout::Wide);
+    fn wide_at_and_above_the_threshold() {
+        assert_eq!(
+            home_layout_for_width(WIDE_RAIL_MIN_TOTAL_WIDTH),
+            HomeLayout::Wide
+        );
         assert_eq!(home_layout_for_width(200), HomeLayout::Wide);
     }
 
     #[test]
-    fn narrow_just_below_90() {
-        assert_eq!(home_layout_for_width(89), HomeLayout::Narrow);
+    fn narrow_just_below_the_threshold() {
+        assert_eq!(
+            home_layout_for_width(WIDE_RAIL_MIN_TOTAL_WIDTH - 1),
+            HomeLayout::Narrow
+        );
+    }
+
+    /// Pins the pairing this module's width threshold depends on: the wide
+    /// rail must never turn on unless the list panel next to it (68% of the
+    /// same total width, per `home::draw_wide`'s split) already qualifies
+    /// for every optional column in `list_columns::column_set_for_width`.
+    /// If either module's thresholds move, this is the test that should
+    /// catch the drift.
+    #[test]
+    fn list_wide_enough_for_all_columns() {
+        use ratatui::layout::{Constraint, Direction, Layout, Rect};
+
+        let area = Rect::new(0, 0, WIDE_RAIL_MIN_TOTAL_WIDTH, 40);
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(32), Constraint::Percentage(68)])
+            .split(area);
+        let list_inner_width = cols[1].width.saturating_sub(2);
+        let columns = crate::ui::list_columns::column_set_for_width(list_inner_width);
+        assert!(columns.assignee && columns.type_chip && columns.updated && !columns.two_line);
+
+        let area = Rect::new(0, 0, WIDE_RAIL_MIN_TOTAL_WIDTH - 1, 40);
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(32), Constraint::Percentage(68)])
+            .split(area);
+        let list_inner_width = cols[1].width.saturating_sub(2);
+        let columns = crate::ui::list_columns::column_set_for_width(list_inner_width);
+        assert!(
+            !(columns.assignee && columns.type_chip && columns.updated && !columns.two_line),
+            "the threshold should be the smallest width at which the list panel qualifies"
+        );
     }
 
     #[test]

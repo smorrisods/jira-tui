@@ -48,13 +48,15 @@ pub(crate) fn jax_mode(app: &App, width: u16) -> JaxMode {
     JaxMode::Hidden
 }
 
-/// Draws Jax bottom-aligned within `area`. Callers pass a bounding region that
-/// already excludes anything Jax must not cover (e.g. the quick-view panel),
-/// so this simply hugs the bottom-left corner of whatever it's given.
+/// Draws Jax bottom-aligned within `area`, matching the mockup's bottom-right
+/// placement (docs/archive/design/ui-refresh.html). Callers pass a bounding
+/// region that already excludes anything Jax must not cover (e.g. the
+/// quick-view panel), so this simply hugs the bottom-right corner of
+/// whatever it's given.
 pub(crate) fn draw_jax_companion(f: &mut Frame, app: &App, area: Rect) {
     let w = 30u16.min(area.width);
     let h = 8u16.min(area.height.saturating_sub(1));
-    let x = area.x + 2;
+    let x = area.x + area.width.saturating_sub(w + 2);
     let y = area.y + area.height.saturating_sub(h + 1);
     let rect = Rect::new(x, y, w, h);
     f.render_widget(Clear, rect);
