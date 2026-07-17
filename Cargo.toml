@@ -1,6 +1,6 @@
 [package]
 name = "jira-tui"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 description = "A developer-first, keyboard-driven Jira terminal UI with a little bit of soul."
 license = "MIT"
