@@ -3,6 +3,8 @@
 //! or a single scrollable column with a foldable facts panel below that —
 //! see `detail_columns::detail_layout_for_width`.
 
+use std::cell::Cell;
+
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Color;
 use ratatui::widgets::{Paragraph, Wrap};
@@ -107,10 +109,20 @@ fn draw_wide(
         f,
         cols[1],
         [
-            (workflow_title, accent(), wide.workflow),
-            (meta_title, accent(), wide.meta),
-            (links_title, accent2(), wide.links),
-            (children_title, accent2(), wide.children),
+            (
+                workflow_title,
+                accent(),
+                wide.workflow,
+                &app.detail_workflow_area,
+            ),
+            (meta_title, accent(), wide.meta, &app.detail_meta_area),
+            (links_title, accent2(), wide.links, &app.detail_links_area),
+            (
+                children_title,
+                accent2(),
+                wide.children,
+                &app.detail_children_area,
+            ),
         ],
     );
 }
@@ -126,13 +138,13 @@ fn draw_wide(
 /// clipping on genuine overflow (more content than the rail area has room
 /// for at all) is an accepted scope cut for this phase (see the module
 /// doc's plan reference).
-fn draw_rail(f: &mut Frame, area: Rect, panels: [(String, Color, Panel); 4]) {
+fn draw_rail(f: &mut Frame, area: Rect, panels: [(String, Color, Panel, &Cell<Rect>); 4]) {
     let last = panels.len() - 1;
     let content_width = area.width.saturating_sub(2);
     let constraints: Vec<Constraint> = panels
         .iter()
         .enumerate()
-        .map(|(i, (_, _, panel))| {
+        .map(|(i, (_, _, panel, _))| {
             if i == last {
                 Constraint::Min(3)
             } else {
@@ -144,14 +156,26 @@ fn draw_rail(f: &mut Frame, area: Rect, panels: [(String, Color, Panel); 4]) {
         .direction(Direction::Vertical)
         .constraints(constraints)
         .split(area);
-    for (i, (title, colour, panel)) in panels.into_iter().enumerate() {
-        draw_rail_panel(f, rows[i], &title, colour, panel);
+    for (i, (title, colour, panel, area_cell)) in panels.into_iter().enumerate() {
+        draw_rail_panel(f, rows[i], &title, colour, panel, area_cell);
     }
 }
 
-fn draw_rail_panel(f: &mut Frame, area: Rect, title: &str, colour: Color, panel: Panel) {
+/// `area_cell` records this panel's inner (post-border) area for mouse
+/// hit-testing (`app::mouse::link_at`) — the panel is deliberately
+/// non-scrolling (see `draw_rail`'s doc comment), so unlike
+/// `detail_main_area` no separate scroll-Rect is needed.
+fn draw_rail_panel(
+    f: &mut Frame,
+    area: Rect,
+    title: &str,
+    colour: Color,
+    panel: Panel,
+    area_cell: &Cell<Rect>,
+) {
     let block = card(&format!("  {title}  "), colour);
     let inner = block.inner(area);
+    area_cell.set(inner);
     f.render_widget(block, area);
     f.render_widget(
         Paragraph::new(panel.lines).wrap(Wrap { trim: false }),

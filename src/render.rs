@@ -717,6 +717,108 @@ fn restyle_range(line: Line<'static>, start: usize, end: usize, extra: Style) ->
     Line::from(new_spans)
 }
 
+/// Char-offset ranges (into `line`'s flattened text, i.e. the same char
+/// space `LinkTarget::start`/`end` use) of each row `line` wraps into at
+/// `width` columns via ratatui's `Wrap { trim: false }` — matches
+/// `ui::detail_columns::wrapped_row_count`'s own greedy word-wrap (which
+/// delegates to this) so a rail panel's height and a click's row-to-line
+/// mapping (`line_col_at_row`) always agree on where rows break. A width of
+/// 0 or an empty line is treated as a single row spanning the whole line.
+pub(crate) fn wrapped_row_ranges(line: &Line, width: usize) -> Vec<std::ops::Range<usize>> {
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    let chars: Vec<char> = text.chars().collect();
+    if width == 0 || chars.is_empty() {
+        // A genuine single-element `Vec<Range>`, not the `Vec<usize>` the
+        // lint's own suggested fix would produce.
+        #[allow(clippy::single_range_in_vec_init)]
+        return vec![0..chars.len()];
+    }
+
+    let mut words: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i].is_whitespace() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && !chars[i].is_whitespace() {
+            i += 1;
+        }
+        words.push(start..i);
+    }
+    if words.is_empty() {
+        // A genuine single-element `Vec<Range>`, not the `Vec<usize>` the
+        // lint's own suggested fix would produce.
+        #[allow(clippy::single_range_in_vec_init)]
+        return vec![0..chars.len()];
+    }
+
+    let mut rows: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut row_start = words[0].start;
+    let mut row_end = row_start;
+    let mut col = 0usize;
+
+    for word in &words {
+        let word_str: String = chars[word.clone()].iter().collect();
+        let word_width = Line::from(word_str.as_str()).width();
+        if word_width > width {
+            // Wider than any row on its own — hard-wrap across ceil(word/width)
+            // rows, closing out whatever was already on the current row first.
+            if col > 0 {
+                rows.push(row_start..row_end);
+            }
+            let mut wi = word.start;
+            while word.end - wi > width {
+                rows.push(wi..wi + width);
+                wi += width;
+            }
+            row_start = wi;
+            row_end = word.end;
+            col = word.end - wi;
+            continue;
+        }
+        let gap = if col == 0 { 0 } else { 1 };
+        if col + gap + word_width > width {
+            rows.push(row_start..row_end);
+            row_start = word.start;
+            row_end = word.end;
+            col = word_width;
+        } else {
+            row_end = word.end;
+            col += gap + word_width;
+        }
+    }
+    rows.push(row_start..row_end);
+    rows
+}
+
+/// Maps a rendered row (0-indexed from the top of `lines`, in the same
+/// space a `Paragraph`'s `.scroll()` offset counts in) and a column within
+/// that row back to the logical `(line_index, char_column)` the
+/// `LinkTarget`s in `lines` were computed against — the inverse of the
+/// wrapping `wrapped_row_ranges` describes, used by `app::mouse::link_at` so
+/// a click on wrapped text resolves to the right link instead of assuming
+/// one rendered row per logical line. Returns `None` once `row` runs past
+/// the last wrapped row across every line.
+pub(crate) fn line_col_at_row(
+    lines: &[Line],
+    width: usize,
+    mut row: usize,
+    col: usize,
+) -> Option<(usize, usize)> {
+    for (idx, line) in lines.iter().enumerate() {
+        let ranges = wrapped_row_ranges(line, width);
+        if row < ranges.len() {
+            let r = &ranges[row];
+            let local = col.min(r.end.saturating_sub(r.start));
+            return Some((idx, r.start + local));
+        }
+        row -= ranges.len();
+    }
+    None
+}
+
 /// Scan every line for issue keys and bare URLs, restyling matched spans
 /// with an underline (in addition to whatever colour/weight they already
 /// carry) and returning their locations for keyboard navigation, tagged
@@ -979,5 +1081,57 @@ mod link_tests {
         let folded = narrow_detail(&detail, "you", "12m ago", true);
         let unfolded = narrow_detail(&detail, "you", "12m ago", false);
         assert!(folded.lines.lines.len() < unfolded.lines.lines.len());
+    }
+}
+
+#[cfg(test)]
+mod wrap_row_tests {
+    use super::*;
+
+    fn line(text: &str) -> Line<'static> {
+        Line::from(text.to_string())
+    }
+
+    #[test]
+    fn a_short_line_is_a_single_row_spanning_the_whole_line() {
+        let ranges = wrapped_row_ranges(&line("hello"), 20);
+        assert_eq!(ranges, vec![0..5]);
+    }
+
+    #[test]
+    fn a_wrapped_line_splits_on_the_word_boundary_not_mid_word() {
+        // "aaaaa bbbbb ccccc" at width 10: "aaaaa" / "bbbbb" / "ccccc" — the
+        // same case `wrapped_row_count`'s own regression test covers, here
+        // asserting the actual char ranges rather than just the row count.
+        let ranges = wrapped_row_ranges(&line("aaaaa bbbbb ccccc"), 10);
+        assert_eq!(ranges, vec![0..5, 6..11, 12..17]);
+    }
+
+    #[test]
+    fn line_col_at_row_maps_a_click_on_a_wrapped_row_back_to_the_original_line() {
+        let lines = vec![line("hi"), line("see DS-1234 over there")];
+        // At width 8: line 1 wraps into "see" / "DS-1234" / "over" / "there".
+        let ranges = wrapped_row_ranges(&lines[1], 8);
+        assert_eq!(ranges, vec![0..3, 4..11, 12..16, 17..22]);
+
+        // Row 0 is "hi" (line 0's only row). Row 1 is "see" (line 1's first
+        // wrapped row). Row 2 is "DS-1234" (line 1's second wrapped row) —
+        // clicking local column 2 within it (the 'S' in "DS") must resolve
+        // to line 1, absolute column 6 (4 + 2).
+        assert_eq!(line_col_at_row(&lines, 8, 0, 0), Some((0, 0)));
+        assert_eq!(line_col_at_row(&lines, 8, 1, 0), Some((1, 0)));
+        assert_eq!(line_col_at_row(&lines, 8, 2, 2), Some((1, 6)));
+    }
+
+    #[test]
+    fn line_col_at_row_returns_none_past_the_last_wrapped_row() {
+        let lines = vec![line("one"), line("two")];
+        assert_eq!(line_col_at_row(&lines, 10, 2, 0), None);
+    }
+
+    #[test]
+    fn line_col_at_row_clamps_a_column_past_the_end_of_its_row() {
+        let lines = vec![line("hi")];
+        assert_eq!(line_col_at_row(&lines, 10, 0, 99), Some((0, 2)));
     }
 }

@@ -66,35 +66,11 @@ pub(crate) fn wrapped_row_count(lines: &[Line], width: u16) -> u16 {
     rows.try_into().unwrap_or(u16::MAX)
 }
 
+/// Delegates to `render::wrapped_row_ranges` — the single implementation of
+/// this app's word-wrap approximation, shared with `app::mouse::link_at`'s
+/// click-to-line mapping so the two always agree on where rows break.
 fn wrapped_rows_for_line(line: &Line, width: usize) -> usize {
-    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-    let words: Vec<&str> = text.split_whitespace().collect();
-    if words.is_empty() {
-        return 1;
-    }
-    let mut rows = 1usize;
-    let mut col = 0usize; // columns already used on the current row
-    for word in words {
-        let word_width = Line::from(word).width();
-        if word_width > width {
-            // Wider than any row on its own — ratatui hard-wraps it rather
-            // than leaving it unrendered, consuming ceil(word/width) rows.
-            if col > 0 {
-                rows += 1;
-            }
-            rows += word_width.div_ceil(width) - 1;
-            col = word_width % width;
-            continue;
-        }
-        let gap = if col == 0 { 0 } else { 1 };
-        if col + gap + word_width > width {
-            rows += 1;
-            col = word_width;
-        } else {
-            col += gap + word_width;
-        }
-    }
-    rows
+    crate::render::wrapped_row_ranges(line, width).len()
 }
 
 #[cfg(test)]
