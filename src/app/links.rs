@@ -10,8 +10,10 @@
 //! for jumping to/stepping between comments — this always agrees with what
 //! `ui::detail`/`ui::quick_view` actually rendered.
 
+use ratatui::text::Line;
+
 use crate::infra;
-use crate::render::{self, LinkTarget};
+use crate::render::{self, DetailPane, LinkTarget};
 use crate::ui::detail_columns::{detail_layout_for_width, DetailLayout};
 use crate::ui::quick_view_columns::{quick_view_layout_for_width, QuickViewLayout};
 
@@ -49,6 +51,60 @@ impl App {
                 render::narrow_detail(detail, &current_user, &updated, self.facts_folded)
                     .lines
                     .links
+            }
+        }
+    }
+
+    /// The rendered lines for a given `DetailPane`, recomputed fresh (see
+    /// this module's doc comment) — used by `app::mouse::link_at` for
+    /// wrap-aware click-to-line mapping, which needs the actual line
+    /// content wrapping was computed against, not just the flattened target
+    /// list `active_links` returns. `None` if `pane` isn't showing at all
+    /// right now (e.g. `Workflow` while on the quick-view panel, or a rail
+    /// pane while Detail is in its narrow, rail-less layout).
+    pub(crate) fn active_pane_lines(&self, pane: DetailPane) -> Option<Vec<Line<'static>>> {
+        let detail = self.active_comment_detail()?;
+        if self.screen != Screen::Detail {
+            // Quick view only ever has Main (description) and Meta panes.
+            let updated = self.issue_updated(&detail.key).to_string();
+            return match quick_view_layout_for_width(self.quick_view_area.get().width) {
+                QuickViewLayout::Wide => {
+                    let wide = render::quick_view_wide(detail, &updated);
+                    match pane {
+                        DetailPane::Main => Some(wide.description.lines),
+                        DetailPane::Meta => Some(wide.meta.lines),
+                        _ => None,
+                    }
+                }
+                QuickViewLayout::Narrow => match pane {
+                    DetailPane::Main => {
+                        Some(render::quick_view_narrow(detail, &updated).panel.lines)
+                    }
+                    _ => None,
+                },
+            };
+        }
+        let current_user = self.current_user_display();
+        let updated = self.issue_updated(&detail.key).to_string();
+        match detail_layout_for_width(self.detail_area.get().width) {
+            DetailLayout::Narrow => match pane {
+                DetailPane::Main => Some(
+                    render::narrow_detail(detail, &current_user, &updated, self.facts_folded)
+                        .lines
+                        .lines,
+                ),
+                _ => None,
+            },
+            DetailLayout::Wide => {
+                let wide = render::wide_detail(detail, &current_user, &updated);
+                Some(match pane {
+                    DetailPane::Identity => wide.identity.lines,
+                    DetailPane::Main => wide.main.lines,
+                    DetailPane::Workflow => wide.workflow.lines,
+                    DetailPane::Meta => wide.meta.lines,
+                    DetailPane::Links => wide.links.lines,
+                    DetailPane::Children => wide.children.lines,
+                })
             }
         }
     }

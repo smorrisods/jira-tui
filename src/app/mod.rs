@@ -189,6 +189,14 @@ pub struct App {
     /// hit-testing (`app::mouse::link_at`) needs the exact scrolled Rect,
     /// not the breakpoint-decision width.
     pub detail_main_area: Cell<Rect>,
+    /// The wide Detail layout's four side-rail panels' inner areas (post-
+    /// border), for mouse hit-testing (`app::mouse::link_at`) — deliberately
+    /// non-scrolling (see `ui::detail::draw_rail`'s doc comment), so unlike
+    /// `detail_main_area` these need no separate scroll-Rect distinction.
+    pub detail_workflow_area: Cell<Rect>,
+    pub detail_meta_area: Cell<Rect>,
+    pub detail_links_area: Cell<Rect>,
+    pub detail_children_area: Cell<Rect>,
     pub quick_view_area: Cell<Rect>,
     /// The board's inner rendering area, recorded during render so keyboard
     /// navigation (which has no access to layout at input time) can compute
@@ -367,6 +375,10 @@ impl App {
             list_start: Cell::new(0),
             detail_area: Cell::new(Rect::default()),
             detail_main_area: Cell::new(Rect::default()),
+            detail_workflow_area: Cell::new(Rect::default()),
+            detail_meta_area: Cell::new(Rect::default()),
+            detail_links_area: Cell::new(Rect::default()),
+            detail_children_area: Cell::new(Rect::default()),
             quick_view_area: Cell::new(Rect::default()),
             board_area: Cell::new(Rect::default()),
             onboarding: OnboardingState::default(),

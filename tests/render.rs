@@ -40,7 +40,9 @@ fn demo_app() -> App {
 fn home_screen_shows_work_and_context() {
     let mut app = demo_app();
     app.screen = Screen::Home;
-    let text = render(&app);
+    // Wide enough for Home's 3-card rail (see home_columns::WIDE_RAIL_MIN_TOTAL_WIDTH) —
+    // plain `render()`'s 120 cols only qualifies for the narrow strip layout.
+    let text = render_at(&app, 160, 40);
     assert!(text.contains("my work"), "home should list my work");
     assert!(
         text.contains("current context"),
@@ -666,7 +668,7 @@ fn home_screen_wide_shows_three_rail_cards_with_bars() {
     app.open_by_key(&key);
     app.screen = Screen::Home;
 
-    let text = render_at(&app, 120, 40);
+    let text = render_at(&app, 160, 40);
     assert!(text.contains("current context"));
     assert!(text.contains("at a glance"));
     assert!(text.contains("recent"), "the recent card should render");
@@ -692,6 +694,18 @@ fn home_screen_narrow_shows_tiles_and_recent_strip() {
     assert!(
         text.contains("assigned"),
         "narrow home should show glance tile labels"
+    );
+    assert!(
+        text.contains("context"),
+        "the narrow context strip should sit in its own titled panel"
+    );
+    // Regression test: the narrow context strip and each glance tile used to
+    // render as bare, borderless Paragraphs — the design mockup shows both
+    // as bordered cards, so this counts at least the context panel plus all
+    // 4 glance tiles (5) on top of whatever header/footer/list contribute.
+    assert!(
+        text.matches('╭').count() >= 5,
+        "the narrow context panel and every glance tile should have their own border"
     );
 }
 
@@ -909,9 +923,11 @@ fn jax_mini_dock_appears_at_exactly_the_same_90_col_threshold_as_the_header_pill
     // the pre-border `body_area.width` — two columns narrower for the same
     // terminal size, so the mini dock's effective cutoff was ~92, not the
     // documented 90 every other breakpoint (including the header's sync
-    // pill) actually uses.
+    // pill) actually uses. List uses the flat 90-col cutoff shared by every
+    // screen except Home (which tracks its own, wider rail threshold —
+    // see `home_mini_dock_appears_at_homes_own_wide_rail_threshold` below).
     let mut app = demo_app();
-    app.screen = Screen::Home;
+    app.screen = Screen::List;
 
     let at_90 = render_at(&app, 90, 40);
     assert!(
@@ -923,6 +939,27 @@ fn jax_mini_dock_appears_at_exactly_the_same_90_col_threshold_as_the_header_pill
     assert!(
         at_89.contains("●‿●"),
         "at 89 cols (just below the threshold) the mini dock should be showing"
+    );
+}
+
+#[test]
+fn home_mini_dock_appears_at_homes_own_wide_rail_threshold() {
+    // Home's mini-dock cutoff tracks its own wide-rail threshold (154), not
+    // the flat 90 cols every other screen uses — see `jax_mode`'s
+    // Home-specific branch.
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+
+    let at_154 = render_at(&app, 154, 40);
+    assert!(
+        !at_154.contains("●‿●"),
+        "at Home's own wide-rail threshold the mini dock should already be gone"
+    );
+
+    let at_153 = render_at(&app, 153, 40);
+    assert!(
+        at_153.contains("●‿●"),
+        "just below Home's wide-rail threshold the mini dock should be showing"
     );
 }
 
@@ -952,7 +989,9 @@ fn resizing_wide_after_a_narrow_render_clears_the_stale_mini_jax_hitbox() {
     let (mini_x, mini_y) = (col as u16, row as u16);
     assert!(app.point_in_jax_mini(mini_x, mini_y));
 
-    let _ = render_at(&app, 120, 40);
+    // Past Home's own wide-rail threshold (154), not just any "wide" width —
+    // below that Home is still narrow enough for the mini dock to persist.
+    let _ = render_at(&app, 160, 40);
     assert!(
         !app.point_in_jax_mini(mini_x, mini_y),
         "a click at the mini dock's old coordinates must not resolve after resizing wide"
@@ -1150,8 +1189,10 @@ fn help_overlay_key_column_has_a_separator_for_long_keys() {
 fn footer_shows_grouped_hints_on_a_wide_terminal() {
     // SPEC.md §2: footer hints are grouped under a faint uppercase label
     // (NAV/VIEW/ACT/GO). At a comfortably wide terminal every group for
-    // Home should render.
-    let backend = TestBackend::new(120, 34);
+    // Home should render. 160, not 120: below Home's own wide-rail
+    // threshold (154) the footer also reserves room for mini-Jax, which
+    // eats into the group budget.
+    let backend = TestBackend::new(160, 34);
     let mut terminal = Terminal::new(backend).unwrap();
     let mut app = demo_app();
     app.screen = Screen::Home;

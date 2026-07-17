@@ -5,7 +5,7 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Block, BorderType, Borders, Padding, Paragraph};
 use ratatui::Frame;
 
 use crate::app::App;
@@ -66,7 +66,10 @@ fn draw_narrow(f: &mut Frame, app: &App, area: Rect) {
     let recent = home_recent(app);
     let show_recent = !short && !recent.is_empty();
 
-    let mut constraints = vec![Constraint::Length(1), Constraint::Length(3)];
+    // Context and glance each get a bordered "short panel"/"tile" per
+    // SPEC.md §5, so +2 rows apiece over their one/three lines of content
+    // for the top/bottom border.
+    let mut constraints = vec![Constraint::Length(3), Constraint::Length(5)];
     if show_recent {
         constraints.push(Constraint::Length(1));
     }
@@ -76,7 +79,10 @@ fn draw_narrow(f: &mut Frame, app: &App, area: Rect) {
         .constraints(constraints)
         .split(area);
 
-    f.render_widget(Paragraph::new(home_context_strip_line(app)), rows[0]);
+    let context_block = card("  context  ", accent()).padding(Padding::left(1));
+    let context_inner = context_block.inner(rows[0]);
+    f.render_widget(context_block, rows[0]);
+    f.render_widget(Paragraph::new(home_context_strip_line(app)), context_inner);
     draw_glance_tiles(f, app, rows[1], short);
     let list_area = if show_recent {
         f.render_widget(Paragraph::new(home_recent_strip_line(&recent)), rows[2]);
@@ -263,11 +269,28 @@ fn home_context_strip_line(app: &App) -> Line<'static> {
 fn draw_glance_tiles(f: &mut Frame, app: &App, area: Rect, short: bool) {
     let stats = glance_stats(app, short);
     let max = stats.iter().map(|(_, n, _)| *n).max().unwrap_or(0);
+    // A 1-col gap between tiles, alongside the equal-width tiles themselves —
+    // ratatui's solver satisfies the fixed gaps first, then splits whatever
+    // is left evenly across the Ratio segments.
+    let mut constraints = Vec::with_capacity(stats.len() * 2);
+    for i in 0..stats.len() {
+        if i > 0 {
+            constraints.push(Constraint::Length(1));
+        }
+        constraints.push(Constraint::Ratio(1, stats.len() as u32));
+    }
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints(vec![Constraint::Ratio(1, stats.len() as u32); stats.len()])
+        .constraints(constraints)
         .split(area);
-    for (col, (label, n, colour)) in cols.iter().zip(stats.iter()) {
+    for (col, (label, n, colour)) in cols.iter().step_by(2).zip(stats.iter()) {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(muted()))
+            .padding(Padding::left(1));
+        let inner = block.inner(*col);
+        f.render_widget(block, *col);
         let tile = Text::from(vec![
             Line::from(Span::styled(*label, Style::default().fg(muted()))),
             Line::from(Span::styled(
@@ -279,7 +302,7 @@ fn draw_glance_tiles(f: &mut Frame, app: &App, area: Rect, short: bool) {
                 Style::default().fg(*colour),
             )),
         ]);
-        f.render_widget(Paragraph::new(tile), *col);
+        f.render_widget(Paragraph::new(tile), inner);
     }
 }
 

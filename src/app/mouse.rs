@@ -109,55 +109,89 @@ impl App {
 
     /// Resolve a screen coordinate to the index of a navigable link (issue
     /// key/URL) under the cursor, in the full Detail screen or the
-    /// quick-view panel. Best-effort: it maps a screen row directly to a
-    /// rendered line index via `detail_scroll`/`quick_view_scroll` without
-    /// accounting for line-wrapping, so it's most reliable on short field
-    /// lines (`parent:`, the links section) rather than long wrapped
-    /// description/comment text — those are still reachable via `{`/`}`
-    /// keyboard cycling regardless of wrap.
+    /// quick-view panel. Wrap-aware: `render::line_col_at_row` maps the
+    /// clicked screen row back to the logical line/column a `LinkTarget`'s
+    /// `line`/`start`/`end` were computed against, so this works on long
+    /// wrapped description/comment text too, not just short field lines.
     ///
-    /// On the Detail screen's wide layout, only the main column (identity's
-    /// `DetailPane::Main` targets) is clickable this phase — the side rail
-    /// (workflow/meta/links/children) has no Rect recorded for hit-testing,
-    /// so its links are keyboard-`{`/`}`-only. The returned index is still
-    /// an index into `active_links()`'s full cross-pane ordering, so it
-    /// stays consistent with `next_link`/`prev_link`/highlighting.
+    /// On the Detail screen's wide layout, both the main column and the
+    /// four side-rail panels (workflow/meta/links/children — deliberately
+    /// non-scrolling, see `ui::detail::draw_rail`) are clickable. The
+    /// returned index is still an index into `active_links()`'s full
+    /// cross-pane ordering, so it stays consistent with
+    /// `next_link`/`prev_link`/highlighting.
     pub fn link_at(&self, x: u16, y: u16) -> Option<usize> {
         if self.screen == Screen::Detail {
-            let area = self.detail_main_area.get();
-            if !Self::point_in(area, x, y) {
-                return None;
+            if let Some(idx) = self.link_at_pane(
+                x,
+                y,
+                DetailPane::Main,
+                self.detail_main_area.get(),
+                self.detail_scroll as usize,
+            ) {
+                return Some(idx);
             }
-            let line = self.detail_scroll as usize + (y - area.y) as usize;
-            let col = (x - area.x) as usize;
-            return self.active_links().iter().position(|t| {
-                t.pane == DetailPane::Main && t.line == line && col >= t.start && col < t.end
-            });
+            for (pane, area) in [
+                (DetailPane::Workflow, self.detail_workflow_area.get()),
+                (DetailPane::Meta, self.detail_meta_area.get()),
+                (DetailPane::Links, self.detail_links_area.get()),
+                (DetailPane::Children, self.detail_children_area.get()),
+            ] {
+                if let Some(idx) = self.link_at_pane(x, y, pane, area, 0) {
+                    return Some(idx);
+                }
+            }
+            return None;
         }
         if self.point_in_quick_view(x, y) {
             let area = self.quick_view_area.get();
-            if !Self::point_in(area, x, y) {
-                return None;
-            }
             let col = (x - area.x) as usize;
             // Wide quick view's meta column (to the right) isn't
             // independently scrolled and has no `Rect` of its own recorded
-            // for hit-testing — the same accepted limitation `link_at`'s
-            // Detail branch above already has for its side rail. Restrict
-            // matches to the description pane so a click in the meta
-            // column can't coincidentally resolve to the wrong link.
+            // for hit-testing yet — restrict matches to the description
+            // pane so a click in the meta column can't coincidentally
+            // resolve to the wrong link.
             if quick_view_layout_for_width(area.width) == QuickViewLayout::Wide {
                 let desc_width = area.width.saturating_sub(meta_width_for(area.width)) as usize;
                 if col >= desc_width {
                     return None;
                 }
             }
-            let line = self.quick_view_scroll as usize + (y - area.y) as usize;
-            return self.active_links().iter().position(|t| {
-                t.pane == DetailPane::Main && t.line == line && col >= t.start && col < t.end
-            });
+            return self.link_at_pane(
+                x,
+                y,
+                DetailPane::Main,
+                area,
+                self.quick_view_scroll as usize,
+            );
         }
         None
+    }
+
+    /// Hit-tests one pane's recorded area: maps the click to a wrapped
+    /// row/column via `active_pane_lines(pane)`, then `render::line_col_at_row`
+    /// back to a logical line/column, then finds the matching `LinkTarget`
+    /// in `active_links()`. `scroll` is a row offset into the pane's own
+    /// wrapped content (0 for the non-scrolling rail panels).
+    fn link_at_pane(
+        &self,
+        x: u16,
+        y: u16,
+        pane: DetailPane,
+        area: ratatui::layout::Rect,
+        scroll: usize,
+    ) -> Option<usize> {
+        if !Self::point_in(area, x, y) {
+            return None;
+        }
+        let lines = self.active_pane_lines(pane)?;
+        let width = area.width as usize;
+        let row = scroll + (y - area.y) as usize;
+        let col = (x - area.x) as usize;
+        let (line, col) = crate::render::line_col_at_row(&lines, width, row, col)?;
+        self.active_links()
+            .iter()
+            .position(|t| t.pane == pane && t.line == line && col >= t.start && col < t.end)
     }
 
     pub fn mouse_down(&mut self, y: u16) {

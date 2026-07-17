@@ -10,6 +10,7 @@ use ratatui::Frame;
 
 use crate::app::{App, Screen};
 
+use super::home_columns::{home_layout_for_width, HomeLayout};
 use super::{accent, accent2, maple, muted};
 
 /// The footer column width `draw_footer` reserves for `draw_jax_mini`.
@@ -42,19 +43,32 @@ pub(crate) fn jax_mode(app: &App, width: u16) -> JaxMode {
     if app.jax_popped {
         return JaxMode::Full;
     }
-    if width < 90 {
+    // "Narrow" per SPEC.md §9 means "the floating box would overlap
+    // content" — every other screen's own narrow cutoff is 90 cols, but
+    // Home's own rail/list layout only goes narrow at
+    // `home_columns::WIDE_RAIL_MIN_TOTAL_WIDTH` (154), so using the flat 90
+    // here would leave Jax hidden well past the point where Home itself has
+    // already dropped to its narrow strip presentation.
+    let narrow = if app.screen == Screen::Home {
+        home_layout_for_width(width) == HomeLayout::Narrow
+    } else {
+        width < 90
+    };
+    if narrow {
         return JaxMode::Mini;
     }
     JaxMode::Hidden
 }
 
-/// Draws Jax bottom-aligned within `area`. Callers pass a bounding region that
-/// already excludes anything Jax must not cover (e.g. the quick-view panel),
-/// so this simply hugs the bottom-left corner of whatever it's given.
+/// Draws Jax bottom-aligned within `area`, matching the mockup's bottom-right
+/// placement (docs/archive/design/ui-refresh.html). Callers pass a bounding
+/// region that already excludes anything Jax must not cover (e.g. the
+/// quick-view panel), so this simply hugs the bottom-right corner of
+/// whatever it's given.
 pub(crate) fn draw_jax_companion(f: &mut Frame, app: &App, area: Rect) {
     let w = 30u16.min(area.width);
     let h = 8u16.min(area.height.saturating_sub(1));
-    let x = area.x + 2;
+    let x = area.x + area.width.saturating_sub(w + 2);
     let y = area.y + area.height.saturating_sub(h + 1);
     let rect = Rect::new(x, y, w, h);
     f.render_widget(Clear, rect);
@@ -273,9 +287,21 @@ mod tests {
 
     #[test]
     fn mini_only_when_narrow_and_not_popped() {
-        let app = app_at(Screen::Home, false);
+        // Non-Home screens use the flat 90-col cutoff shared with their own
+        // List/Detail/Board narrow breakpoints.
+        let app = app_at(Screen::List, false);
         assert_eq!(jax_mode(&app, 89), JaxMode::Mini);
         assert_eq!(jax_mode(&app, 90), JaxMode::Hidden);
+    }
+
+    #[test]
+    fn home_mini_threshold_matches_homes_own_wide_rail_threshold() {
+        // Home's rail/list layout only goes wide at 154 cols (see
+        // home_columns::WIDE_RAIL_MIN_TOTAL_WIDTH) — Jax should track that,
+        // not the flat 90-col cutoff every other screen uses.
+        let app = app_at(Screen::Home, false);
+        assert_eq!(jax_mode(&app, 153), JaxMode::Mini);
+        assert_eq!(jax_mode(&app, 154), JaxMode::Hidden);
     }
 
     #[test]
