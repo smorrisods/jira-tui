@@ -95,7 +95,7 @@ fn point_in_quick_view_respects_recorded_area_and_visibility() {
 }
 
 #[test]
-fn point_in_jax_mini_respects_show_jax_and_hidden_screens() {
+fn point_in_jax_mini_respects_jax_popped_and_hidden_screens() {
     let mut app = demo_app();
     app.screen = Screen::Home;
     app.jax_mini_area.set(Rect::new(60, 10, 14, 1));
@@ -106,9 +106,9 @@ fn point_in_jax_mini_respects_show_jax_and_hidden_screens() {
 
     // Popped out (full box showing instead): a stale mini area must not
     // still resolve.
-    app.show_jax = true;
+    app.jax_popped = true;
     assert!(!app.point_in_jax_mini(62, 10));
-    app.show_jax = false;
+    app.jax_popped = false;
 
     // A screen where Jax is hidden entirely: same stale-area guard.
     for screen in [Screen::Welcome, Screen::Edit, Screen::About] {
@@ -118,16 +118,16 @@ fn point_in_jax_mini_respects_show_jax_and_hidden_screens() {
 }
 
 #[test]
-fn clicking_the_jax_mini_dock_toggles_show_jax() {
+fn clicking_the_jax_mini_dock_toggles_jax_popped() {
     let mut app = demo_app();
     app.screen = Screen::Home;
     app.jax_mini_area.set(Rect::new(60, 10, 14, 1));
-    assert!(!app.show_jax);
+    assert!(!app.jax_popped);
 
     app.mouse_down(10);
     app.mouse_up(62, 10);
     assert!(
-        app.show_jax,
+        app.jax_popped,
         "clicking the mini dock should pop the full box out"
     );
 
@@ -138,7 +138,7 @@ fn clicking_the_jax_mini_dock_toggles_show_jax() {
     app.mouse_down(10);
     app.mouse_up(62, 10);
     assert!(
-        app.show_jax,
+        app.jax_popped,
         "a click at the mini dock's old coordinates must not affect the popped-out full box"
     );
 }

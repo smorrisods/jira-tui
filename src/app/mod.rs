@@ -149,7 +149,7 @@ pub struct App {
     /// user has explicitly popped the full floating box out" — not "Jax is
     /// enabled at all" — since the mini footer dock shows ambiently at
     /// narrow widths regardless of this flag (see `ui::jax_companion::jax_mode`).
-    pub show_jax: bool,
+    pub jax_popped: bool,
     /// Tick deadline for a reactive "party" moment (a successful
     /// transition-to-Done/edit/comment, `App::trigger_jax_party`) to force
     /// Jax's party scene regardless of the normal rotation. Same "forced
@@ -347,7 +347,7 @@ impl App {
             search: SearchState::default(),
             board_sel: BoardSelection::default(),
             board_scroll: 0,
-            show_jax: false,
+            jax_popped: false,
             jax_party_until: 0,
             jax_mini_area: Cell::new(Rect::default()),
             editor: EditorState::default(),

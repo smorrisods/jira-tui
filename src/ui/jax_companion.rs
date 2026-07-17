@@ -12,29 +12,34 @@ use crate::app::{App, Screen};
 
 use super::{accent, accent2, maple, muted};
 
+/// The footer column width `draw_footer` reserves for `draw_jax_mini`.
+pub(crate) const MINI_DOCK_WIDTH: u16 = 14;
+
 /// Which of Jax's three presentations should show right now.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum JaxMode {
     Hidden,
     /// Docked in the footer's right side — ambient, unconditional at narrow
-    /// widths regardless of `show_jax` (SPEC.md §9: "when the floating box
+    /// widths regardless of `jax_popped` (SPEC.md §9: "when the floating box
     /// would overlap content").
     Mini,
-    /// The floating box — always shown when `show_jax` is set (an explicit
-    /// pop-out that overrides the narrow-width overlap concern), or ambient
-    /// at wide widths... no: only when explicitly toggled on. See below.
+    /// The floating box — shown only when `jax_popped` is set (an explicit
+    /// pop-out), regardless of width. At wide widths with `jax_popped`
+    /// false, nothing shows at all (today's exact default behaviour,
+    /// unchanged by this phase); it's only at narrow widths that the
+    /// alternative to `Full` is the ambient `Mini` rather than `Hidden`.
     Full,
 }
 
-/// SPEC.md §9. `show_jax` means "the user has explicitly popped the full
+/// SPEC.md §9. `jax_popped` means "the user has explicitly popped the full
 /// box out" (an override), not "Jax is enabled at all" — so at narrow
-/// widths Jax still shows (as the mini dock) even when `show_jax` is
+/// widths Jax still shows (as the mini dock) even when `jax_popped` is
 /// false, and popping the full box out works regardless of width.
 pub(crate) fn jax_mode(app: &App, width: u16) -> JaxMode {
     if matches!(app.screen, Screen::Welcome | Screen::Edit | Screen::About) {
         return JaxMode::Hidden;
     }
-    if app.show_jax {
+    if app.jax_popped {
         return JaxMode::Full;
     }
     if width < 90 {
@@ -241,18 +246,18 @@ fn jax_scene(scene: u64, tick: u64) -> (&'static str, Vec<Line<'static>>) {
 mod tests {
     use super::*;
 
-    fn app_at(screen: Screen, show_jax: bool) -> App {
+    fn app_at(screen: Screen, jax_popped: bool) -> App {
         let mut app = App::new(true);
         app.screen = screen;
-        app.show_jax = show_jax;
+        app.jax_popped = jax_popped;
         app
     }
 
     #[test]
-    fn hidden_on_welcome_edit_about_regardless_of_show_jax_or_width() {
+    fn hidden_on_welcome_edit_about_regardless_of_jax_popped_or_width() {
         for screen in [Screen::Welcome, Screen::Edit, Screen::About] {
-            for show_jax in [false, true] {
-                let app = app_at(screen, show_jax);
+            for jax_popped in [false, true] {
+                let app = app_at(screen, jax_popped);
                 assert_eq!(jax_mode(&app, 40), JaxMode::Hidden);
                 assert_eq!(jax_mode(&app, 200), JaxMode::Hidden);
             }
@@ -260,7 +265,7 @@ mod tests {
     }
 
     #[test]
-    fn full_whenever_show_jax_is_set_regardless_of_width() {
+    fn full_whenever_jax_popped_is_set_regardless_of_width() {
         let app = app_at(Screen::Home, true);
         assert_eq!(jax_mode(&app, 40), JaxMode::Full);
         assert_eq!(jax_mode(&app, 200), JaxMode::Full);
