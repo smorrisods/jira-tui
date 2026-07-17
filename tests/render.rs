@@ -695,6 +695,18 @@ fn home_screen_narrow_shows_tiles_and_recent_strip() {
         text.contains("assigned"),
         "narrow home should show glance tile labels"
     );
+    assert!(
+        text.contains("context"),
+        "the narrow context strip should sit in its own titled panel"
+    );
+    // Regression test: the narrow context strip and each glance tile used to
+    // render as bare, borderless Paragraphs — the design mockup shows both
+    // as bordered cards, so this counts at least the context panel plus all
+    // 4 glance tiles (5) on top of whatever header/footer/list contribute.
+    assert!(
+        text.matches('╭').count() >= 5,
+        "the narrow context panel and every glance tile should have their own border"
+    );
 }
 
 #[test]
