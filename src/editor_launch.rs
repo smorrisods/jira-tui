@@ -90,11 +90,15 @@ pub(crate) fn edit_in_editor(terminal: &mut Term, app: &mut App) -> Result<()> {
         }
         EditTarget::Comment => (String::new(), "comment"),
     };
-    let key = app
-        .detail
-        .as_ref()
-        .map(|d| d.key.clone())
-        .unwrap_or_else(|| "issue".into());
+    // `edit_key` (not `app.detail`) is the actual source of truth for which
+    // issue this session targets — `apply_comment`/`apply_description_edit`
+    // both key off it, not `app.detail`. A quick-view-only external comment
+    // (`C` from Home/List without ever opening the issue in full Detail)
+    // leaves `app.detail` as `None`, which previously collapsed the temp
+    // filename to a generic "issue" tag for every such session — two
+    // concurrent jira-tui instances composing quick-view comments on
+    // different issues could then collide on the same temp path.
+    let key = app.edit_key.clone().unwrap_or_else(|| "issue".into());
     let path = std::env::temp_dir().join(format!("jira-tui-{key}-{file_tag}.md"));
     std::fs::write(&path, &markdown)?;
 
