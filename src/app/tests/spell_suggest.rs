@@ -90,6 +90,47 @@ fn spell_suggest_move_clamps_to_the_suggestion_list_bounds() {
 }
 
 #[test]
+fn open_spell_suggest_matches_at_the_words_exact_start_and_end_bytes() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.begin_tui_edit();
+    app.editor.lines = vec!["a mispeled word".into()];
+
+    // Cursor at the char index right at the word's first letter.
+    app.editor.cy = 0;
+    app.editor.cx = "a ".chars().count();
+    app.open_spell_suggest();
+    assert!(app.spell_suggest_open, "should match at the word's start");
+    app.close_spell_suggest();
+
+    // Cursor at the char index right after the word's last letter.
+    app.editor.cx = "a mispeled".chars().count();
+    app.open_spell_suggest();
+    assert!(app.spell_suggest_open, "should match at the word's end");
+}
+
+#[test]
+fn open_spell_suggest_on_the_second_of_two_adjacent_misspelled_words() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.begin_tui_edit();
+    app.editor.lines = vec!["wrold mispeled".into()];
+    app.editor.cy = 0;
+    app.editor.cx = "wrold mis".chars().count(); // inside the second word
+
+    app.open_spell_suggest();
+    assert!(app.spell_suggest_open);
+    let (start, end) = (app.spell_suggest.start, app.spell_suggest.end);
+    assert_eq!(
+        &app.editor.lines[0][start..end],
+        "mispeled",
+        "must match the word the cursor is actually in, not the earlier one"
+    );
+}
+
+#[test]
 fn close_spell_suggest_leaves_the_buffer_untouched() {
     let mut app = demo_app();
     app.selected = 0;
