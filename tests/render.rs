@@ -557,6 +557,32 @@ fn in_tui_editor_renders_buffer() {
 }
 
 #[test]
+fn spell_suggest_picker_lists_suggestions_for_the_flagged_word() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.begin_tui_edit();
+    app.editor.lines = vec!["a mispeled word".into()];
+    app.editor.cy = 0;
+    app.editor.cx = 2;
+    app.open_spell_suggest();
+    assert!(app.spell_suggest_open);
+
+    let text = render(&app);
+    assert!(
+        text.contains("mispeled"),
+        "the popup should name the word it's offering replacements for"
+    );
+    for suggestion in &app.spell_suggest.suggestions {
+        assert!(
+            text.contains(suggestion.as_str()),
+            "expected suggestion {suggestion:?} to be listed"
+        );
+    }
+    assert!(text.contains("replace"), "popup should hint at ⏎ replace");
+}
+
+#[test]
 fn in_tui_editor_underlines_misspelled_words_only() {
     let mut app = demo_app();
     app.selected = 0;

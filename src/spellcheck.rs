@@ -16,6 +16,16 @@ fn dictionary() -> &'static spellbook::Dictionary {
     })
 }
 
+/// Candidate replacements for `word`, best guess first — regardless of
+/// whether `word` itself is already correctly spelled (it doesn't call
+/// `check`/`misspelled_spans` itself), so callers should only surface this
+/// once they already know the word is misspelled.
+pub fn suggestions(word: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    dictionary().suggest(word, &mut out);
+    out
+}
+
 /// Whether `c` can appear inside a word — letters/digits, plus the interior
 /// punctuation contractions and hyphenated words use.
 fn is_word_char(c: char) -> bool {
@@ -243,6 +253,15 @@ mod tests {
         // nothing should be flagged — a bug here would either flag
         // "'hello'" (quotes included) as misspelled, or fail to trim at all.
         assert_eq!(misspelled_spans(line), Vec::new());
+    }
+
+    #[test]
+    fn suggests_replacements_for_a_misspelled_word() {
+        let s = suggestions("wrold");
+        assert!(
+            s.iter().any(|w| w == "world"),
+            "expected \"world\" among suggestions for \"wrold\", got {s:?}"
+        );
     }
 
     #[test]
