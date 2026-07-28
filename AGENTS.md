@@ -31,9 +31,9 @@ Guidelines for humans and AI agents working in `jira-tui`.
 
 ## Writing style (commits, PRs, issues, docs)
 
-- **Don't hard-wrap prose at a fixed column.** Write each paragraph, bullet, or list item as one continuous line — no manual line breaks in the middle of a sentence just to keep it under ~80 columns. This applies everywhere prose gets rendered somewhere that reflows it anyway: commit bodies, PR descriptions, GitHub issues, and Markdown docs (`README.md`, `AGENTS.md`, `docs/**`). Hard-wrapped source lines look fine in a terminal `cat`, but render as awkward, unnecessary line breaks in GitHub's PR/issue viewer, in Markdown previews, and in most editors with soft-wrap enabled.
+- **Don't hard-wrap prose at a fixed column** in anything that gets rendered somewhere that reflows it: PR descriptions, GitHub issues, and Markdown docs (`README.md`, `AGENTS.md`, `docs/**`). Write each paragraph, bullet, or list item as one continuous line — no manual line breaks in the middle of a sentence just to keep it under ~80 columns. Hard-wrapped source lines look fine in a terminal `cat`, but render as awkward, unnecessary line breaks in GitHub's PR/issue viewer, in Markdown previews, and in most editors with soft-wrap enabled.
+- **Commit bodies are the exception.** They're read in `git log`/`git show` — a terminal context, not a reflowed one — so line length there is a readability choice, not a rendering bug; wrap or don't. What actually matters in a commit body is correct Markdown mechanics: backticks around identifiers/code, matched formatting, no mangled quoting. Use `git commit -F <message-file>` (see Commits below) so backticks and any embedded punctuation survive verbatim rather than getting mangled by shell quoting or an editor's auto-wrap.
 - This doesn't apply to fixed-width content where line length is part of the format itself — e.g. the ASCII wireframes in `docs/archive/WIREFRAMES.md`, code blocks, or tables.
-- Commit bodies specifically: use `git commit -F <message-file>` (see Commits below) so long unwrapped lines and backticks survive verbatim rather than getting mangled by shell quoting or an editor's auto-wrap.
 
 ## Commits
 
