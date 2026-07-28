@@ -89,6 +89,10 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
         desc: "edit description (in-TUI / $EDITOR)",
     },
     KeyHint {
+        key: "home / end",
+        desc: "jump to start/end of the current line (in the in-TUI editor)",
+    },
+    KeyHint {
         key: "F2",
         desc: "spelling suggestions for the word under the cursor (in the in-TUI editor)",
     },

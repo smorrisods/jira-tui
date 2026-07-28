@@ -115,6 +115,16 @@ impl EditorState {
         }
     }
 
+    /// Move the cursor to the start of the current (logical) line.
+    pub fn line_start(&mut self) {
+        self.cx = 0;
+    }
+
+    /// Move the cursor to the end of the current (logical) line.
+    pub fn line_end(&mut self) {
+        self.cx = self.line_len(self.cy);
+    }
+
     /// The byte offset of the cursor's `cx` (a char index) within its
     /// current line — the same lookup `insert_char`/`newline` do inline,
     /// exposed for callers (spell-suggest) that need to compare `cx`
