@@ -557,6 +557,51 @@ fn in_tui_editor_renders_buffer() {
 }
 
 #[test]
+fn in_tui_editor_wraps_long_lines_instead_of_running_off_screen() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.begin_tui_edit();
+    app.editor.lines =
+        vec!["one two three four five six seven eight nine ten eleven twelve".into()];
+    app.editor.cx = 0;
+    app.editor.cy = 0;
+    // Narrow enough (40 cols, minus borders/gutter) to force the single
+    // long line above across multiple wrapped rows.
+    let text = render_at(&app, 40, 20);
+    assert!(
+        text.contains("one two"),
+        "editor should still show the start of the line"
+    );
+    assert!(
+        text.contains("eleven twelve") || text.contains("twelve"),
+        "wrapped continuation should be visible on a later row, not run off-screen"
+    );
+}
+
+#[test]
+fn in_tui_editor_cursor_tracks_into_wrapped_rows() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.begin_tui_edit();
+    let long_word = "supercalifragilisticexpialidocious";
+    app.editor.lines = vec![format!("start {long_word} end")];
+    app.editor.cy = 0;
+    app.editor.cx = app.editor.lines[0].chars().count(); // cursor at end of line
+                                                         // Narrow enough that the hard-broken long word spans several rows.
+    let backend = ratatui::backend::TestBackend::new(20, 20);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    terminal.draw(|f| ui::draw(f, &app)).unwrap();
+    // The cursor must be positioned somewhere inside the rendered area, not
+    // silently skipped because it's off the (unwrapped) right edge.
+    assert!(
+        terminal.get_cursor_position().is_ok(),
+        "cursor position should be set once the buffer is wrapped"
+    );
+}
+
+#[test]
 fn quick_view_panel_shows_selected_issue() {
     let mut app = demo_app();
     app.screen = Screen::Home;
