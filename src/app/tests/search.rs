@@ -183,8 +183,111 @@ fn an_empty_live_search_result_says_so_instead_of_looking_like_nothing_happened(
 }
 
 #[test]
-fn live_search_results_are_deduped_against_matches_already_shown_locally() {
+fn a_late_result_does_not_stomp_the_status_of_a_screen_the_user_has_since_left() {
     let mut app = demo_app();
+    app.open_search();
+    app.search.query = "widget".into();
+    app.search_generation = 1;
+    app.status = "Loaded DS-123".into();
+
+    // The user left Search (e.g. opened an issue) before this still-current
+    // (matching generation) result landed.
+    app.screen = Screen::Detail;
+    app.apply_text_searched(1, "widget".into(), Vec::new(), Some("boom".into()));
+    assert_eq!(
+        app.status, "Loaded DS-123",
+        "a search result for a screen the user has already left must not overwrite status"
+    );
+}
+
+#[test]
+fn a_late_result_does_not_stomp_the_status_once_the_query_has_moved_on() {
+    let mut app = demo_app();
+    app.open_search();
+    app.search.query = "widgets".into(); // user kept typing past "widget"
+    app.search_generation = 1;
+    app.status = "some other status".into();
+
+    app.apply_text_searched(1, "widget".into(), Vec::new(), Some("boom".into()));
+    assert_eq!(
+        app.status, "some other status",
+        "a result for text the user has since typed past must not overwrite status"
+    );
+}
+
+#[test]
+fn a_successful_search_clears_a_stale_no_matches_status_from_an_earlier_query() {
+    let mut app = demo_app();
+    app.open_search();
+    app.search.query = "widget".into();
+    app.search_generation = 1;
+    app.status = "live search: no matches for \"widg\" beyond your current view".into();
+
+    app.apply_text_searched(1, "widget".into(), vec![app.all_issues[0].clone()], None);
+    assert!(
+        !app.status.contains("no matches"),
+        "a later successful search must not leave an earlier query's \"no matches\" status behind: {}",
+        app.status
+    );
+}
+
+#[tokio::test]
+async fn duplicate_keys_within_a_single_live_result_batch_are_not_shown_twice() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.open_search();
+    let mut issue = app.all_issues[0].clone();
+    issue.key = "DS-9999".into();
+    app.search.query = issue.summary.clone();
+    app.search_generation = 1;
+
+    // Two entries for the same key within one live-search response — Jira's
+    // own paging shouldn't repeat a key, but nothing guarantees it.
+    let query = app.search.query.trim().to_lowercase();
+    app.apply_text_searched(1, query, vec![issue.clone(), issue.clone()], None);
+
+    let live_rows = app
+        .search
+        .rows
+        .iter()
+        .filter(|r| matches!(r, SearchRow::Live(_)))
+        .count();
+    assert_eq!(
+        live_rows, 1,
+        "a duplicate key within one live-search batch must only render once"
+    );
+}
+
+#[test]
+fn live_rows_do_not_render_if_the_session_is_no_longer_live_when_a_result_lands() {
+    let mut app = demo_app();
+    app.open_search();
+    let issue = app.all_issues[0].clone();
+    app.search.query = "widget".into();
+    app.search_generation = 1;
+
+    // The session stopped being genuinely live (e.g. a background refresh's
+    // live fetch just failed and fell back to cache) before this
+    // still-current (matching generation) result landed — no intervening
+    // keystroke, so `schedule_live_search`'s own not-live clearing never
+    // runs; this exercises `rebuild_search_rows`'s own guard instead.
+    app.source = crate::domain::Source::Cache { user: "me".into() };
+    app.apply_text_searched(1, "widget".into(), vec![issue], None);
+
+    assert!(
+        !app.search
+            .rows
+            .iter()
+            .any(|r| matches!(r, SearchRow::Live(_))),
+        "live rows must not render once the session is no longer genuinely live, \
+         even for a result that's still otherwise current"
+    );
+}
+
+#[tokio::test]
+async fn live_search_results_are_deduped_against_matches_already_shown_locally() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
     app.open_search();
     let local = app.all_issues[0].clone();
     app.search.query = local.summary.clone();

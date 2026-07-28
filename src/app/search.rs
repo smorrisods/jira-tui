@@ -8,10 +8,12 @@ use crate::domain::{IssueSummary, Source};
 
 use super::{async_ops, App, Screen};
 
-/// How many idle ticks (see `main::TICK`, 90ms each) the query must sit
-/// unchanged before a live search fires — restarted on every keystroke, so
-/// this is really "fire this long after the user stops typing," not a fixed
-/// interval. 4 ticks is ~360ms.
+/// How many run-loop iterations the query must sit unchanged before a live
+/// search fires — restarted on every keystroke, so this is really "fire
+/// this long after the user stops typing," not a fixed interval. `app.tick`
+/// advances roughly every `main::TICK` (90ms), but also on any other event
+/// (mouse motion, an unrelated fetch completing) — so this is an
+/// approximate ~360ms debounce, not a precise one.
 const SEARCH_DEBOUNCE_TICKS: u64 = 4;
 
 /// Shortest query a live search fires for — long enough to keep an
@@ -72,24 +74,16 @@ impl App {
     /// marker. A no-op almost every tick — only fires once the query's sat
     /// unchanged for `SEARCH_DEBOUNCE_TICKS`.
     pub fn ensure_search_dispatched(&mut self) {
-        if self.screen != Screen::Search {
+        if self.screen != Screen::Search || self.search.pending_query.is_none() {
             return;
         }
-        let Some(query) = self.search.pending_query.clone() else {
-            return;
-        };
         if self.tick < self.search.dispatch_at_tick {
             return;
         }
-        self.search.pending_query = None;
+        let query = self.search.pending_query.take().unwrap();
         self.search.live_loading = true;
-        let generation = self.bump_search_generation();
-        async_ops::dispatch_text_search(self.events_tx.clone(), generation, query);
-    }
-
-    pub(crate) fn bump_search_generation(&mut self) -> u64 {
         self.search_generation += 1;
-        self.search_generation
+        async_ops::dispatch_text_search(self.events_tx.clone(), self.search_generation, query);
     }
 
     /// Applies `AppEvent::TextSearched` — see `dispatch_text_search`.
@@ -99,9 +93,16 @@ impl App {
     /// `rebuild_search_rows`, which itself only shows `live_results` when
     /// `live_query` still matches what's on screen (see
     /// `SearchState::live_query`), so results for text the user has since
-    /// typed past never flash into view. A failed or empty search is
-    /// surfaced via `status` — there's nothing else on screen that would
-    /// otherwise tell the user the live fallback ran at all.
+    /// typed past never flash into view.
+    ///
+    /// `status` is a different story: it's shared with every other screen,
+    /// so writing to it is only appropriate while this result is still what
+    /// the user is looking at — otherwise a search dispatched right before
+    /// the user left Search (Esc, or confirming a match) would land later
+    /// and stomp whatever status the screen they're on *now* is showing.
+    /// Written on every still-relevant outcome, success included, so an
+    /// earlier "no matches"/error message doesn't linger once a later
+    /// query actually finds something.
     pub(crate) fn apply_text_searched(
         &mut self,
         generation: u64,
@@ -113,11 +114,19 @@ impl App {
             return;
         }
         self.search.live_loading = false;
-        if let Some(err) = error {
-            self.status = format!("⚠ {err}");
-        } else if issues.is_empty() {
-            self.status =
-                format!("live search: no matches for \"{query}\" beyond your current view");
+        let still_relevant =
+            self.screen == Screen::Search && self.search.query.trim().to_lowercase() == query;
+        if still_relevant {
+            self.status = match &error {
+                Some(err) => format!("⚠ {err}"),
+                None if issues.is_empty() => {
+                    format!("live search: no matches for \"{query}\" beyond your current view")
+                }
+                None => format!(
+                    "live search: {} more match(es) for \"{query}\"",
+                    issues.len()
+                ),
+            };
         }
         self.search.live_results = issues;
         self.search.live_query = Some(query);
@@ -184,8 +193,11 @@ impl App {
 
     /// Rebuilds `search.rows` from the current query against both the
     /// locally loaded `all_issues` and (if still fresh — see
-    /// `SearchState::live_query`) the live search fallback's results,
-    /// skipping any live match whose key is already shown locally.
+    /// `SearchState::live_query` — and the session is still genuinely live)
+    /// the live search fallback's results, skipping any live match whose
+    /// key is already shown locally or has already been added from
+    /// `live_results` itself (a defensive dedup — Jira's paged results
+    /// shouldn't repeat a key, but nothing guarantees it).
     fn rebuild_search_rows(&mut self) {
         let mut rows = Vec::new();
         if let Some(key) = self.search_key_candidate() {
@@ -202,9 +214,10 @@ impl App {
                 seen.insert(issue.key.to_lowercase());
             }
         }
-        if self.search.live_query.as_deref() == Some(q.as_str()) {
+        let live_available = matches!(self.source, Source::Live { .. });
+        if live_available && self.search.live_query.as_deref() == Some(q.as_str()) {
             for (idx, issue) in self.search.live_results.iter().enumerate() {
-                if !seen.contains(&issue.key.to_lowercase()) {
+                if seen.insert(issue.key.to_lowercase()) {
                     rows.push(SearchRow::Live(idx));
                 }
             }

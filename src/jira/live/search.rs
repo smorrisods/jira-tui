@@ -35,7 +35,9 @@ pub fn jql_for(view: &crate::domain::ViewKind, project: &str) -> String {
 /// Backslashes are escaped *before* quotes — JQL strings use `\` as their
 /// escape character, so a value ending in `\` would otherwise absorb the
 /// closing quote as an escaped character instead of terminating the string.
-fn escape_jql_string(s: &str) -> String {
+/// `pub(super)` so `detail.rs`'s `children_of` (a `parent = "<key>"` JQL
+/// search) can share it instead of carrying its own copy.
+pub(super) fn escape_jql_string(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 

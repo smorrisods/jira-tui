@@ -150,9 +150,9 @@ fn parse_subtasks(arr: &[Value]) -> Vec<ChildIssue> {
 /// the Epic's own response, so this issues a `parent = <key>` JQL search
 /// through the same machinery as the other views.
 fn children_of(cfg: &Config, key: &str) -> anyhow::Result<Vec<ChildIssue>> {
-    // Same escaping as `jql_for`'s Teammate arm — issue keys shouldn't
-    // contain quotes, but a JQL string literal is still a string literal.
-    let escaped = key.replace('\\', "\\\\").replace('"', "\\\"");
+    // Issue keys shouldn't contain quotes, but a JQL string literal is
+    // still a string literal.
+    let escaped = super::search::escape_jql_string(key);
     let jql = format!("parent = \"{escaped}\" ORDER BY key ASC");
     Ok(search_issues(cfg, &jql)?
         .into_iter()
