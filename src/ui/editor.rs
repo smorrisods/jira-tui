@@ -36,15 +36,26 @@ pub(crate) fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
         0
     };
 
-    let misspellings = spellcheck::misspelled_spans_in_buffer(&ed.lines);
+    // Only the visible window is checked against the dictionary on every
+    // frame — the fence state carried in from off-screen lines is a cheap
+    // marker-count prescan, no dictionary lookups (see
+    // `spellcheck::misspelled_spans_in_range`).
+    let misspellings = spellcheck::misspelled_spans_in_range(&ed.lines, scroll, height);
     let gutter_w = 4u16;
     let mut lines: Vec<Line> = Vec::new();
-    for (i, line) in ed.lines.iter().enumerate().skip(scroll).take(height) {
+    for ((i, line), spans_for_line) in ed
+        .lines
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(height)
+        .zip(misspellings.iter())
+    {
         let mut spans = vec![Span::styled(
             format!("{:>3} ", i + 1),
             Style::default().fg(muted()),
         )];
-        spans.extend(spans_with_misspellings(line, &misspellings[i]));
+        spans.extend(spans_with_misspellings(line, spans_for_line));
         lines.push(Line::from(spans));
     }
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
@@ -62,6 +73,14 @@ pub(crate) fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
 /// with an underline so they stand out without changing the surrounding
 /// text's own colour.
 fn spans_with_misspellings<'a>(line: &'a str, misspelled: &[(usize, usize)]) -> Vec<Span<'a>> {
+    debug_assert!(
+        misspelled.windows(2).all(|w| w[0].1 <= w[1].0),
+        "misspelled spans must be sorted and non-overlapping: {misspelled:?}"
+    );
+    debug_assert!(
+        misspelled.last().is_none_or(|&(_, end)| end <= line.len()),
+        "a misspelled span must not run past the end of its line"
+    );
     let mut spans = Vec::new();
     let mut pos = 0usize;
     for &(start, end) in misspelled {

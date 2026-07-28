@@ -77,36 +77,91 @@ pub fn misspelled_spans(line: &str) -> Vec<(usize, usize)> {
         .collect()
 }
 
-/// Byte ranges covered by inline code spans (backtick-delimited) in `line`,
-/// including the backticks themselves. An unterminated trailing backtick is
-/// treated as running to the end of the line, matching how it renders.
+/// Byte ranges covered by inline code spans in `line`, including their
+/// backtick delimiters. Follows Markdown's actual code-span rule: a run of
+/// N backticks opens a span, closed only by the next run of exactly N
+/// backticks (so `` `` `` a run of 2 skips right over a lone backtick
+/// inside it, rather than closing early) — not just "next backtick closes
+/// it", which would wrongly split a `` ``escaped ` backtick`` `` span in
+/// two. An unterminated opening run is treated as running to the end of
+/// the line, matching how it renders.
 fn inline_code_ranges(line: &str) -> Vec<(usize, usize)> {
+    let chars: Vec<(usize, char)> = line.char_indices().collect();
     let mut ranges = Vec::new();
-    let mut open: Option<usize> = None;
-    for (i, c) in line.char_indices() {
-        if c != '`' {
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i].1 != '`' {
+            i += 1;
             continue;
         }
-        match open.take() {
-            Some(start) => ranges.push((start, i + 1)),
-            None => open = Some(i),
+        let open_start = chars[i].0;
+        let open_len = backtick_run_len(&chars, i);
+        let mut j = i + open_len;
+        let close = loop {
+            if j >= chars.len() {
+                break None;
+            }
+            if chars[j].1 != '`' {
+                j += 1;
+                continue;
+            }
+            let run_len = backtick_run_len(&chars, j);
+            if run_len == open_len {
+                break Some(j + run_len);
+            }
+            j += run_len;
+        };
+        match close {
+            Some(end_idx) => {
+                let end_byte = chars.get(end_idx).map_or(line.len(), |(b, _)| *b);
+                ranges.push((open_start, end_byte));
+                i = end_idx;
+            }
+            None => {
+                ranges.push((open_start, line.len()));
+                break;
+            }
         }
-    }
-    if let Some(start) = open {
-        ranges.push((start, line.len()));
     }
     ranges
 }
 
-/// Misspelled-word byte ranges for every line in a buffer, additionally
-/// skipping any line inside a fenced code block (a line whose trimmed start
-/// is ` ``` `) entirely.
+/// The length of the run of consecutive backticks starting at `chars[i]`
+/// (which must itself be a backtick).
+fn backtick_run_len(chars: &[(usize, char)], i: usize) -> usize {
+    chars[i..].iter().take_while(|(_, c)| *c == '`').count()
+}
+
+/// Misspelled-word byte ranges for every line in a buffer, skipping any
+/// line inside a fenced code block (a line whose trimmed start is ` ``` `)
+/// entirely.
 pub fn misspelled_spans_in_buffer(lines: &[String]) -> Vec<Vec<(usize, usize)>> {
-    let mut in_fence = false;
+    misspelled_spans_in_range(lines, 0, lines.len())
+}
+
+/// Like `misspelled_spans_in_buffer`, but only checks `lines[start..start +
+/// count]` against the dictionary — the fence state is still derived from
+/// the whole buffer up to `start` first (a cheap fence-marker count, no
+/// dictionary lookups), so a fence that began off-screen is still respected
+/// once it scrolls into view. Lets the editor's renderer avoid re-checking
+/// every off-screen line against the dictionary on every frame.
+pub fn misspelled_spans_in_range(
+    lines: &[String],
+    start: usize,
+    count: usize,
+) -> Vec<Vec<(usize, usize)>> {
+    let mut in_fence = lines[..start.min(lines.len())]
+        .iter()
+        .filter(|l| is_fence_marker(l))
+        .count()
+        % 2
+        == 1;
     lines
         .iter()
+        .skip(start)
+        .take(count)
         .map(|line| {
-            if line.trim_start().starts_with("```") {
+            if is_fence_marker(line) {
                 in_fence = !in_fence;
                 return Vec::new();
             }
@@ -116,6 +171,10 @@ pub fn misspelled_spans_in_buffer(lines: &[String]) -> Vec<Vec<(usize, usize)>> 
             misspelled_spans(line)
         })
         .collect()
+}
+
+fn is_fence_marker(line: &str) -> bool {
+    line.trim_start().starts_with("```")
 }
 
 #[cfg(test)]
@@ -203,5 +262,36 @@ mod tests {
             s.iter().any(|w| w == "world"),
             "expected \"world\" among suggestions for \"wrold\", got {s:?}"
         );
+    }
+
+    #[test]
+    fn double_backtick_code_spans_are_skipped_even_with_a_lone_backtick_inside() {
+        // A `` ``two-backtick`` `` span is how Markdown escapes a literal
+        // backtick inside code — it must close on the next *matching*
+        // 2-backtick run, not on the first single backtick it meets.
+        let line = "before ``mispeled`` after, and `` a ` backtick `` too";
+        assert_eq!(
+            misspelled_spans(line),
+            Vec::new(),
+            "both double-backtick spans should be fully skipped"
+        );
+    }
+
+    #[test]
+    fn misspelled_spans_in_range_respects_a_fence_that_started_before_the_window() {
+        let lines: Vec<String> = vec![
+            "```".into(),
+            "let mispeled = 1;".into(),
+            "still code, sentnce typo".into(),
+            "```".into(),
+            "prose after the fence: sentnce".into(),
+        ];
+        // Window starts mid-fence (line 2) — must still know it's in a
+        // fence without re-scanning line 0's dictionary lookups.
+        let spans = misspelled_spans_in_range(&lines, 2, 3);
+        assert_eq!(spans.len(), 3);
+        assert!(spans[0].is_empty(), "still inside the fence");
+        assert!(spans[1].is_empty(), "the closing fence marker is skipped");
+        assert_eq!(spans[2].len(), 1, "prose after the fence is checked");
     }
 }
