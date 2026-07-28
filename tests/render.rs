@@ -557,6 +557,27 @@ fn in_tui_editor_renders_buffer() {
 }
 
 #[test]
+fn preview_screen_wording_matches_the_edit_target() {
+    // Regression test: the preview's explanatory line used to hard-code
+    // "edited description" even when previewing a comment.
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+
+    app.begin_comment();
+    for c in "Looks good.".chars() {
+        app.editor.insert_char(c);
+    }
+    app.commit_tui_edit();
+    assert_eq!(app.screen, Screen::Preview);
+    let text = render(&app);
+    assert!(
+        text.contains("your comment will look"),
+        "previewing a comment should say so, not \"edited description\""
+    );
+}
+
+#[test]
 fn quick_view_panel_shows_selected_issue() {
     let mut app = demo_app();
     app.screen = Screen::Home;

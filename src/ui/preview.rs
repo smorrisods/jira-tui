@@ -8,7 +8,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::adf;
-use crate::app::App;
+use crate::app::{App, EditTarget};
 
 use super::{divider, muted, ok, warn};
 
@@ -25,9 +25,13 @@ pub(crate) fn draw_preview(f: &mut Frame, app: &App, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
+    let subject = match app.edit_target {
+        EditTarget::Description => "edited description",
+        EditTarget::Comment => "comment",
+    };
     let mut lines: Vec<Line> = vec![
         Line::from(Span::styled(
-            "This is how your edited description will look in Jira (rendered from ADF).",
+            format!("This is how your {subject} will look in Jira (rendered from ADF)."),
             Style::default().fg(muted()),
         )),
         Line::from(Span::styled(
