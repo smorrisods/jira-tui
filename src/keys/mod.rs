@@ -168,10 +168,12 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
     if app.screen == Screen::Edit {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
-            // A non-empty buffer needs confirmation before Esc throws it
-            // away (see the `confirm_discard` modal above); an empty one
-            // (nothing typed yet) has nothing to lose.
-            KeyCode::Esc if app.editor_has_content() => app.confirm_discard = true,
+            // A buffer that's actually changed since this session started
+            // needs confirmation before Esc throws it away (see the
+            // `confirm_discard` modal above); an unchanged one — including
+            // a freshly opened description edit, which is non-empty by
+            // definition — has nothing new to lose.
+            KeyCode::Esc if app.editor.is_dirty() => app.confirm_discard = true,
             KeyCode::Esc => app.cancel_edit(),
             KeyCode::Char('s') if ctrl => app.commit_tui_edit(),
             KeyCode::Enter => app.editor.newline(),
@@ -901,5 +903,54 @@ mod tests {
             "an empty buffer has nothing to lose, so no prompt is needed"
         );
         assert_eq!(app.screen, Screen::Detail);
+    }
+
+    /// Regression test: a freshly opened description edit is preloaded with
+    /// the existing description, so it's non-empty from the very first
+    /// frame — Esc there with no changes made must cancel outright, not
+    /// raise the discard-confirm prompt (which would previously fire for
+    /// the single most common edit entry point: open, look, back out).
+    #[test]
+    fn escaping_a_freshly_opened_unmodified_description_edit_cancels_without_a_prompt() {
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        app.begin_tui_edit();
+        assert_eq!(app.screen, Screen::Edit);
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
+        assert!(
+            !app.confirm_discard,
+            "an unmodified description edit has nothing new to lose"
+        );
+        assert_eq!(app.screen, Screen::Detail);
+    }
+
+    #[test]
+    fn mouse_input_is_swallowed_while_confirm_discard_is_open() {
+        use crossterm::event::{MouseEvent, MouseEventKind};
+
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        app.begin_comment();
+        app.editor.insert_char('!');
+        handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
+        assert!(app.confirm_discard);
+
+        handle_mouse(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                column: 0,
+                row: 0,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
+        assert!(
+            app.confirm_discard,
+            "a stray click must not silently dismiss the discard prompt"
+        );
+        assert_eq!(app.screen, Screen::Edit);
     }
 }

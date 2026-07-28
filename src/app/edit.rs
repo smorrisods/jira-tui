@@ -25,6 +25,13 @@ pub struct EditorState {
     pub cx: usize,
     pub cy: usize,
     pub scroll: u16,
+    /// The text this session was seeded with (`from_text`'s `text`
+    /// argument) — `is_dirty` compares the current buffer against this to
+    /// tell "nothing's actually been typed/changed yet" from "the buffer
+    /// happens to be non-empty" (a freshly opened description edit is
+    /// non-empty by definition, since it's preloaded with the existing
+    /// description).
+    seed: String,
 }
 
 impl EditorState {
@@ -38,11 +45,31 @@ impl EditorState {
             cx: 0,
             cy: 0,
             scroll: 0,
+            seed: text.to_string(),
         }
+    }
+
+    /// Like `from_text`, but the buffer starts out already `is_dirty()` —
+    /// for loading content that already represents real, unsaved work
+    /// (`App::back_out_of_preview`'s reload) rather than a pristine
+    /// starting point. `text` must be non-empty, or `is_dirty()` won't
+    /// actually come out `true`.
+    pub fn from_text_dirty(text: &str) -> Self {
+        let mut state = Self::from_text(text);
+        state.seed.clear();
+        state
     }
 
     pub fn to_text(&self) -> String {
         self.lines.join("\n")
+    }
+
+    /// Whether the buffer has changed since this session was seeded —
+    /// what "is there an edit worth protecting from an accidental discard"
+    /// actually means, as opposed to merely "is the buffer non-empty" (see
+    /// the `seed` field doc).
+    pub fn is_dirty(&self) -> bool {
+        self.to_text() != self.seed
     }
 
     fn line_len(&self, y: usize) -> usize {
@@ -246,15 +273,13 @@ impl App {
             self.cancel_edit();
             return;
         }
-        self.editor = EditorState::from_text(&markdown);
+        // `crate::adf::to_markdown` always appends a trailing `\n` if the
+        // compiled Markdown doesn't already end with one, which
+        // `EditorState::from_text`'s `split('\n')` would otherwise turn
+        // into a phantom empty last line the user never typed.
+        self.editor = EditorState::from_text_dirty(markdown.trim_end_matches('\n'));
         self.pending_edit = None;
         self.screen = Screen::Edit;
-    }
-
-    /// Whether the in-TUI editor buffer has anything worth protecting from
-    /// an accidental discard.
-    pub fn editor_has_content(&self) -> bool {
-        self.editor.lines.iter().any(|l| !l.trim().is_empty())
     }
 
     /// Clear the edit-target state at the end of a compose session (apply or
