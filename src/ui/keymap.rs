@@ -97,8 +97,8 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
         desc: "spelling suggestions for the word under the cursor (in the in-TUI editor)",
     },
     KeyHint {
-        key: "c",
-        desc: "add a comment (in an issue or quick view)",
+        key: "c / C",
+        desc: "add a comment (in-TUI / $EDITOR) (in an issue or quick view)",
     },
     KeyHint {
         key: "] / [",

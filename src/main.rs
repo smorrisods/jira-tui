@@ -140,7 +140,7 @@ async fn run(terminal: &mut Term, app: &mut App) -> Result<()> {
             app.flash(format!("✓ copied {n} line(s)"));
         }
 
-        // Launch $EDITOR for a round-trip description edit.
+        // Launch $EDITOR for a round-trip description or comment edit.
         if app.request_edit {
             app.request_edit = false;
             if let Err(e) = editor_launch::edit_in_editor(terminal, app) {

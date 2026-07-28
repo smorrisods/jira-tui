@@ -81,6 +81,33 @@ fn editor_newline_and_backspace_merge_lines() {
 }
 
 #[test]
+fn begin_external_comment_primes_the_target_without_opening_the_tui_editor() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    let key = app.detail.as_ref().unwrap().key.clone();
+
+    let started = app.begin_external_comment();
+    assert!(started);
+    assert_eq!(app.edit_target, EditTarget::Comment);
+    assert_eq!(app.edit_key, Some(key));
+    assert_eq!(app.edit_return_screen, Screen::Detail);
+    // Unlike `begin_comment`, this doesn't open the in-TUI editor screen —
+    // the external `$EDITOR` round-trip owns the actual composing.
+    assert_eq!(app.screen, Screen::Detail);
+}
+
+#[test]
+fn begin_external_comment_refuses_without_a_selected_issue() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.quick_view = false;
+    let started = app.begin_external_comment();
+    assert!(!started);
+    assert_eq!(app.status, "no issue selected");
+}
+
+#[test]
 fn editor_home_end_jump_to_line_start_and_end() {
     let mut ed = EditorState::from_text("hello\nworld");
     ed.cy = 0;
