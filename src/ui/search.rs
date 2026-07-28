@@ -47,13 +47,21 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
         input_inner,
     );
 
-    // Results.
+    // Results. Once a live search has completed at least once, keep its
+    // outcome visible in the title (not just a transient status message) —
+    // "0 found" for a genuinely empty result reads very differently from a
+    // live search that never got dispatched at all.
     let results_title = if app.search.live_loading {
-        "  results — searching Jira…  "
+        "  results — searching Jira…  ".to_string()
+    } else if let Some(live_q) = &app.search.live_query {
+        format!(
+            "  results — live search for \"{live_q}\": {} found  ",
+            app.search.live_results.len()
+        )
     } else {
-        "  results  "
+        "  results  ".to_string()
     };
-    let results_block = card(results_title, accent2());
+    let results_block = card(&results_title, accent2());
     let inner = results_block.inner(rows[1]);
     f.render_widget(results_block, rows[1]);
 
