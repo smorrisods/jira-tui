@@ -163,6 +163,8 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             KeyCode::Right => app.editor.right(),
             KeyCode::Up => app.editor.up(),
             KeyCode::Down => app.editor.down(),
+            KeyCode::Home => app.editor.line_start(),
+            KeyCode::End => app.editor.line_end(),
             KeyCode::Tab => {
                 app.editor.insert_char(' ');
                 app.editor.insert_char(' ');
@@ -788,6 +790,27 @@ mod tests {
         assert!(
             !app.facts_folded,
             "'x' is scoped to Detail, not Home/List/Board"
+        );
+    }
+
+    #[test]
+    fn home_and_end_jump_within_the_current_line_in_the_editor() {
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        app.begin_tui_edit();
+        assert_eq!(app.screen, Screen::Edit);
+
+        app.editor.cy = 0;
+        app.editor.cx = 3;
+        handle_key(&mut app, KeyEvent::from(KeyCode::Home));
+        assert_eq!(app.editor.cx, 0, "Home should jump to the line's start");
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::End));
+        assert_eq!(
+            app.editor.cx,
+            app.editor.lines[0].chars().count(),
+            "End should jump to the line's end"
         );
     }
 }

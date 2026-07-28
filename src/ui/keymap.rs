@@ -89,6 +89,10 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
         desc: "edit description (in-TUI / $EDITOR)",
     },
     KeyHint {
+        key: "home / end",
+        desc: "jump to start/end of the current line (in the in-TUI editor)",
+    },
+    KeyHint {
         key: "c",
         desc: "add a comment (in an issue or quick view)",
     },

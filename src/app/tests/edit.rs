@@ -80,6 +80,36 @@ fn editor_newline_and_backspace_merge_lines() {
     assert_eq!((ed.cy, ed.cx), (0, 1));
 }
 
+#[test]
+fn editor_home_end_jump_to_line_start_and_end() {
+    let mut ed = EditorState::from_text("hello\nworld");
+    ed.cy = 0;
+    ed.cx = 3;
+    ed.line_start();
+    assert_eq!((ed.cy, ed.cx), (0, 0));
+    ed.line_end();
+    assert_eq!((ed.cy, ed.cx), (0, 5));
+
+    // End on an already-at-end cursor, and Home on an already-at-start
+    // cursor, are no-ops rather than moving to an adjacent line.
+    ed.line_end();
+    assert_eq!((ed.cy, ed.cx), (0, 5));
+    ed.line_start();
+    ed.line_start();
+    assert_eq!((ed.cy, ed.cx), (0, 0));
+}
+
+#[test]
+fn editor_home_end_operate_on_the_current_line_only() {
+    let mut ed = EditorState::from_text("ab\nlonger line");
+    ed.cy = 1;
+    ed.cx = 3;
+    ed.line_end();
+    assert_eq!((ed.cy, ed.cx), (1, "longer line".chars().count()));
+    ed.line_start();
+    assert_eq!((ed.cy, ed.cx), (1, 0));
+}
+
 #[tokio::test]
 async fn apply_description_edit_against_a_live_source_dispatches_and_applies_on_completion() {
     let _guard = crate::test_support::lock_env_async().await;

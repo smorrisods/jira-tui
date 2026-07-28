@@ -123,6 +123,16 @@ impl EditorState {
             self.cx = self.cx.min(self.line_len(self.cy));
         }
     }
+
+    /// Move the cursor to the start of the current (logical) line.
+    pub fn line_start(&mut self) {
+        self.cx = 0;
+    }
+
+    /// Move the cursor to the end of the current (logical) line.
+    pub fn line_end(&mut self) {
+        self.cx = self.line_len(self.cy);
+    }
 }
 
 impl App {
