@@ -227,6 +227,11 @@ pub struct App {
     /// the full detail screen, List/Home when composing a comment from
     /// quick-view.
     pub edit_return_screen: Screen,
+    /// Modal: `Screen::Edit`'s Esc asks for confirmation before discarding a
+    /// non-empty buffer, rather than dropping it immediately. Swallows the
+    /// next keypress — `y`/`Y` confirms the discard, anything else dismisses
+    /// the prompt and resumes editing.
+    pub confirm_discard: bool,
 
     /// The screen `a` was pressed from, so backing out of About (see #38)
     /// restores it instead of always landing on Home.
@@ -390,6 +395,7 @@ impl App {
             edit_target: EditTarget::default(),
             edit_key: None,
             edit_return_screen: Screen::Detail,
+            confirm_discard: false,
             about_return_screen: Screen::Home,
             field_mapping: FieldMappingState::default(),
             current_view: ViewKind::default(),

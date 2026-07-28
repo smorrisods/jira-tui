@@ -192,10 +192,14 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
             };
             single(vec![
                 hint("y/⏎", apply),
-                hint("esc/←", "cancel"),
+                hint("esc/←", "back to editor"),
                 hint("↑/↓", "scroll"),
             ])
         }
+        Screen::Edit if app.confirm_discard => single(vec![
+            hint("y", "discard this edit"),
+            hint("any other key", "keep editing"),
+        ]),
         Screen::Edit => {
             let compose = match app.edit_target {
                 EditTarget::Description => "to edit",

@@ -225,6 +225,38 @@ impl App {
         self.screen = return_screen;
     }
 
+    /// Back out of the preview screen — used by every "back/cancel" key on
+    /// `Screen::Preview` (Esc/q/h/Left/Backspace). If there's content worth
+    /// keeping, restore it into the in-TUI editor and return to
+    /// `Screen::Edit` for further changes instead of discarding it; only a
+    /// genuinely empty edit (nothing typed, or everything deleted) falls
+    /// through to a full `cancel_edit`. `pending_edit` holds the latest
+    /// compiled content regardless of whether this session started in the
+    /// in-TUI editor or the external `$EDITOR` round-trip, so this works
+    /// the same way for both — the external round-trip's own temp file is
+    /// already gone by the time `Screen::Preview` is showing, but its
+    /// content lives on here.
+    pub fn back_out_of_preview(&mut self) {
+        let markdown = self
+            .pending_edit
+            .as_ref()
+            .map(crate::adf::to_markdown)
+            .unwrap_or_default();
+        if markdown.trim().is_empty() {
+            self.cancel_edit();
+            return;
+        }
+        self.editor = EditorState::from_text(&markdown);
+        self.pending_edit = None;
+        self.screen = Screen::Edit;
+    }
+
+    /// Whether the in-TUI editor buffer has anything worth protecting from
+    /// an accidental discard.
+    pub fn editor_has_content(&self) -> bool {
+        self.editor.lines.iter().any(|l| !l.trim().is_empty())
+    }
+
     /// Clear the edit-target state at the end of a compose session (apply or
     /// cancel) so it can never leak into an unrelated later edit — most
     /// importantly the external `$EDITOR` round-trip, which doesn't call

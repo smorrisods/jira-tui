@@ -50,6 +50,61 @@ fn cancel_edit_discards_pending() {
 }
 
 #[test]
+fn back_out_of_preview_restores_the_buffer_instead_of_discarding_it() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.begin_tui_edit();
+    for c in "Not done yet.".chars() {
+        app.editor.insert_char(c);
+    }
+    app.commit_tui_edit();
+    assert_eq!(app.screen, Screen::Preview);
+
+    app.back_out_of_preview();
+    assert_eq!(
+        app.screen,
+        Screen::Edit,
+        "backing out of a non-empty preview should return to the editor, not discard it"
+    );
+    assert!(app.pending_edit.is_none());
+    assert!(
+        app.editor.to_text().contains("Not done yet."),
+        "the typed content must survive the round trip back into the editor"
+    );
+}
+
+#[test]
+fn back_out_of_preview_with_no_content_falls_back_to_a_full_cancel() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.begin_comment();
+    // Never typed anything — commit an empty comment buffer.
+    app.commit_tui_edit();
+    assert_eq!(app.screen, Screen::Preview);
+
+    app.back_out_of_preview();
+    assert_eq!(
+        app.screen,
+        Screen::Detail,
+        "an empty edit has nothing to preserve, so backing out should fully cancel"
+    );
+    assert!(app.pending_edit.is_none());
+}
+
+#[test]
+fn editor_has_content_reflects_whether_anything_was_typed() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.begin_comment();
+    assert!(!app.editor_has_content());
+    app.editor.insert_char('!');
+    assert!(app.editor_has_content());
+}
+
+#[test]
 fn in_tui_editor_edits_then_commits_to_preview() {
     let mut app = demo_app();
     app.selected = 0;

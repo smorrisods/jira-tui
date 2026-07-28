@@ -47,6 +47,17 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Modal: confirm discarding a non-empty in-TUI editor buffer (raised by
+    // `Screen::Edit`'s Esc). `y`/`Y` confirms; anything else dismisses the
+    // prompt and resumes editing.
+    if app.confirm_discard {
+        app.confirm_discard = false;
+        if matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y')) {
+            app.cancel_edit();
+        }
+        return;
+    }
+
     // Onboarding has its own key map (including a text-entry form).
     if app.screen == Screen::Welcome {
         welcome::handle_welcome_key(app, key);
@@ -133,7 +144,9 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // The edit preview is a confirm screen.
+    // The edit preview is a confirm screen. Backing out doesn't discard —
+    // it returns to the in-TUI editor with the content restored (see
+    // `back_out_of_preview`), unless there's genuinely nothing to keep.
     if app.screen == Screen::Preview {
         match key.code {
             KeyCode::Char('y') | KeyCode::Enter => app.apply_edit(),
@@ -141,7 +154,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             | KeyCode::Char('q')
             | KeyCode::Char('h')
             | KeyCode::Left
-            | KeyCode::Backspace => app.cancel_edit(),
+            | KeyCode::Backspace => app.back_out_of_preview(),
             KeyCode::Up | KeyCode::Char('k') => nav(app, -1),
             KeyCode::Down | KeyCode::Char('j') => nav(app, 1),
             KeyCode::PageUp => nav(app, -8),
@@ -155,6 +168,10 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
     if app.screen == Screen::Edit {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
+            // A non-empty buffer needs confirmation before Esc throws it
+            // away (see the `confirm_discard` modal above); an empty one
+            // (nothing typed yet) has nothing to lose.
+            KeyCode::Esc if app.editor_has_content() => app.confirm_discard = true,
             KeyCode::Esc => app.cancel_edit(),
             KeyCode::Char('s') if ctrl => app.commit_tui_edit(),
             KeyCode::Enter => app.editor.newline(),
@@ -789,5 +806,100 @@ mod tests {
             !app.facts_folded,
             "'x' is scoped to Detail, not Home/List/Board"
         );
+    }
+
+    #[test]
+    fn escaping_a_non_empty_preview_returns_to_the_editor_with_content_intact() {
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        app.begin_tui_edit();
+        for c in "Still working on this.".chars() {
+            app.editor.insert_char(c);
+        }
+        app.commit_tui_edit();
+        assert_eq!(app.screen, Screen::Preview);
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
+        assert_eq!(
+            app.screen,
+            Screen::Edit,
+            "Esc on a non-empty preview should go back to editing, not discard it"
+        );
+        assert!(app.editor.to_text().contains("Still working on this."));
+    }
+
+    #[test]
+    fn escaping_an_empty_preview_cancels_outright() {
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        app.begin_comment();
+        app.commit_tui_edit();
+        assert_eq!(app.screen, Screen::Preview);
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
+        assert_eq!(
+            app.screen,
+            Screen::Detail,
+            "nothing to keep, so just cancel"
+        );
+    }
+
+    #[test]
+    fn escaping_a_non_empty_editor_asks_for_confirmation_before_discarding() {
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        app.begin_comment();
+        app.editor.insert_char('!');
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
+        assert!(
+            app.confirm_discard,
+            "Esc on a non-empty buffer should raise the discard-confirm prompt"
+        );
+        assert_eq!(
+            app.screen,
+            Screen::Edit,
+            "the prompt doesn't leave the editor by itself"
+        );
+
+        // Any key other than y/Y dismisses the prompt and keeps editing.
+        handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
+        assert!(!app.confirm_discard);
+        assert_eq!(app.screen, Screen::Edit);
+        assert_eq!(app.editor.to_text(), "!");
+    }
+
+    #[test]
+    fn confirming_discard_with_y_actually_discards() {
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        app.begin_comment();
+        app.editor.insert_char('!');
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
+        assert!(app.confirm_discard);
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('y')));
+        assert!(!app.confirm_discard);
+        assert_eq!(app.screen, Screen::Detail);
+    }
+
+    #[test]
+    fn escaping_an_empty_editor_cancels_without_a_prompt() {
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        app.begin_comment();
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
+        assert!(
+            !app.confirm_discard,
+            "an empty buffer has nothing to lose, so no prompt is needed"
+        );
+        assert_eq!(app.screen, Screen::Detail);
     }
 }

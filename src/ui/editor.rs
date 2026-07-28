@@ -8,21 +8,37 @@ use ratatui::Frame;
 
 use crate::app::App;
 
-use super::{muted, warn};
+use super::{danger, muted, warn};
 
 pub(crate) fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
     let key = app.detail.as_ref().map(|d| d.key.as_str()).unwrap_or("");
+    let border_colour = if app.confirm_discard {
+        danger()
+    } else {
+        warn()
+    };
+    let bottom_hint = if app.confirm_discard {
+        "  discard this edit? y = discard, any other key = keep editing  "
+    } else {
+        "  ^S preview · esc cancel  "
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Double)
-        .border_style(Style::default().fg(warn()))
+        .border_style(Style::default().fg(border_colour))
         .title(Span::styled(
             format!("  editing {key} · Markdown  "),
-            Style::default().fg(warn()).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(border_colour)
+                .add_modifier(Modifier::BOLD),
         ))
         .title_bottom(Span::styled(
-            "  ^S preview · esc cancel  ",
-            Style::default().fg(muted()),
+            bottom_hint,
+            Style::default().fg(if app.confirm_discard {
+                danger()
+            } else {
+                muted()
+            }),
         ));
     let inner = block.inner(area);
     f.render_widget(block, area);
