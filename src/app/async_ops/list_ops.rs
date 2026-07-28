@@ -147,6 +147,41 @@ fn fetch_detail_blocking(key: &str) -> (IssueDetail, Option<String>) {
     (crate::domain::demo_detail(key), None)
 }
 
+/// Spawn the Search screen's live text-search fallback off the render
+/// thread, sending the result back as `AppEvent::TextSearched`. Only
+/// dispatched for a genuine live session, once the query's been idle long
+/// enough — see `App::schedule_live_search`/`App::ensure_search_dispatched`.
+pub(crate) fn dispatch_text_search(tx: UnboundedSender<AppEvent>, generation: u64, query: String) {
+    tokio::spawn(async move {
+        let query_for_result = query.clone();
+        let issues = tokio::task::spawn_blocking(move || text_search_blocking(&query))
+            .await
+            .unwrap_or_default();
+        let _ = tx.send(AppEvent::TextSearched {
+            generation,
+            query: query_for_result,
+            issues,
+        });
+    });
+}
+
+/// Mirrors `assignable_users_blocking`'s "load config, call the live client,
+/// give back nothing on any failure" shape — a failed/offline text search
+/// just means no live results merge in, not a crash or a status message
+/// (the local match list on screen is unaffected either way).
+#[allow(unused_variables)]
+fn text_search_blocking(query: &str) -> Vec<IssueSummary> {
+    #[cfg(feature = "live")]
+    {
+        if let Some(cfg) = crate::jira::Config::load() {
+            if let Ok(issues) = crate::jira::search_by_text(&cfg, query) {
+                return issues;
+            }
+        }
+    }
+    Vec::new()
+}
+
 impl App {
     /// Applies `AppEvent::Refreshed` — see `dispatch_refresh` above.
     pub(super) fn apply_refreshed(

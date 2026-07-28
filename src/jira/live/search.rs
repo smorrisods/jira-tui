@@ -25,14 +25,33 @@ pub fn jql_for(view: &crate::domain::ViewKind, project: &str) -> String {
         ViewKind::MyWork => MY_WORK_JQL.to_string(),
         ViewKind::AllProject => format!("project = \"{project}\" ORDER BY updated DESC"),
         ViewKind::Teammate(name) => {
-            // Escape backslashes *before* quotes — a JQL string literal
-            // uses `\` as its escape character, so a name ending in `\`
-            // would otherwise absorb the closing quote as an escaped
-            // character instead of terminating the string.
-            let escaped = name.replace('\\', "\\\\").replace('"', "\\\"");
+            let escaped = escape_jql_string(name);
             format!("assignee = \"{escaped}\" AND statusCategory != Done ORDER BY updated DESC")
         }
     }
+}
+
+/// Escape a string for embedding in a double-quoted JQL string literal.
+/// Backslashes are escaped *before* quotes — JQL strings use `\` as their
+/// escape character, so a value ending in `\` would otherwise absorb the
+/// closing quote as an escaped character instead of terminating the string.
+fn escape_jql_string(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Build the JQL behind the Search screen's live text fallback: a free-text
+/// match (summary/description/comments, via Jira's `text ~` operator) scoped
+/// to the configured project, used once a query is long enough and no
+/// longer changing — see `App::schedule_live_search`. A trailing `*`
+/// broadens the match to word-prefixes so a partial word still hits, mirroring
+/// how Jira's own search box behaves.
+pub fn search_by_text(cfg: &Config, text: &str) -> Result<Vec<IssueSummary>> {
+    let escaped_project = escape_jql_string(&cfg.project);
+    let escaped_text = escape_jql_string(text);
+    let jql = format!(
+        "project = \"{escaped_project}\" AND text ~ \"{escaped_text}*\" ORDER BY updated DESC"
+    );
+    search_issues(cfg, &jql)
 }
 
 /// Run an arbitrary JQL query and return matching issue summaries, paging
@@ -148,6 +167,53 @@ mod tests {
             jql,
             "assignee = \"Back\\\\slash \\\"Quote\\\"\" AND statusCategory != Done ORDER BY updated DESC"
         );
+    }
+
+    #[test]
+    fn search_by_text_builds_the_expected_jql() {
+        let mut server = mockito::Server::new();
+        let cfg = Config {
+            base_url: server.url(),
+            ..test_config(String::new())
+        };
+        let expected_jql = "project = \"PROJ\" AND text ~ \"dark mode*\" ORDER BY updated DESC";
+        let expected_path = format!(
+            "/rest/api/3/search/jql?jql={}&maxResults=50&fields=summary,status,issuetype,priority,assignee,updated,issuelinks,parent",
+            url_encode(expected_jql)
+        );
+        let mock = server
+            .mock("GET", expected_path.as_str())
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"issues": []}"#)
+            .create();
+
+        search_by_text(&cfg, "dark mode").unwrap();
+        mock.assert();
+    }
+
+    #[test]
+    fn search_by_text_escapes_quotes_and_backslashes_in_the_query() {
+        let mut server = mockito::Server::new();
+        let cfg = Config {
+            base_url: server.url(),
+            ..test_config(String::new())
+        };
+        let expected_jql =
+            "project = \"PROJ\" AND text ~ \"Back\\\\slash \\\"Quote\\\"*\" ORDER BY updated DESC";
+        let expected_path = format!(
+            "/rest/api/3/search/jql?jql={}&maxResults=50&fields=summary,status,issuetype,priority,assignee,updated,issuelinks,parent",
+            url_encode(expected_jql)
+        );
+        let mock = server
+            .mock("GET", expected_path.as_str())
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"issues": []}"#)
+            .create();
+
+        search_by_text(&cfg, "Back\\slash \"Quote\"").unwrap();
+        mock.assert();
     }
 
     #[test]

@@ -35,14 +35,24 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
     );
 
     // Results.
-    let results_block = card("  results  ", accent2());
+    let results_title = if app.search.live_loading {
+        "  results — searching Jira…  "
+    } else {
+        "  results  "
+    };
+    let results_block = card(results_title, accent2());
     let inner = results_block.inner(rows[1]);
     f.render_widget(results_block, rows[1]);
 
     if app.search.rows.is_empty() {
+        let hint = if app.search.live_loading {
+            "Searching Jira for matching issues…"
+        } else {
+            "No matches. Type an issue key like DS-123 to jump to it directly."
+        };
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                "No matches. Type an issue key like DS-123 to jump to it directly.",
+                hint,
                 Style::default().fg(muted()).add_modifier(Modifier::ITALIC),
             ))),
             inner,
@@ -91,6 +101,18 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
             SearchRow::Match(idx) => {
                 if let Some(issue) = app.all_issues.get(*idx) {
                     lines.extend(issue_row(issue, selected, &guide, &columns));
+                }
+            }
+            SearchRow::Live(idx) => {
+                if let Some(issue) = app.search.live_results.get(*idx) {
+                    lines.extend(issue_row(issue, selected, &guide, &columns));
+                    lines.push(Line::from(Span::styled(
+                        "    ↳ found via live search (outside your current view)",
+                        selected_style(
+                            Style::default().fg(muted()).add_modifier(Modifier::ITALIC),
+                            selected,
+                        ),
+                    )));
                 }
             }
         }
