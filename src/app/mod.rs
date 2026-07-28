@@ -329,6 +329,12 @@ pub struct App {
     /// Enter press) while one is already resolving.
     pub(crate) onboarding_pending: bool,
     pub(crate) onboarding_generation: u64,
+    /// Bumped on every dispatched live text search (the Search screen's
+    /// beyond-the-loaded-view fallback — see `App::schedule_live_search`).
+    /// Its own counter, separate from `generation` above: an unrelated
+    /// refresh/switch_view must not invalidate an in-flight search, and vice
+    /// versa.
+    pub(crate) search_generation: u64,
 }
 
 impl App {
@@ -432,6 +438,7 @@ impl App {
             field_mapping_generation: 0,
             onboarding_pending: false,
             onboarding_generation: 0,
+            search_generation: 0,
         };
         app.recompute_view();
 

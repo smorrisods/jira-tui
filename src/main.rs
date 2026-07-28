@@ -160,6 +160,9 @@ async fn run(terminal: &mut Term, app: &mut App) -> Result<()> {
         // Populate the quick-view panel lazily (cheap no-op once cached).
         app.ensure_quick_view_loaded();
 
+        // Fire the Search screen's debounced live text search, if one's due.
+        app.ensure_search_dispatched();
+
         app.tick = app.tick.wrapping_add(1);
 
         if app.should_quit {

@@ -27,5 +27,7 @@ pub use mutations::{
     apply_transition, assign_issue, assignable_users, create_issue, fetch_transitions,
     update_description, update_summary,
 };
-pub use search::{fetch_my_work, jql_for, search_issues, MY_WORK_JQL, SEARCH_RESULTS_CAP};
+pub use search::{
+    fetch_my_work, jql_for, search_by_text, search_issues, MY_WORK_JQL, SEARCH_RESULTS_CAP,
+};
 pub use support::whoami;

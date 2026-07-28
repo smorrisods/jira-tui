@@ -73,3 +73,277 @@ fn close_search_returns_to_prior_screen() {
     app.close_search();
     assert_eq!(app.screen, Screen::List);
 }
+
+#[test]
+fn demo_sessions_never_schedule_a_live_search() {
+    let mut app = demo_app();
+    app.open_search();
+    for c in "widget".chars() {
+        app.search_input_char(c);
+    }
+    assert!(!app.search.live_loading);
+    // Advancing the clock alone must not turn on a live search for a demo
+    // session — `ensure_search_dispatched` would panic if it tried to
+    // `tokio::spawn` outside a runtime, so this also guards that a plain
+    // (non-`#[tokio::test]`) test stays safe to call it from.
+    app.tick += 100;
+    app.ensure_search_dispatched();
+    assert!(!app.search.live_loading);
+}
+
+#[tokio::test]
+async fn a_query_under_the_minimum_length_does_not_schedule_a_live_search() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.open_search();
+    app.search_input_char('a');
+    app.tick += 100;
+    app.ensure_search_dispatched();
+    assert!(
+        !app.search.live_loading,
+        "a single-character query is too short to fire a live search"
+    );
+}
+
+#[tokio::test]
+async fn a_live_search_dispatches_after_its_debounce_window_and_merges_on_completion() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.open_search();
+    for c in "widget".chars() {
+        app.search_input_char(c);
+    }
+    // Not due yet — still within the debounce window.
+    app.ensure_search_dispatched();
+    assert!(
+        !app.search.live_loading,
+        "a live search must not fire before its debounce window elapses"
+    );
+
+    app.tick += 100;
+    app.ensure_search_dispatched();
+    assert!(
+        app.search.live_loading,
+        "the debounce window has elapsed, so the live search should now be in flight"
+    );
+
+    let event = next_event(&mut app).await;
+    app.apply_event(event);
+    assert!(!app.search.live_loading);
+    assert_eq!(app.search.live_query.as_deref(), Some("widget"));
+}
+
+#[test]
+fn stale_live_search_results_are_dropped_without_disturbing_a_newer_in_flight_search() {
+    let mut app = demo_app();
+    app.open_search();
+    app.search.query = "widget".into();
+    app.search_generation = 2;
+    app.search.live_loading = true;
+
+    // A result tagged with an older generation than the one currently
+    // dispatched must be ignored — and must not clear `live_loading`, since
+    // the newer (generation 2) search is presumably still in flight.
+    app.apply_text_searched(1, "widget".into(), vec![app.all_issues[0].clone()], None);
+    assert!(app.search.live_query.is_none());
+    assert!(
+        app.search.live_loading,
+        "a stale result must not clear the loading flag for a still in-flight search"
+    );
+}
+
+#[test]
+fn a_failed_live_search_surfaces_the_error_instead_of_silently_doing_nothing() {
+    let mut app = demo_app();
+    app.open_search();
+    app.search.query = "dropdown".into();
+    app.search_generation = 1;
+
+    app.apply_text_searched(1, "dropdown".into(), Vec::new(), Some("boom".into()));
+    assert!(
+        app.status.contains("boom"),
+        "a failed live search must show up in the status line: {}",
+        app.status
+    );
+}
+
+#[test]
+fn an_empty_live_search_result_says_so_instead_of_looking_like_nothing_happened() {
+    let mut app = demo_app();
+    app.open_search();
+    app.search.query = "dropdown".into();
+    app.search_generation = 1;
+
+    app.apply_text_searched(1, "dropdown".into(), Vec::new(), None);
+    assert!(
+        app.status.contains("dropdown"),
+        "a genuinely empty live search result should say so, not look like it did nothing: {}",
+        app.status
+    );
+}
+
+#[test]
+fn a_late_result_does_not_stomp_the_status_of_a_screen_the_user_has_since_left() {
+    let mut app = demo_app();
+    app.open_search();
+    app.search.query = "widget".into();
+    app.search_generation = 1;
+    app.status = "Loaded DS-123".into();
+
+    // The user left Search (e.g. opened an issue) before this still-current
+    // (matching generation) result landed.
+    app.screen = Screen::Detail;
+    app.apply_text_searched(1, "widget".into(), Vec::new(), Some("boom".into()));
+    assert_eq!(
+        app.status, "Loaded DS-123",
+        "a search result for a screen the user has already left must not overwrite status"
+    );
+}
+
+#[test]
+fn a_late_result_does_not_stomp_the_status_once_the_query_has_moved_on() {
+    let mut app = demo_app();
+    app.open_search();
+    app.search.query = "widgets".into(); // user kept typing past "widget"
+    app.search_generation = 1;
+    app.status = "some other status".into();
+
+    app.apply_text_searched(1, "widget".into(), Vec::new(), Some("boom".into()));
+    assert_eq!(
+        app.status, "some other status",
+        "a result for text the user has since typed past must not overwrite status"
+    );
+}
+
+#[test]
+fn a_successful_search_clears_a_stale_no_matches_status_from_an_earlier_query() {
+    let mut app = demo_app();
+    app.open_search();
+    app.search.query = "widget".into();
+    app.search_generation = 1;
+    app.status = "live search: no matches for \"widg\" beyond your current view".into();
+
+    app.apply_text_searched(1, "widget".into(), vec![app.all_issues[0].clone()], None);
+    assert!(
+        !app.status.contains("no matches"),
+        "a later successful search must not leave an earlier query's \"no matches\" status behind: {}",
+        app.status
+    );
+}
+
+#[tokio::test]
+async fn duplicate_keys_within_a_single_live_result_batch_are_not_shown_twice() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.open_search();
+    let mut issue = app.all_issues[0].clone();
+    issue.key = "DS-9999".into();
+    app.search.query = issue.summary.clone();
+    app.search_generation = 1;
+
+    // Two entries for the same key within one live-search response — Jira's
+    // own paging shouldn't repeat a key, but nothing guarantees it.
+    let query = app.search.query.trim().to_lowercase();
+    app.apply_text_searched(1, query, vec![issue.clone(), issue.clone()], None);
+
+    let live_rows = app
+        .search
+        .rows
+        .iter()
+        .filter(|r| matches!(r, SearchRow::Live(_)))
+        .count();
+    assert_eq!(
+        live_rows, 1,
+        "a duplicate key within one live-search batch must only render once"
+    );
+}
+
+#[test]
+fn live_rows_do_not_render_if_the_session_is_no_longer_live_when_a_result_lands() {
+    let mut app = demo_app();
+    app.open_search();
+    let issue = app.all_issues[0].clone();
+    app.search.query = "widget".into();
+    app.search_generation = 1;
+
+    // The session stopped being genuinely live (e.g. a background refresh's
+    // live fetch just failed and fell back to cache) before this
+    // still-current (matching generation) result landed — no intervening
+    // keystroke, so `schedule_live_search`'s own not-live clearing never
+    // runs; this exercises `rebuild_search_rows`'s own guard instead.
+    app.source = crate::domain::Source::Cache { user: "me".into() };
+    app.apply_text_searched(1, "widget".into(), vec![issue], None);
+
+    assert!(
+        !app.search
+            .rows
+            .iter()
+            .any(|r| matches!(r, SearchRow::Live(_))),
+        "live rows must not render once the session is no longer genuinely live, \
+         even for a result that's still otherwise current"
+    );
+}
+
+#[tokio::test]
+async fn live_search_results_are_deduped_against_matches_already_shown_locally() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.open_search();
+    let local = app.all_issues[0].clone();
+    app.search.query = local.summary.clone();
+    app.search_generation = 1;
+
+    // The live fallback re-found the same issue plus one genuinely new one.
+    let mut new_issue = local.clone();
+    new_issue.key = "DS-9999".into();
+    let issues = vec![local.clone(), new_issue.clone()];
+    let query = app.search.query.trim().to_lowercase();
+    app.apply_text_searched(1, query, issues, None);
+
+    let live_keys: Vec<&str> = app
+        .search
+        .rows
+        .iter()
+        .filter_map(|r| match r {
+            SearchRow::Live(idx) => Some(app.search.live_results[*idx].key.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        live_keys,
+        vec!["DS-9999"],
+        "a live result already shown as a local Match must not also appear as a Live row"
+    );
+}
+
+#[tokio::test]
+async fn live_results_are_hidden_once_the_query_has_moved_on() {
+    let _guard = crate::test_support::lock_env_async().await;
+    // A genuine `Source::Live` session, so the follow-up keystroke below
+    // schedules another live search instead of clearing `live_results`
+    // outright (see `App::schedule_live_search`) — the point of this test
+    // is the `live_query` mismatch check in `rebuild_search_rows`, not the
+    // demo/cache short-circuit.
+    let mut app = live_app();
+    app.open_search();
+    let issue = app.all_issues[0].clone();
+    app.search.query = "widget".into();
+    app.search_generation = 1;
+    app.apply_text_searched(1, "widget".into(), vec![issue], None);
+    assert!(app
+        .search
+        .rows
+        .iter()
+        .any(|r| matches!(r, SearchRow::Live(_))));
+
+    // The user kept typing past what those results answer for — they must
+    // no longer show, even though `live_results` itself hasn't changed yet.
+    app.search_input_char('!');
+    assert!(
+        !app.search
+            .rows
+            .iter()
+            .any(|r| matches!(r, SearchRow::Live(_))),
+        "stale live results must disappear once the query no longer matches live_query"
+    );
+}

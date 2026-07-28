@@ -31,7 +31,7 @@
 
 ## Writing style
 
-- Don't hard-wrap prose at a fixed column in commits, PRs, issues, or Markdown docs — write each paragraph/bullet as one line and let it run long. See `AGENTS.md`'s "Writing style" section for the full rationale and exceptions (fixed-width content like ASCII wireframes).
+- Don't hard-wrap prose at a fixed column in PRs, issues, or Markdown docs — write each paragraph/bullet as one line and let it run long. Commit bodies are the exception (read in a terminal, not reflowed — wrap or don't); what matters there is correct Markdown mechanics (backticks, formatting), not line length. See `AGENTS.md`'s "Writing style" section for the full rationale and exceptions (fixed-width content like ASCII wireframes).
 
 ## Commits
 

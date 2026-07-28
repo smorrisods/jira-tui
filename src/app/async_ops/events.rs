@@ -108,6 +108,23 @@ pub enum AppEvent {
         display_name: Option<String>,
         error: Option<String>,
     },
+    /// The Search screen's live text-search fallback resolved — see
+    /// `App::schedule_live_search`/`dispatch_text_search`. Carries its own
+    /// `generation` (`App::search_generation`, distinct from the main list's
+    /// `generation`) so an unrelated refresh/switch_view can't invalidate an
+    /// in-flight search and vice versa. `query` is the exact text this
+    /// batch of `issues` answers, so a result that lands after the user has
+    /// kept typing can be told apart from one that still matches what's on
+    /// screen — see `App::rebuild_search_rows`.
+    TextSearched {
+        generation: u64,
+        query: String,
+        issues: Vec<IssueSummary>,
+        /// Set on a failed/skipped search (no credentials, network error, a
+        /// JQL the server rejected) — surfaced via `App::status` since
+        /// there's no fallback data to quietly show in its place.
+        error: Option<String>,
+    },
 }
 
 impl App {
@@ -183,6 +200,12 @@ impl App {
                 display_name,
                 error,
             } => self.apply_assignee_applied(generation, key, display_name, error),
+            AppEvent::TextSearched {
+                generation,
+                query,
+                issues,
+                error,
+            } => self.apply_text_searched(generation, query, issues, error),
         }
     }
 }

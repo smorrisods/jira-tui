@@ -1188,6 +1188,21 @@ fn search_screen_empty_query_shows_hint_or_full_list() {
 }
 
 #[test]
+fn search_screen_flags_when_live_text_search_is_unavailable() {
+    // A demo session is never `Source::Live`, so the live text-search
+    // fallback (see `App::schedule_live_search`) can never fire for it —
+    // this must be visible on screen, not a silent no-op that looks
+    // indistinguishable from a broken feature.
+    let mut app = demo_app();
+    app.open_search();
+    let text = render(&app);
+    assert!(
+        text.contains("not a live session") || text.contains("live text search"),
+        "search should flag that its live fallback is unavailable in this session"
+    );
+}
+
+#[test]
 fn board_screen_shows_columns_and_lanes() {
     let mut app = demo_app();
     app.open_board();
