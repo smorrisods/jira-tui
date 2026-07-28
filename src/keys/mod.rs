@@ -97,6 +97,19 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Modal: the spelling-suggestion picker (`F2`, opened from `Screen::Edit`
+    // only — see the `KeyCode::F(2)` arm in that screen's own block below).
+    if app.spell_suggest_open {
+        match key.code {
+            KeyCode::Esc => app.close_spell_suggest(),
+            KeyCode::Enter => app.confirm_spell_suggest(),
+            KeyCode::Up | KeyCode::Char('k') => app.spell_suggest_move(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.spell_suggest_move(1),
+            _ => {}
+        }
+        return;
+    }
+
     // Modal: the command palette (SPEC.md §8). Type-to-filter like the
     // assignee picker above.
     if app.palette_open {
@@ -165,6 +178,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             KeyCode::Down => app.editor.down(),
             KeyCode::Home => app.editor.line_start(),
             KeyCode::End => app.editor.line_end(),
+            KeyCode::F(2) => app.open_spell_suggest(),
             KeyCode::Tab => {
                 app.editor.insert_char(' ');
                 app.editor.insert_char(' ');
@@ -812,5 +826,53 @@ mod tests {
             app.editor.lines[0].chars().count(),
             "End should jump to the line's end"
         );
+    }
+
+    #[test]
+    fn f2_opens_the_spell_suggest_picker_and_swallows_input_while_open() {
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        app.begin_tui_edit();
+        app.editor.lines = vec!["a mispeled word".into()];
+        app.editor.cy = 0;
+        app.editor.cx = 2;
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::F(2)));
+        assert!(app.spell_suggest_open);
+        let before = app.spell_suggest.selected;
+
+        // While the picker is open, typing must not fall through to the
+        // editor buffer underneath it.
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('z')));
+        assert_eq!(app.editor.lines[0], "a mispeled word");
+        assert_eq!(app.spell_suggest.selected, before);
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Down));
+        assert!(app.spell_suggest.selected >= before);
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Enter));
+        assert!(!app.spell_suggest_open);
+        assert!(!app.editor.lines[0].contains("mispeled"));
+    }
+
+    #[test]
+    fn esc_closes_the_spell_suggest_picker_without_changing_the_buffer() {
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        app.begin_tui_edit();
+        app.editor.lines = vec!["a mispeled word".into()];
+        app.editor.cy = 0;
+        app.editor.cx = 2;
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::F(2)));
+        assert!(app.spell_suggest_open);
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
+        assert!(!app.spell_suggest_open);
+        assert_eq!(app.editor.lines[0], "a mispeled word");
+        // Esc should close the picker, not also cancel the whole edit.
+        assert_eq!(app.screen, Screen::Edit);
     }
 }

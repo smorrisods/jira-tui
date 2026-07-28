@@ -110,6 +110,39 @@ fn editor_home_end_operate_on_the_current_line_only() {
     assert_eq!((ed.cy, ed.cx), (1, 0));
 }
 
+#[test]
+fn editor_cursor_byte_index_accounts_for_multibyte_chars() {
+    let mut ed = EditorState::from_text("héllo world");
+    // "é" is 2 bytes in UTF-8, so cx=3 (h,é,l) is byte index 4, not 3.
+    ed.cx = 3;
+    assert_eq!(ed.cursor_byte_index(), 4);
+}
+
+#[test]
+fn editor_replace_range_swaps_text_and_repositions_the_cursor() {
+    let mut ed = EditorState::from_text("This is a mispeled word.");
+    let start = ed.lines[0].find("mispeled").unwrap();
+    let end = start + "mispeled".len();
+    ed.replace_range(0, start, end, "misspelled");
+    assert_eq!(ed.lines[0], "This is a misspelled word.");
+    assert_eq!(ed.cy, 0);
+    assert_eq!(
+        ed.cx,
+        "This is a misspelled".chars().count(),
+        "cursor should land right after the replacement"
+    );
+}
+
+#[test]
+fn editor_replace_range_handles_a_shorter_replacement() {
+    let mut ed = EditorState::from_text("aaa bbbbb ccc");
+    let start = ed.lines[0].find("bbbbb").unwrap();
+    let end = start + "bbbbb".len();
+    ed.replace_range(0, start, end, "b");
+    assert_eq!(ed.lines[0], "aaa b ccc");
+    assert_eq!(ed.cx, "aaa b".chars().count());
+}
+
 #[tokio::test]
 async fn apply_description_edit_against_a_live_source_dispatches_and_applies_on_completion() {
     let _guard = crate::test_support::lock_env_async().await;

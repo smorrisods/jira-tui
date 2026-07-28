@@ -93,6 +93,10 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
         desc: "jump to start/end of the current line (in the in-TUI editor)",
     },
     KeyHint {
+        key: "F2",
+        desc: "spelling suggestions for the word under the cursor (in the in-TUI editor)",
+    },
+    KeyHint {
         key: "c",
         desc: "add a comment (in an issue or quick view)",
     },

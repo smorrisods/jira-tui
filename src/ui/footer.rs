@@ -204,6 +204,7 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
             single(vec![
                 hint("type", compose),
                 hint("^S", "preview"),
+                hint("F2", "spelling suggestions"),
                 hint("esc", "cancel"),
             ])
         }
