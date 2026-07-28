@@ -179,10 +179,37 @@ impl App {
             return;
         };
         self.editor = EditorState::from_text("");
+        self.begin_comment_edit_target(key, self.screen);
+        self.screen = Screen::Edit;
+    }
+
+    /// Prime the edit-target state for a comment without touching
+    /// `self.editor` or `self.screen` — the comment-composition counterpart
+    /// to `begin_description_edit_target`, used by the external `$EDITOR`
+    /// round-trip (`C`), which calls `finish_edit` directly once the editor
+    /// process exits.
+    fn begin_comment_edit_target(&mut self, key: String, return_screen: Screen) {
         self.edit_target = EditTarget::Comment;
         self.edit_key = Some(key);
-        self.edit_return_screen = self.screen;
-        self.screen = Screen::Edit;
+        self.edit_return_screen = return_screen;
+    }
+
+    /// Prime the edit-target state for composing a comment via the external
+    /// `$EDITOR` round-trip. Mirrors `begin_external_edit`'s guard against
+    /// starting a second edit while a previous one is still resolving
+    /// against live Jira; callers should check the return value before
+    /// setting `request_edit`.
+    pub fn begin_external_comment(&mut self) -> bool {
+        if self.edit_pending {
+            self.status = "an update is still in progress".into();
+            return false;
+        }
+        let Some(key) = self.comment_target_key() else {
+            self.status = "no issue selected".into();
+            return false;
+        };
+        self.begin_comment_edit_target(key, self.screen);
+        true
     }
 
     /// The issue key comments should be added to, given the current screen:

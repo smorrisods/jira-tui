@@ -300,9 +300,9 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             app.request_edit = app.begin_external_edit();
         }
 
-        // Comments: add one (Detail or quick-view), jump to the comments
-        // section (]) / back to the top ([), and step between individual
-        // comments (n/p).
+        // Comments: add one via the in-TUI editor (c) or external $EDITOR
+        // (C) (Detail or quick-view), jump to the comments section (]) /
+        // back to the top ([), and step between individual comments (n/p).
         KeyCode::Char('c')
             if (app.screen == Screen::Detail && app.detail.is_some())
                 || (matches!(app.screen, Screen::Home | Screen::List)
@@ -310,6 +310,14 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
                     && app.quick_view_detail().is_some()) =>
         {
             app.begin_comment();
+        }
+        KeyCode::Char('C')
+            if (app.screen == Screen::Detail && app.detail.is_some())
+                || (matches!(app.screen, Screen::Home | Screen::List)
+                    && app.quick_view
+                    && app.quick_view_detail().is_some()) =>
+        {
+            app.request_edit = app.begin_external_comment();
         }
         // Assignee picker: reassign or unassign the viewed issue (Detail or
         // quick-view). Deliberately not gated on `list_focus` — like `c`

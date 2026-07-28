@@ -89,8 +89,8 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
         desc: "edit description (in-TUI / $EDITOR)",
     },
     KeyHint {
-        key: "c",
-        desc: "add a comment (in an issue or quick view)",
+        key: "c / C",
+        desc: "add a comment (in-TUI / $EDITOR) (in an issue or quick view)",
     },
     KeyHint {
         key: "] / [",

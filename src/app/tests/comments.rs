@@ -60,6 +60,35 @@ fn begin_comment_from_quick_view_returns_to_list_and_updates_cache() {
     assert!(!cached.comments.is_empty());
 }
 
+#[test]
+fn begin_external_comment_composes_and_apply_appends_it() {
+    // Simulates the external `$EDITOR` round-trip (`C`): prime the target,
+    // then finish the edit as `editor_launch::edit_in_editor` would once the
+    // editor process exits, without going through the in-TUI `Screen::Edit`.
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    let before = app.detail.as_ref().unwrap().comments.len();
+
+    let started = app.begin_external_comment();
+    assert!(started);
+    assert_eq!(app.edit_target, EditTarget::Comment);
+    assert_eq!(app.screen, Screen::Detail, "no in-TUI editor screen opens");
+
+    app.finish_edit("Looks good from an external editor.");
+    assert_eq!(app.screen, Screen::Preview);
+
+    app.apply_edit();
+    assert_eq!(app.screen, Screen::Detail);
+    let comments = &app.detail.as_ref().unwrap().comments;
+    assert_eq!(comments.len(), before + 1);
+    let newest = comments.last().unwrap();
+    assert_eq!(
+        crate::adf::to_markdown(&newest.body).trim(),
+        "Looks good from an external editor."
+    );
+}
+
 /// Regression test: a comment session's `edit_target`/`edit_key`/
 /// `edit_return_screen` must not leak into a later, unrelated external
 /// `$EDITOR` description edit on a different issue — otherwise the second

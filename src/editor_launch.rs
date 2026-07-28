@@ -11,7 +11,7 @@ use crossterm::terminal::{
 };
 use ratatui::buffer::Buffer;
 
-use jira_tui::app::{App, SelectionSpan};
+use jira_tui::app::{App, EditTarget, SelectionSpan};
 
 use crate::Term;
 
@@ -75,18 +75,27 @@ pub(crate) fn read_span(buf: &Buffer, span: &SelectionSpan) -> String {
     out
 }
 
-/// Suspend the TUI, open the issue description in `$EDITOR`, then resume and
-/// hand the edited Markdown to the app for compilation + preview.
+/// Suspend the TUI, open the issue description (or a new comment) in
+/// `$EDITOR`, then resume and hand the edited Markdown to the app for
+/// compilation + preview. Which one, and the seed text, follow `app.edit_target`
+/// — set beforehand by `begin_external_edit` (description) or
+/// `begin_external_comment` (comment).
 pub(crate) fn edit_in_editor(terminal: &mut Term, app: &mut App) -> Result<()> {
-    let Some(markdown) = app.description_markdown() else {
-        return Ok(());
+    let (markdown, file_tag) = match app.edit_target {
+        EditTarget::Description => {
+            let Some(markdown) = app.description_markdown() else {
+                return Ok(());
+            };
+            (markdown, "description")
+        }
+        EditTarget::Comment => (String::new(), "comment"),
     };
     let key = app
         .detail
         .as_ref()
         .map(|d| d.key.clone())
         .unwrap_or_else(|| "issue".into());
-    let path = std::env::temp_dir().join(format!("jira-tui-{key}.md"));
+    let path = std::env::temp_dir().join(format!("jira-tui-{key}-{file_tag}.md"));
     std::fs::write(&path, &markdown)?;
 
     // Leave the alternate screen and hand the terminal to the editor.

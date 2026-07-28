@@ -80,6 +80,33 @@ fn editor_newline_and_backspace_merge_lines() {
     assert_eq!((ed.cy, ed.cx), (0, 1));
 }
 
+#[test]
+fn begin_external_comment_primes_the_target_without_opening_the_tui_editor() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    let key = app.detail.as_ref().unwrap().key.clone();
+
+    let started = app.begin_external_comment();
+    assert!(started);
+    assert_eq!(app.edit_target, EditTarget::Comment);
+    assert_eq!(app.edit_key, Some(key));
+    assert_eq!(app.edit_return_screen, Screen::Detail);
+    // Unlike `begin_comment`, this doesn't open the in-TUI editor screen —
+    // the external `$EDITOR` round-trip owns the actual composing.
+    assert_eq!(app.screen, Screen::Detail);
+}
+
+#[test]
+fn begin_external_comment_refuses_without_a_selected_issue() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.quick_view = false;
+    let started = app.begin_external_comment();
+    assert!(!started);
+    assert_eq!(app.status, "no issue selected");
+}
+
 #[tokio::test]
 async fn apply_description_edit_against_a_live_source_dispatches_and_applies_on_completion() {
     let _guard = crate::test_support::lock_env_async().await;
