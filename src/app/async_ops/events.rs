@@ -120,6 +120,10 @@ pub enum AppEvent {
         generation: u64,
         query: String,
         issues: Vec<IssueSummary>,
+        /// Set on a failed/skipped search (no credentials, network error, a
+        /// JQL the server rejected) — surfaced via `App::status` since
+        /// there's no fallback data to quietly show in its place.
+        error: Option<String>,
     },
 }
 
@@ -200,7 +204,8 @@ impl App {
                 generation,
                 query,
                 issues,
-            } => self.apply_text_searched(generation, query, issues),
+                error,
+            } => self.apply_text_searched(generation, query, issues, error),
         }
     }
 }

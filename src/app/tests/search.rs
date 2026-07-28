@@ -144,11 +144,41 @@ fn stale_live_search_results_are_dropped_without_disturbing_a_newer_in_flight_se
     // A result tagged with an older generation than the one currently
     // dispatched must be ignored — and must not clear `live_loading`, since
     // the newer (generation 2) search is presumably still in flight.
-    app.apply_text_searched(1, "widget".into(), vec![app.all_issues[0].clone()]);
+    app.apply_text_searched(1, "widget".into(), vec![app.all_issues[0].clone()], None);
     assert!(app.search.live_query.is_none());
     assert!(
         app.search.live_loading,
         "a stale result must not clear the loading flag for a still in-flight search"
+    );
+}
+
+#[test]
+fn a_failed_live_search_surfaces_the_error_instead_of_silently_doing_nothing() {
+    let mut app = demo_app();
+    app.open_search();
+    app.search.query = "dropdown".into();
+    app.search_generation = 1;
+
+    app.apply_text_searched(1, "dropdown".into(), Vec::new(), Some("boom".into()));
+    assert!(
+        app.status.contains("boom"),
+        "a failed live search must show up in the status line: {}",
+        app.status
+    );
+}
+
+#[test]
+fn an_empty_live_search_result_says_so_instead_of_looking_like_nothing_happened() {
+    let mut app = demo_app();
+    app.open_search();
+    app.search.query = "dropdown".into();
+    app.search_generation = 1;
+
+    app.apply_text_searched(1, "dropdown".into(), Vec::new(), None);
+    assert!(
+        app.status.contains("dropdown"),
+        "a genuinely empty live search result should say so, not look like it did nothing: {}",
+        app.status
     );
 }
 
@@ -165,7 +195,7 @@ fn live_search_results_are_deduped_against_matches_already_shown_locally() {
     new_issue.key = "DS-9999".into();
     let issues = vec![local.clone(), new_issue.clone()];
     let query = app.search.query.trim().to_lowercase();
-    app.apply_text_searched(1, query, issues);
+    app.apply_text_searched(1, query, issues, None);
 
     let live_keys: Vec<&str> = app
         .search
@@ -196,7 +226,7 @@ async fn live_results_are_hidden_once_the_query_has_moved_on() {
     let issue = app.all_issues[0].clone();
     app.search.query = "widget".into();
     app.search_generation = 1;
-    app.apply_text_searched(1, "widget".into(), vec![issue]);
+    app.apply_text_searched(1, "widget".into(), vec![issue], None);
     assert!(app
         .search
         .rows

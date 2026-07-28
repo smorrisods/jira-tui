@@ -99,17 +99,26 @@ impl App {
     /// `rebuild_search_rows`, which itself only shows `live_results` when
     /// `live_query` still matches what's on screen (see
     /// `SearchState::live_query`), so results for text the user has since
-    /// typed past never flash into view.
+    /// typed past never flash into view. A failed or empty search is
+    /// surfaced via `status` — there's nothing else on screen that would
+    /// otherwise tell the user the live fallback ran at all.
     pub(crate) fn apply_text_searched(
         &mut self,
         generation: u64,
         query: String,
         issues: Vec<IssueSummary>,
+        error: Option<String>,
     ) {
         if generation != self.search_generation {
             return;
         }
         self.search.live_loading = false;
+        if let Some(err) = error {
+            self.status = format!("⚠ {err}");
+        } else if issues.is_empty() {
+            self.status =
+                format!("live search: no matches for \"{query}\" beyond your current view");
+        }
         self.search.live_results = issues;
         self.search.live_query = Some(query);
         self.rebuild_search_rows();

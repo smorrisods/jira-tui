@@ -154,32 +154,45 @@ fn fetch_detail_blocking(key: &str) -> (IssueDetail, Option<String>) {
 pub(crate) fn dispatch_text_search(tx: UnboundedSender<AppEvent>, generation: u64, query: String) {
     tokio::spawn(async move {
         let query_for_result = query.clone();
-        let issues = tokio::task::spawn_blocking(move || text_search_blocking(&query))
+        let (issues, error) = tokio::task::spawn_blocking(move || text_search_blocking(&query))
             .await
-            .unwrap_or_default();
+            .unwrap_or_else(|_| {
+                (
+                    Vec::new(),
+                    Some("internal error: search task panicked".into()),
+                )
+            });
         let _ = tx.send(AppEvent::TextSearched {
             generation,
             query: query_for_result,
             issues,
+            error,
         });
     });
 }
 
-/// Mirrors `assignable_users_blocking`'s "load config, call the live client,
-/// give back nothing on any failure" shape — a failed/offline text search
-/// just means no live results merge in, not a crash or a status message
-/// (the local match list on screen is unaffected either way).
+/// Mirrors `fetch_detail_blocking`'s "load config, call the live client,
+/// carry back an explanation on failure" shape — unlike
+/// `assignable_users_blocking`, a failed live search is worth surfacing:
+/// there's no fallback data to quietly show instead, so silently swallowing
+/// the error would just look like the search did nothing.
 #[allow(unused_variables)]
-fn text_search_blocking(query: &str) -> Vec<IssueSummary> {
+fn text_search_blocking(query: &str) -> (Vec<IssueSummary>, Option<String>) {
     #[cfg(feature = "live")]
     {
-        if let Some(cfg) = crate::jira::Config::load() {
-            if let Ok(issues) = crate::jira::search_by_text(&cfg, query) {
-                return issues;
-            }
+        let Some(cfg) = crate::jira::Config::load() else {
+            return (
+                Vec::new(),
+                Some("live search skipped: no credentials configured".into()),
+            );
+        };
+        match crate::jira::search_by_text(&cfg, query) {
+            Ok(issues) => (issues, None),
+            Err(e) => (Vec::new(), Some(format!("live search failed: {e}"))),
         }
     }
-    Vec::new()
+    #[cfg(not(feature = "live"))]
+    (Vec::new(), None)
 }
 
 impl App {
