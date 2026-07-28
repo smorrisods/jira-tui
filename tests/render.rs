@@ -557,6 +557,54 @@ fn in_tui_editor_renders_buffer() {
 }
 
 #[test]
+fn in_tui_editor_underlines_misspelled_words_only() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.begin_tui_edit();
+    app.editor.lines = vec!["a mispeled word".into()];
+    app.editor.cx = 0;
+    app.editor.cy = 0;
+
+    let backend = TestBackend::new(60, 10);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(|f| ui::draw(f, &app)).unwrap();
+    let buf = terminal.backend().buffer().clone();
+
+    let area = buf.area;
+    let mut found = None;
+    for y in 0..area.height {
+        let mut row = String::new();
+        for x in 0..area.width {
+            row.push_str(buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "));
+        }
+        if row.contains("mispeled") {
+            found = Some((y, row));
+            break;
+        }
+    }
+    let (y, row) = found.expect("the typed line should be rendered somewhere");
+
+    let misspelled_x = row.find("mispeled").unwrap() as u16 + 2;
+    let misspelled_cell = buf.cell((misspelled_x, y)).unwrap();
+    assert!(
+        misspelled_cell
+            .modifier
+            .contains(ratatui::style::Modifier::UNDERLINED),
+        "a misspelled word should be rendered underlined"
+    );
+
+    let correct_x = row.find("word").unwrap() as u16 + 1;
+    let correct_cell = buf.cell((correct_x, y)).unwrap();
+    assert!(
+        !correct_cell
+            .modifier
+            .contains(ratatui::style::Modifier::UNDERLINED),
+        "a correctly spelled word must not be underlined"
+    );
+}
+
+#[test]
 fn quick_view_panel_shows_selected_issue() {
     let mut app = demo_app();
     app.screen = Screen::Home;
