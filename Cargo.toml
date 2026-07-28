@@ -40,6 +40,13 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "tim
 schemars = { version = "1", optional = true }
 toml_edit = "0.25.12"
 tokio-stream = "0.1.18"
+# Pure-Rust, no-FFI spell checking for the built-in editor — offline-only,
+# no system dependency, so it works the same in every feature set. Chosen
+# over the (also pure-Rust) `zspell` for its much smaller dependency
+# footprint (just `hashbrown`/`foldhash` vs. `regex`, `dirs`, `itertools`,
+# `sys-locale`, etc.). See `src/spellcheck.rs` and `assets/dictionaries/en`
+# for the bundled dictionary.
+spellbook = "0.4"
 
 [target.'cfg(unix)'.dependencies]
 # Only needed to `raise(SIGTSTP)` for the Ctrl+Z suspend-to-shell flow (see

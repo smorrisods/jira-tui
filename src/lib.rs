@@ -20,6 +20,9 @@ pub mod mcp;
 /// scroll offsets (e.g. jump-to-comments) without depending on the `ui`
 /// crate module, while `ui` uses it to actually render.
 pub mod render;
+/// In-app misspelling detection for the built-in editor — see
+/// `assets/dictionaries/en` for the bundled dictionary's provenance.
+pub mod spellcheck;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod ui;

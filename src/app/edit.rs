@@ -50,23 +50,14 @@ impl EditorState {
     }
 
     pub fn insert_char(&mut self, c: char) {
-        let line = &mut self.lines[self.cy];
-        let byte = line
-            .char_indices()
-            .nth(self.cx)
-            .map(|(i, _)| i)
-            .unwrap_or(line.len());
-        line.insert(byte, c);
+        let byte = self.cursor_byte_index();
+        self.lines[self.cy].insert(byte, c);
         self.cx += 1;
     }
 
     pub fn newline(&mut self) {
+        let byte = self.cursor_byte_index();
         let line = self.lines[self.cy].clone();
-        let byte = line
-            .char_indices()
-            .nth(self.cx)
-            .map(|(i, _)| i)
-            .unwrap_or(line.len());
         let (left, right) = line.split_at(byte);
         self.lines[self.cy] = left.to_string();
         self.lines.insert(self.cy + 1, right.to_string());
@@ -122,6 +113,29 @@ impl EditorState {
             self.cy += 1;
             self.cx = self.cx.min(self.line_len(self.cy));
         }
+    }
+
+    /// The byte offset of the cursor's `cx` (a char index) within its
+    /// current line — the same lookup `insert_char`/`newline` do inline,
+    /// exposed for callers (spell-suggest) that need to compare `cx`
+    /// against a byte-range span from `spellcheck`.
+    pub fn cursor_byte_index(&self) -> usize {
+        let line = &self.lines[self.cy];
+        line.char_indices()
+            .nth(self.cx)
+            .map(|(i, _)| i)
+            .unwrap_or(line.len())
+    }
+
+    /// Replaces the byte range `start..end` of `line` with `replacement`,
+    /// and moves the cursor to just after the replacement. Used to apply a
+    /// spelling suggestion in place.
+    pub fn replace_range(&mut self, line: usize, start: usize, end: usize, replacement: &str) {
+        let target = &mut self.lines[line];
+        let char_start = target[..start].chars().count();
+        target.replace_range(start..end, replacement);
+        self.cy = line;
+        self.cx = char_start + replacement.chars().count();
     }
 }
 

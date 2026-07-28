@@ -41,6 +41,7 @@ mod preview;
 mod quick_view;
 pub(crate) mod quick_view_columns;
 mod search;
+mod spell_suggest;
 mod transition_picker;
 mod view_picker;
 mod welcome;
@@ -61,6 +62,7 @@ use palette::draw_palette;
 use preview::draw_preview;
 use quick_view::draw_quick_view;
 use search::draw_search;
+use spell_suggest::draw_spell_suggest;
 use transition_picker::draw_transition_picker;
 use view_picker::draw_view_picker;
 use welcome::draw_welcome;
@@ -261,6 +263,10 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     if app.assignee_picker_open {
         draw_assignee_picker(f, app, f.area());
+    }
+
+    if app.spell_suggest_open {
+        draw_spell_suggest(f, app, f.area());
     }
 
     if app.palette_open {
