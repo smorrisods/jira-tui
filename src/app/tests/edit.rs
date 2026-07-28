@@ -194,6 +194,96 @@ fn editor_newline_and_backspace_merge_lines() {
     assert_eq!((ed.cy, ed.cx), (0, 1));
 }
 
+#[test]
+fn begin_external_comment_primes_the_target_without_opening_the_tui_editor() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    let key = app.detail.as_ref().unwrap().key.clone();
+
+    let started = app.begin_external_comment();
+    assert!(started);
+    assert_eq!(app.edit_target, EditTarget::Comment);
+    assert_eq!(app.edit_key, Some(key));
+    assert_eq!(app.edit_return_screen, Screen::Detail);
+    // Unlike `begin_comment`, this doesn't open the in-TUI editor screen —
+    // the external `$EDITOR` round-trip owns the actual composing.
+    assert_eq!(app.screen, Screen::Detail);
+}
+
+#[test]
+fn begin_external_comment_refuses_without_a_selected_issue() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.quick_view = false;
+    let started = app.begin_external_comment();
+    assert!(!started);
+    assert_eq!(app.status, "no issue selected");
+}
+
+#[test]
+fn editor_home_end_jump_to_line_start_and_end() {
+    let mut ed = EditorState::from_text("hello\nworld");
+    ed.cy = 0;
+    ed.cx = 3;
+    ed.line_start();
+    assert_eq!((ed.cy, ed.cx), (0, 0));
+    ed.line_end();
+    assert_eq!((ed.cy, ed.cx), (0, 5));
+
+    // End on an already-at-end cursor, and Home on an already-at-start
+    // cursor, are no-ops rather than moving to an adjacent line.
+    ed.line_end();
+    assert_eq!((ed.cy, ed.cx), (0, 5));
+    ed.line_start();
+    ed.line_start();
+    assert_eq!((ed.cy, ed.cx), (0, 0));
+}
+
+#[test]
+fn editor_home_end_operate_on_the_current_line_only() {
+    let mut ed = EditorState::from_text("ab\nlonger line");
+    ed.cy = 1;
+    ed.cx = 3;
+    ed.line_end();
+    assert_eq!((ed.cy, ed.cx), (1, "longer line".chars().count()));
+    ed.line_start();
+    assert_eq!((ed.cy, ed.cx), (1, 0));
+}
+
+#[test]
+fn editor_cursor_byte_index_accounts_for_multibyte_chars() {
+    let mut ed = EditorState::from_text("héllo world");
+    // "é" is 2 bytes in UTF-8, so cx=3 (h,é,l) is byte index 4, not 3.
+    ed.cx = 3;
+    assert_eq!(ed.cursor_byte_index(), 4);
+}
+
+#[test]
+fn editor_replace_range_swaps_text_and_repositions_the_cursor() {
+    let mut ed = EditorState::from_text("This is a mispeled word.");
+    let start = ed.lines[0].find("mispeled").unwrap();
+    let end = start + "mispeled".len();
+    ed.replace_range(0, start, end, "misspelled");
+    assert_eq!(ed.lines[0], "This is a misspelled word.");
+    assert_eq!(ed.cy, 0);
+    assert_eq!(
+        ed.cx,
+        "This is a misspelled".chars().count(),
+        "cursor should land right after the replacement"
+    );
+}
+
+#[test]
+fn editor_replace_range_handles_a_shorter_replacement() {
+    let mut ed = EditorState::from_text("aaa bbbbb ccc");
+    let start = ed.lines[0].find("bbbbb").unwrap();
+    let end = start + "bbbbb".len();
+    ed.replace_range(0, start, end, "b");
+    assert_eq!(ed.lines[0], "aaa b ccc");
+    assert_eq!(ed.cx, "aaa b".chars().count());
+}
+
 #[tokio::test]
 async fn apply_description_edit_against_a_live_source_dispatches_and_applies_on_completion() {
     let _guard = crate::test_support::lock_env_async().await;

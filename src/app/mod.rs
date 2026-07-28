@@ -34,6 +34,7 @@ mod query;
 mod quick_view;
 mod search;
 mod sort_filter;
+mod spell_suggest;
 mod transitions;
 mod tree;
 mod view_switch;
@@ -52,6 +53,7 @@ pub use palette::{PaletteAction, PaletteState};
 pub(crate) use palette::{PaletteGroup, PaletteRow};
 pub use search::{SearchRow, SearchState};
 pub use sort_filter::SortKey;
+pub use spell_suggest::SpellSuggestState;
 pub use tree::ListViewMode;
 pub(crate) use tree::TreeRow;
 
@@ -165,6 +167,10 @@ pub struct App {
 
     // In-TUI editor.
     pub editor: EditorState,
+    /// Whether the spelling-suggestion picker (`F2`, `Screen::Edit` only)
+    /// is currently open.
+    pub spell_suggest_open: bool,
+    pub spell_suggest: SpellSuggestState,
 
     /// Transient toast message; shown while `tick < flash_until`.
     pub flash_msg: String,
@@ -370,6 +376,8 @@ impl App {
             jax_party_until: 0,
             jax_mini_area: Cell::new(Rect::default()),
             editor: EditorState::default(),
+            spell_suggest_open: false,
+            spell_suggest: SpellSuggestState::default(),
             flash_msg: String::new(),
             flash_until: 0,
             mouse: MouseState {

@@ -108,6 +108,19 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Modal: the spelling-suggestion picker (`F2`, opened from `Screen::Edit`
+    // only — see the `KeyCode::F(2)` arm in that screen's own block below).
+    if app.spell_suggest_open {
+        match key.code {
+            KeyCode::Esc => app.close_spell_suggest(),
+            KeyCode::Enter => app.confirm_spell_suggest(),
+            KeyCode::Up | KeyCode::Char('k') => app.spell_suggest_move(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.spell_suggest_move(1),
+            _ => {}
+        }
+        return;
+    }
+
     // Modal: the command palette (SPEC.md §8). Type-to-filter like the
     // assignee picker above.
     if app.palette_open {
@@ -182,6 +195,9 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             KeyCode::Right => app.editor.right(),
             KeyCode::Up => app.editor.up(),
             KeyCode::Down => app.editor.down(),
+            KeyCode::Home => app.editor.line_start(),
+            KeyCode::End => app.editor.line_end(),
+            KeyCode::F(2) => app.open_spell_suggest(),
             KeyCode::Tab => {
                 app.editor.insert_char(' ');
                 app.editor.insert_char(' ');
@@ -319,9 +335,9 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             app.request_edit = app.begin_external_edit();
         }
 
-        // Comments: add one (Detail or quick-view), jump to the comments
-        // section (]) / back to the top ([), and step between individual
-        // comments (n/p).
+        // Comments: add one via the in-TUI editor (c) or external $EDITOR
+        // (C) (Detail or quick-view), jump to the comments section (]) /
+        // back to the top ([), and step between individual comments (n/p).
         KeyCode::Char('c')
             if (app.screen == Screen::Detail && app.detail.is_some())
                 || (matches!(app.screen, Screen::Home | Screen::List)
@@ -329,6 +345,14 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
                     && app.quick_view_detail().is_some()) =>
         {
             app.begin_comment();
+        }
+        KeyCode::Char('C')
+            if (app.screen == Screen::Detail && app.detail.is_some())
+                || (matches!(app.screen, Screen::Home | Screen::List)
+                    && app.quick_view
+                    && app.quick_view_detail().is_some()) =>
+        {
+            app.request_edit = app.begin_external_comment();
         }
         // Assignee picker: reassign or unassign the viewed issue (Detail or
         // quick-view). Deliberately not gated on `list_focus` — like `c`
@@ -951,6 +975,75 @@ mod tests {
             app.confirm_discard,
             "a stray click must not silently dismiss the discard prompt"
         );
+        assert_eq!(app.screen, Screen::Edit);
+    }
+
+    #[test]
+    fn home_and_end_jump_within_the_current_line_in_the_editor() {
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        app.begin_tui_edit();
+        assert_eq!(app.screen, Screen::Edit);
+
+        app.editor.cy = 0;
+        app.editor.cx = 3;
+        handle_key(&mut app, KeyEvent::from(KeyCode::Home));
+        assert_eq!(app.editor.cx, 0, "Home should jump to the line's start");
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::End));
+        assert_eq!(
+            app.editor.cx,
+            app.editor.lines[0].chars().count(),
+            "End should jump to the line's end"
+        );
+    }
+
+    #[test]
+    fn f2_opens_the_spell_suggest_picker_and_swallows_input_while_open() {
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        app.begin_tui_edit();
+        app.editor.lines = vec!["a mispeled word".into()];
+        app.editor.cy = 0;
+        app.editor.cx = 2;
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::F(2)));
+        assert!(app.spell_suggest_open);
+        let before = app.spell_suggest.selected;
+
+        // While the picker is open, typing must not fall through to the
+        // editor buffer underneath it.
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('z')));
+        assert_eq!(app.editor.lines[0], "a mispeled word");
+        assert_eq!(app.spell_suggest.selected, before);
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Down));
+        assert!(app.spell_suggest.selected >= before);
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Enter));
+        assert!(!app.spell_suggest_open);
+        assert!(!app.editor.lines[0].contains("mispeled"));
+    }
+
+    #[test]
+    fn esc_closes_the_spell_suggest_picker_without_changing_the_buffer() {
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        app.begin_tui_edit();
+        app.editor.lines = vec!["a mispeled word".into()];
+        app.editor.cy = 0;
+        app.editor.cx = 2;
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::F(2)));
+        assert!(app.spell_suggest_open);
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
+        assert!(!app.spell_suggest_open);
+        assert_eq!(app.editor.lines[0], "a mispeled word");
+        // Esc should close the picker, not also cancel the whole edit.
         assert_eq!(app.screen, Screen::Edit);
     }
 }

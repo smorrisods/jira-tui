@@ -77,23 +77,14 @@ impl EditorState {
     }
 
     pub fn insert_char(&mut self, c: char) {
-        let line = &mut self.lines[self.cy];
-        let byte = line
-            .char_indices()
-            .nth(self.cx)
-            .map(|(i, _)| i)
-            .unwrap_or(line.len());
-        line.insert(byte, c);
+        let byte = self.cursor_byte_index();
+        self.lines[self.cy].insert(byte, c);
         self.cx += 1;
     }
 
     pub fn newline(&mut self) {
+        let byte = self.cursor_byte_index();
         let line = self.lines[self.cy].clone();
-        let byte = line
-            .char_indices()
-            .nth(self.cx)
-            .map(|(i, _)| i)
-            .unwrap_or(line.len());
         let (left, right) = line.split_at(byte);
         self.lines[self.cy] = left.to_string();
         self.lines.insert(self.cy + 1, right.to_string());
@@ -149,6 +140,39 @@ impl EditorState {
             self.cy += 1;
             self.cx = self.cx.min(self.line_len(self.cy));
         }
+    }
+
+    /// Move the cursor to the start of the current (logical) line.
+    pub fn line_start(&mut self) {
+        self.cx = 0;
+    }
+
+    /// Move the cursor to the end of the current (logical) line.
+    pub fn line_end(&mut self) {
+        self.cx = self.line_len(self.cy);
+    }
+
+    /// The byte offset of the cursor's `cx` (a char index) within its
+    /// current line — the same lookup `insert_char`/`newline` do inline,
+    /// exposed for callers (spell-suggest) that need to compare `cx`
+    /// against a byte-range span from `spellcheck`.
+    pub fn cursor_byte_index(&self) -> usize {
+        let line = &self.lines[self.cy];
+        line.char_indices()
+            .nth(self.cx)
+            .map(|(i, _)| i)
+            .unwrap_or(line.len())
+    }
+
+    /// Replaces the byte range `start..end` of `line` with `replacement`,
+    /// and moves the cursor to just after the replacement. Used to apply a
+    /// spelling suggestion in place.
+    pub fn replace_range(&mut self, line: usize, start: usize, end: usize, replacement: &str) {
+        let target = &mut self.lines[line];
+        let char_start = target[..start].chars().count();
+        target.replace_range(start..end, replacement);
+        self.cy = line;
+        self.cx = char_start + replacement.chars().count();
     }
 }
 
@@ -206,10 +230,37 @@ impl App {
             return;
         };
         self.editor = EditorState::from_text("");
+        self.begin_comment_edit_target(key, self.screen);
+        self.screen = Screen::Edit;
+    }
+
+    /// Prime the edit-target state for a comment without touching
+    /// `self.editor` or `self.screen` — the comment-composition counterpart
+    /// to `begin_description_edit_target`, used by the external `$EDITOR`
+    /// round-trip (`C`), which calls `finish_edit` directly once the editor
+    /// process exits.
+    fn begin_comment_edit_target(&mut self, key: String, return_screen: Screen) {
         self.edit_target = EditTarget::Comment;
         self.edit_key = Some(key);
-        self.edit_return_screen = self.screen;
-        self.screen = Screen::Edit;
+        self.edit_return_screen = return_screen;
+    }
+
+    /// Prime the edit-target state for composing a comment via the external
+    /// `$EDITOR` round-trip. Mirrors `begin_external_edit`'s guard against
+    /// starting a second edit while a previous one is still resolving
+    /// against live Jira; callers should check the return value before
+    /// setting `request_edit`.
+    pub fn begin_external_comment(&mut self) -> bool {
+        if self.edit_pending {
+            self.status = "an update is still in progress".into();
+            return false;
+        }
+        let Some(key) = self.comment_target_key() else {
+            self.status = "no issue selected".into();
+            return false;
+        };
+        self.begin_comment_edit_target(key, self.screen);
+        true
     }
 
     /// The issue key comments should be added to, given the current screen:
