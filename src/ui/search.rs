@@ -7,6 +7,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::app::{App, SearchRow};
+use crate::domain::Source;
 
 use super::list::{flat_guide, issue_row};
 use super::list_columns::column_set_for_width;
@@ -18,8 +19,20 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
         .constraints([Constraint::Length(3), Constraint::Min(3)])
         .split(area);
 
+    // Local matching always works; the live text-search fallback (see
+    // `App::schedule_live_search`) only ever fires for a genuine `Live`
+    // source — surfaced here so a `Cache`/`Demo` session (e.g. the live
+    // fetch is currently failing and falling back to cache) doesn't look
+    // like search is silently broken.
+    let live_available = matches!(app.source, Source::Live { .. });
+
     // Query input line.
-    let input_block = card_bordered("  search / go to issue  ", accent(), accent());
+    let input_title = if live_available {
+        "  search / go to issue  ".to_string()
+    } else {
+        "  search / go to issue — local only, not a live session  ".to_string()
+    };
+    let input_block = card_bordered(&input_title, accent(), accent());
     let input_inner = input_block.inner(rows[0]);
     f.render_widget(input_block, rows[0]);
     f.render_widget(
@@ -47,8 +60,11 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
     if app.search.rows.is_empty() {
         let hint = if app.search.live_loading {
             "Searching Jira for matching issues…"
-        } else {
+        } else if live_available {
             "No matches. Type an issue key like DS-123 to jump to it directly."
+        } else {
+            "No matches beyond your current view. Type an issue key like DS-123 to jump to it \
+             directly — live text search needs a connected Jira session (see the sync pill above)."
         };
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
