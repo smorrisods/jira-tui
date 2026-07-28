@@ -23,7 +23,12 @@ pub(crate) fn handle_mouse(app: &mut App, me: MouseEvent) {
     // the same way, or a click could mutate `app.screen` (or list/quick-view
     // state) while the modal's own flag stays set, orphaning it over
     // whatever screen is now showing underneath.
-    if app.show_help || app.picker_open || app.view_picker_open || app.assignee_picker_open {
+    if app.show_help
+        || app.picker_open
+        || app.view_picker_open
+        || app.assignee_picker_open
+        || app.confirm_discard
+    {
         return;
     }
     // Any button other than a continuing Left-button drag cancels an
