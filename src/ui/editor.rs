@@ -7,8 +7,9 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use ratatui::Frame;
 
 use crate::app::App;
+use crate::spellcheck;
 
-use super::{muted, warn};
+use super::{danger, muted, warn};
 
 pub(crate) fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
     let key = app.detail.as_ref().map(|d| d.key.as_str()).unwrap_or("");
@@ -35,13 +36,16 @@ pub(crate) fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
         0
     };
 
+    let misspellings = spellcheck::misspelled_spans_in_buffer(&ed.lines);
     let gutter_w = 4u16;
     let mut lines: Vec<Line> = Vec::new();
     for (i, line) in ed.lines.iter().enumerate().skip(scroll).take(height) {
-        lines.push(Line::from(vec![
-            Span::styled(format!("{:>3} ", i + 1), Style::default().fg(muted())),
-            Span::raw(line.clone()),
-        ]));
+        let mut spans = vec![Span::styled(
+            format!("{:>3} ", i + 1),
+            Style::default().fg(muted()),
+        )];
+        spans.extend(spans_with_misspellings(line, &misspellings[i]));
+        lines.push(Line::from(spans));
     }
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
 
@@ -51,4 +55,29 @@ pub(crate) fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
     if cx < inner.x + inner.width && cy < inner.y + inner.height {
         f.set_cursor_position((cx, cy));
     }
+}
+
+/// Splits `line` into spans, styling the byte ranges in `misspelled`
+/// (already sorted, non-overlapping — see `spellcheck::misspelled_spans`)
+/// with an underline so they stand out without changing the surrounding
+/// text's own colour.
+fn spans_with_misspellings<'a>(line: &'a str, misspelled: &[(usize, usize)]) -> Vec<Span<'a>> {
+    let mut spans = Vec::new();
+    let mut pos = 0usize;
+    for &(start, end) in misspelled {
+        if start > pos {
+            spans.push(Span::raw(&line[pos..start]));
+        }
+        spans.push(Span::styled(
+            &line[start..end],
+            Style::default()
+                .fg(danger())
+                .add_modifier(Modifier::UNDERLINED),
+        ));
+        pos = end;
+    }
+    if pos < line.len() {
+        spans.push(Span::raw(&line[pos..]));
+    }
+    spans
 }
