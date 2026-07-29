@@ -21,6 +21,40 @@ fn selected_issue_url_is_a_browse_link() {
     assert!(url.contains("/browse/DS-"));
 }
 
+/// Regression test: `App.selected` (the flat List index) and `App.board_sel`
+/// (Board's own lane/column/card selection) are independent — `open_board()`
+/// never syncs the two, and `board_move_card`/`_col`/`_lane` never touch
+/// `self.selected` either. `copy_key`/`copy_url` must copy whatever
+/// `board_selected_issue()` resolves to on Board, not whatever the List's
+/// `selected_issue()` happens to be — see the mirroring palette-level test
+/// `build_palette_rows_carries_the_board_selected_key_not_selected_issue`.
+#[test]
+fn copy_key_and_copy_url_use_the_board_selected_card_not_the_list_selection() {
+    let mut app = demo_app();
+    app.selected = 0;
+    let list_key = app.selected_issue().unwrap().key.clone();
+    app.open_board();
+    let board_key = app.board_selected_issue().unwrap().key.clone();
+    assert_ne!(
+        list_key, board_key,
+        "test needs the List selection and Board selection to genuinely differ"
+    );
+
+    app.copy_key();
+    assert!(
+        app.status.contains(&board_key),
+        "copy_key should copy the board-selected card's key, got: {}",
+        app.status
+    );
+
+    app.copy_url();
+    assert!(
+        app.status.contains(&board_key),
+        "copy_url should copy the board-selected card's URL, got: {}",
+        app.status
+    );
+}
+
 // Coverage gap noticed while splitting app/mod.rs into loader.rs/query.rs:
 // `assigned_to_me`/`blocked`/`active_flash` were only ever exercised
 // indirectly (via `ui/home.rs`'s tile counts and `ui/mod.rs`'s footer toast
