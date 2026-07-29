@@ -4,9 +4,11 @@
 //! `mutation_ops.rs`, or `setup_ops.rs`, so this file only grows by one
 //! match arm — not a whole logic block — per new `AppEvent` variant.
 
-use crate::domain::{AssignableUser, Comment, IssueDetail, IssueSummary, Source, ViewKind};
+use crate::domain::{
+    AssignableUser, Comment, IssueDetail, IssueSummary, Source, Version, ViewKind,
+};
 
-use super::super::{App, Screen};
+use super::super::{App, ReleaseBulkKind, Screen};
 use super::setup_ops::FieldsFetchResult;
 
 /// Sent back from a spawned fetch once it completes. Carries the
@@ -125,6 +127,49 @@ pub enum AppEvent {
         /// there's no fallback data to quietly show in its place.
         error: Option<String>,
     },
+    /// A one-shot background fetch of the current project's versions
+    /// resolved, dispatched once at startup for a genuine live session —
+    /// see `dispatch_project_versions`. Mirrors `TeammatesDiscovered`:
+    /// carries no `generation`, since it only replaces `App::project_versions`
+    /// wholesale and can't be made stale by an unrelated refresh/switch_view.
+    ProjectVersionsLoaded { versions: Vec<Version> },
+    /// A Fix/Affects Version update resolved (or failed) against live Jira —
+    /// see `App::confirm_version_picker`/`dispatch_set_versions`. Each field
+    /// is `None` when it wasn't part of this update (unchanged in the
+    /// picker), distinguished from `Some(vec![])` (cleared to empty).
+    VersionsApplied {
+        generation: u64,
+        key: String,
+        fix_versions: Option<Vec<String>>,
+        fix_error: Option<String>,
+        affects_versions: Option<Vec<String>>,
+        affects_error: Option<String>,
+    },
+    /// The release review screen's drill-down fetch resolved — see
+    /// `App::open_release_drill`/`dispatch_release_issues`. Carries its own
+    /// `release_generation`, distinct from every other counter, so
+    /// re-drilling into a different version (or backing out) can't be
+    /// clobbered by, or clobber, an unrelated in-flight fetch.
+    ReleaseIssuesLoaded {
+        generation: u64,
+        issues: Vec<IssueSummary>,
+        /// Set on a failed/skipped fetch (no credentials, network error) —
+        /// surfaced via `App::status` since there's no fallback data to
+        /// quietly show in its place.
+        error: Option<String>,
+    },
+    /// A bulk add-to-release or remove-from-release resolved — see
+    /// `App::release_remove_selected`/`release_add_to_release` and
+    /// `dispatch_release_bulk`. Each issue succeeds or fails independently
+    /// (one issue's fetch/write failing shouldn't block the rest), so this
+    /// carries a per-key result rather than one pass/fail for the whole
+    /// batch.
+    ReleaseBulkApplied {
+        generation: u64,
+        version_name: String,
+        kind: ReleaseBulkKind,
+        results: Vec<(String, Result<(), String>)>,
+    },
 }
 
 impl App {
@@ -206,6 +251,35 @@ impl App {
                 issues,
                 error,
             } => self.apply_text_searched(generation, query, issues, error),
+            AppEvent::ProjectVersionsLoaded { versions } => {
+                self.apply_project_versions_loaded(versions)
+            }
+            AppEvent::VersionsApplied {
+                generation,
+                key,
+                fix_versions,
+                fix_error,
+                affects_versions,
+                affects_error,
+            } => self.apply_versions_applied(
+                generation,
+                key,
+                fix_versions,
+                fix_error,
+                affects_versions,
+                affects_error,
+            ),
+            AppEvent::ReleaseIssuesLoaded {
+                generation,
+                issues,
+                error,
+            } => self.apply_release_issues_loaded(generation, issues, error),
+            AppEvent::ReleaseBulkApplied {
+                generation,
+                version_name,
+                kind,
+                results,
+            } => self.apply_release_bulk_applied(generation, version_name, kind, results),
         }
     }
 }

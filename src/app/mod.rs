@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use ratatui::layout::Rect;
 
 use crate::config::{self, Settings};
-use crate::domain::{AssignableUser, IssueDetail, IssueSummary, Source, ViewKind};
+use crate::domain::{AssignableUser, IssueDetail, IssueSummary, Source, Version, ViewKind};
 use crate::git::GitContext;
 
 mod assign;
@@ -32,11 +32,13 @@ mod onboarding;
 mod palette;
 mod query;
 mod quick_view;
+mod release;
 mod search;
 mod sort_filter;
 mod spell_suggest;
 mod transitions;
 mod tree;
+mod versions;
 mod view_switch;
 
 #[cfg(test)]
@@ -51,11 +53,13 @@ pub use mouse::{ListFocus, MouseState, SelectionSpan};
 pub use onboarding::{Field, OnboardingState, WelcomePhase};
 pub use palette::{PaletteAction, PaletteState};
 pub(crate) use palette::{PaletteGroup, PaletteRow};
-pub use search::{SearchRow, SearchState};
+pub use release::{ReleaseBulkKind, ReleaseListMode, ReleaseState};
+pub use search::{SearchPurpose, SearchRow, SearchState};
 pub use sort_filter::SortKey;
 pub use spell_suggest::SpellSuggestState;
 pub use tree::ListViewMode;
 pub(crate) use tree::TreeRow;
+pub use versions::{VersionField, VersionPickerState};
 
 use loader::load_issues;
 
@@ -70,6 +74,7 @@ pub enum Screen {
     Edit,
     Search,
     Board,
+    Release,
     About,
     FieldMapping,
 }
@@ -304,6 +309,31 @@ pub struct App {
     /// Whether the assignee picker (`A`) is currently open.
     pub assignee_picker_open: bool,
     pub assignee_picker: AssigneePickerState,
+    /// Whether a Fix/Affects Version update is currently in flight. Mirrors
+    /// `assignee_pending`: `open_version_picker` refuses to reopen while
+    /// this is set, so `version_generation` can never go stale mid-flight.
+    pub(crate) version_pending: bool,
+    pub(crate) version_generation: u64,
+    /// Whether the Fix/Affects Version picker (`R`) is currently open.
+    pub version_picker_open: bool,
+    pub version_picker: VersionPickerState,
+    /// The current project's versions, as fetched by
+    /// `async_ops::dispatch_project_versions` for a live session (empty for
+    /// demo/cache sessions, which fall back to `domain::demo_versions()`
+    /// instead — see `App::project_versions_source`). Also backs the
+    /// release review screen's version list.
+    pub(crate) project_versions: Vec<Version>,
+    /// The release review screen's state (`w`) — see `app::release`.
+    pub release: ReleaseState,
+    /// Bumped on every drilled-into version (including re-entering the
+    /// version list and drilling into a different one); a completed
+    /// `dispatch_release_issues` fetch whose generation no longer matches
+    /// this is stale and dropped, mirroring `search_generation`.
+    pub(crate) release_generation: u64,
+    /// Bumped on every dispatched bulk add/remove (`release_remove_selected`/
+    /// `release_add_to_release`); a completed `dispatch_release_bulk` whose
+    /// generation no longer matches this is stale and dropped.
+    pub(crate) release_bulk_generation: u64,
     /// Whether the command palette (`ctrl-k`, SPEC.md §8) is currently open.
     pub palette_open: bool,
     pub palette: PaletteState,
@@ -429,6 +459,14 @@ impl App {
             assignee_generation: 0,
             assignee_picker_open: false,
             assignee_picker: AssigneePickerState::default(),
+            version_pending: false,
+            version_generation: 0,
+            version_picker_open: false,
+            version_picker: VersionPickerState::default(),
+            project_versions: Vec::new(),
+            release: ReleaseState::default(),
+            release_generation: 0,
+            release_bulk_generation: 0,
             palette_open: false,
             palette: PaletteState::default(),
             assignable_users: Vec::new(),
@@ -460,6 +498,7 @@ impl App {
         // be lazy or gated on the initial view.
         if matches!(app.source, Source::Live { .. }) {
             async_ops::dispatch_teammate_discovery(app.events_tx.clone());
+            async_ops::dispatch_project_versions(app.events_tx.clone());
         }
 
         app

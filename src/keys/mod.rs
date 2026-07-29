@@ -108,6 +108,23 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Modal: the Fix/Affects Version picker. Arrow/j/k move the cursor,
+    // space toggles the highlighted version, tab switches which field is
+    // being edited — unlike the assignee/palette pickers, this isn't
+    // type-to-filter, so `j`/`k` are free for movement here.
+    if app.version_picker_open {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => app.version_picker_move(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.version_picker_move(1),
+            KeyCode::Tab => app.version_picker_switch_field(),
+            KeyCode::Char(' ') => app.version_picker_toggle(),
+            KeyCode::Enter => app.confirm_version_picker(),
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => app.close_version_picker(),
+            _ => {}
+        }
+        return;
+    }
+
     // Modal: the spelling-suggestion picker (`F2`, opened from `Screen::Edit`
     // only — see the `KeyCode::F(2)` arm in that screen's own block below).
     if app.spell_suggest_open {
@@ -208,11 +225,16 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // The Search / go-to-issue screen captures typing.
+    // The Search / go-to-issue screen captures typing. `Tab` toggles bulk
+    // selection (only meaningful in the release review screen's bulk-add
+    // mode, see `App::open_search_for_release`) — every other printable
+    // character always types into the query, so bulk mode can't steal a
+    // letter someone's trying to search for.
     if app.screen == Screen::Search {
         match key.code {
             KeyCode::Esc => app.close_search(),
             KeyCode::Enter => app.confirm_search(),
+            KeyCode::Tab => app.search_toggle_bulk_selected(),
             KeyCode::Up => app.search_move(-1),
             KeyCode::Down => app.search_move(1),
             KeyCode::Backspace => app.search_backspace(),
@@ -249,16 +271,61 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             KeyCode::Enter => app.board_open(),
             KeyCode::Char('/') => app.open_search(),
             KeyCode::Char('V') => app.open_view_picker(),
-            KeyCode::Char('?') => app.show_help = true,
+            KeyCode::Char('r') => app.refresh(),
+            KeyCode::Char('?') | KeyCode::F(1) => app.show_help = true,
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => back_or_quit(app),
             _ => {}
         }
         return;
     }
 
+    // The release review screen: version list ↔ a drilled-in version's
+    // issue list (see `app::release`'s doc comment for why this is one
+    // screen with internal state, not two `Screen` variants). `Esc` backs
+    // out one level at a time — from the issue list to the version list,
+    // then (via `back_or_quit`, once `release_back` has nothing left to
+    // undo) out of the screen entirely.
+    if app.screen == Screen::Release {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => app.release_move(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.release_move(1),
+            KeyCode::Enter | KeyCode::Right => app.release_confirm(),
+            // Bulk membership: `Space` checks/unchecks an issue for
+            // removal, `x` removes whatever's checked (or just the
+            // highlighted issue if nothing was explicitly checked), `a`
+            // opens Search in bulk-add mode for the drilled version. All
+            // three are drill-mode-only in effect (`release_toggle_selected`/
+            // `release_remove_selected` no-op on an empty issue list; `a`
+            // is guarded here since it needs the drilled version's name).
+            KeyCode::Char(' ') => app.release_toggle_selected(),
+            KeyCode::Char('x') => app.release_remove_selected(),
+            KeyCode::Char('a') if app.release.drilled.is_some() => {
+                let version_name = app.release.drilled.as_ref().unwrap().name.clone();
+                app.open_search_for_release(version_name);
+            }
+            KeyCode::Char('r') => app.release_refresh(),
+            // Cycle the version list's grouping (split unreleased/released
+            // vs. one flat list) — no-op in drill mode, mirroring the work
+            // list's own `s` sort-cycle key.
+            KeyCode::Char('s') if app.release.drilled.is_none() => app.release_cycle_list_mode(),
+            KeyCode::Char('?') | KeyCode::F(1) => app.show_help = true,
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left | KeyCode::Backspace
+                if !app.release_back() =>
+            {
+                back_or_quit(app);
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match key.code {
-        KeyCode::Char('?') => app.show_help = true,
-        KeyCode::Char('a') => app.open_about(),
+        KeyCode::Char('?') | KeyCode::F(1) => app.show_help = true,
+        // `i` for "Info" — About moved off `a` (freed for the reserved
+        // "new issue" entry point on Home/List, see issue #89, and already
+        // used for "add issues" in the Release drill-down) since it isn't
+        // a primary action and doesn't deserve the primary lowercase slot.
+        KeyCode::Char('i') => app.open_about(),
         KeyCode::Char('g') => app.screen = Screen::Home,
         // `r` refreshes whatever's actually being looked at: the open
         // issue in Detail, or the quick-view panel once it has keyboard
@@ -308,7 +375,10 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('v') if matches!(app.screen, Screen::Home | Screen::List) => {
             app.toggle_quick_view();
         }
-        KeyCode::Char('T') if matches!(app.screen, Screen::Home | Screen::List) => {
+        // Toggles the flat ↔ parent/child tree view — `H` for "hierarchy",
+        // not `T`: nothing here relates to `t` (transition), the two used
+        // to share a letter by case coincidence only.
+        KeyCode::Char('H') if matches!(app.screen, Screen::Home | Screen::List) => {
             app.toggle_list_view_mode();
         }
         KeyCode::Char('F') if matches!(app.screen, Screen::Home | Screen::List) => {
@@ -365,6 +435,23 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
                     && app.quick_view_detail().is_some()) =>
         {
             app.open_assignee_picker();
+        }
+        // `R` mirrors `r`'s own "act on whatever's focused" shape: with an
+        // issue in view (Detail, or quick view showing one) it manages that
+        // issue's Fix/Affects Version(s); otherwise it opens the Release
+        // review screen. Same target-resolution scope as `A` for the first
+        // arm — this used to be `R`'s only meaning, with the release screen
+        // on the unrelated `w` (no mnemonic connection to "release" at all).
+        KeyCode::Char('R')
+            if (app.screen == Screen::Detail && app.detail.is_some())
+                || (matches!(app.screen, Screen::Home | Screen::List)
+                    && app.quick_view
+                    && app.quick_view_detail().is_some()) =>
+        {
+            app.open_version_picker();
+        }
+        KeyCode::Char('R') if matches!(app.screen, Screen::Home | Screen::List) => {
+            app.open_release_screen()
         }
         KeyCode::Char(']')
             if app.screen == Screen::Detail
@@ -514,6 +601,7 @@ fn nav(app: &mut App, delta: isize) {
         | Screen::Edit
         | Screen::Search
         | Screen::Board
+        | Screen::Release
         | Screen::FieldMapping => {}
     }
 }
@@ -524,7 +612,9 @@ fn back_or_quit(app: &mut App) {
         Screen::Preview | Screen::Edit => app.cancel_edit(),
         Screen::Search => app.close_search(),
         Screen::FieldMapping => app.close_field_mapping(),
-        Screen::List | Screen::Detail | Screen::Board => app.screen = Screen::Home,
+        Screen::List | Screen::Detail | Screen::Board | Screen::Release => {
+            app.screen = Screen::Home
+        }
         Screen::About => app.screen = app.about_return_screen,
     }
 }
@@ -572,6 +662,23 @@ mod tests {
         );
     }
 
+    /// `F1` is a plain alias for `?` — the conventional help key most
+    /// software uses, alongside this app's own `?`.
+    #[test]
+    fn f1_opens_help_same_as_question_mark() {
+        for screen in [Screen::Home, Screen::List, Screen::Board] {
+            let mut app = demo_app();
+            app.screen = screen;
+            handle_key(&mut app, KeyEvent::from(KeyCode::F(1)));
+            assert!(app.show_help, "F1 should open help from {screen:?}");
+        }
+
+        let mut app = demo_app();
+        app.open_release_screen();
+        handle_key(&mut app, KeyEvent::from(KeyCode::F(1)));
+        assert!(app.show_help, "F1 should open help from the release screen");
+    }
+
     /// Regression test: a terminal that misreports pointer movement as a
     /// continued `Drag(Left)` after the button was actually released (some
     /// terminals stamp motion reports with the last-pressed button's SGR
@@ -616,20 +723,20 @@ mod tests {
     fn about_from_detail_returns_to_detail_not_home() {
         let mut app = demo_app();
         app.screen = Screen::Detail;
-        handle_key(&mut app, KeyEvent::from(KeyCode::Char('a')));
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('i')));
         assert_eq!(app.screen, Screen::About);
         handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
         assert_eq!(app.screen, Screen::Detail);
     }
 
-    /// Re-pressing `a` while already in About must not overwrite the
+    /// Re-opening About while already in About must not overwrite the
     /// remembered return screen with About itself.
     #[test]
     fn about_reopened_from_about_does_not_corrupt_return_screen() {
         let mut app = demo_app();
         app.screen = Screen::Detail;
-        handle_key(&mut app, KeyEvent::from(KeyCode::Char('a')));
-        handle_key(&mut app, KeyEvent::from(KeyCode::Char('a')));
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('i')));
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('i')));
         assert_eq!(app.screen, Screen::About);
         handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
         assert_eq!(app.screen, Screen::Detail);
@@ -811,6 +918,86 @@ mod tests {
         assert_eq!(
             app.current_view, before,
             "view-flipping is scoped to Home/List, not Board"
+        );
+    }
+
+    /// `R` mirrors `r`'s "act on whatever's focused" shape: with an issue in
+    /// view it manages that issue's versions; otherwise it opens the
+    /// Release review screen (replacing the old, unrelated `w` binding).
+    #[test]
+    fn shift_r_opens_the_version_picker_when_an_issue_is_in_view_else_the_release_screen() {
+        let mut app = demo_app();
+        app.screen = Screen::Home;
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('R')));
+        assert_eq!(app.screen, Screen::Release);
+
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('R')));
+        assert!(app.version_picker_open);
+        assert_eq!(
+            app.screen,
+            Screen::Detail,
+            "opening the version picker must not navigate away from Detail"
+        );
+    }
+
+    #[test]
+    fn shift_h_toggles_tree_view_not_shift_t() {
+        let mut app = demo_app();
+        app.screen = Screen::Home;
+        let before = app.list_view_mode;
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('T')));
+        assert_eq!(
+            app.list_view_mode, before,
+            "'T' should no longer be bound to anything"
+        );
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('H')));
+        assert_ne!(
+            app.list_view_mode, before,
+            "'H' should toggle the tree view instead"
+        );
+    }
+
+    /// Regression guard: `a` used to open About from anywhere; it's now
+    /// palette-only (see `about_from_detail_returns_to_detail_not_home`)
+    /// and reserved on Home/List for a future "new issue" entry point.
+    #[test]
+    fn lowercase_a_no_longer_opens_about_i_does() {
+        let mut app = demo_app();
+        app.screen = Screen::Home;
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('a')));
+        assert_eq!(app.screen, Screen::Home, "'a' is reserved, not About");
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('i')));
+        assert_eq!(app.screen, Screen::About, "'i' (Info) should open About");
+    }
+
+    #[test]
+    fn r_refreshes_the_board() {
+        let mut app = demo_app();
+        app.open_board();
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('r')));
+        assert!(
+            app.last_synced.is_some(),
+            "refresh should have run (demo mode resolves inline)"
+        );
+    }
+
+    #[test]
+    fn r_refreshes_the_release_screen_in_both_modes() {
+        let mut app = demo_app();
+        app.open_release_screen();
+        let before_versions = app.release.versions.clone();
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('r')));
+        assert_eq!(app.release.versions.len(), before_versions.len());
+
+        app.release_confirm(); // drill into the first version
+        assert!(app.release.drilled.is_some());
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('r')));
+        assert!(
+            app.release.drilled.is_some(),
+            "refreshing while drilled in should re-fetch, not back out"
         );
     }
 

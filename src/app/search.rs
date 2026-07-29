@@ -31,6 +31,18 @@ pub enum SearchRow {
     Live(usize),
 }
 
+/// What confirming a row (or a bulk selection) in Search actually does —
+/// plain "go to issue key" navigation, or the release review screen's
+/// bulk-add flow (`App::open_search_for_release`). `Tab` toggles a row into
+/// `SearchState::bulk_selected` only when this isn't `GoTo`; `confirm_search`
+/// branches on it to decide between navigating and applying a bulk add.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum SearchPurpose {
+    #[default]
+    GoTo,
+    AddToRelease(String),
+}
+
 /// The Search / go-to-issue screen's state.
 #[derive(Clone, Debug, Default)]
 pub struct SearchState {
@@ -54,6 +66,15 @@ pub struct SearchState {
     pending_query: Option<String>,
     /// The tick `pending_query` becomes eligible to dispatch at.
     dispatch_at_tick: u64,
+    /// What confirming actually does — see `SearchPurpose`.
+    pub purpose: SearchPurpose,
+    /// Issue keys toggled via `Tab` — only meaningful when `purpose` isn't
+    /// `GoTo`. A `HashSet` rather than reusing `selected` (the highlighted-
+    /// row cursor, an index): the two track different things and a search
+    /// this can select from spans `all_issues` *and* `live_results`, so a
+    /// stable identifier (the key) survives the row list being rebuilt on
+    /// every keystroke in a way an index into either list wouldn't.
+    pub bulk_selected: HashSet<String>,
 }
 
 impl App {
@@ -61,6 +82,24 @@ impl App {
     pub fn open_search(&mut self) {
         self.search.return_to = self.screen;
         self.search.query.clear();
+        self.search.purpose = SearchPurpose::GoTo;
+        self.search.bulk_selected.clear();
+        self.recompute_search();
+        self.screen = Screen::Search;
+    }
+
+    /// Open Search in bulk-add mode for the release review screen's "add
+    /// issues to this release" action (`a`, drill mode) — `Tab` toggles rows
+    /// into `bulk_selected` instead of `j`/`k`-style single-row navigation
+    /// meaning anything special, and `Enter` applies the bulk add rather
+    /// than jumping to the highlighted issue. `return_to` is whatever
+    /// screen this was opened from (`Screen::Release`, always, in practice),
+    /// same as `open_search`.
+    pub fn open_search_for_release(&mut self, version_name: String) {
+        self.search.return_to = self.screen;
+        self.search.query.clear();
+        self.search.purpose = SearchPurpose::AddToRelease(version_name);
+        self.search.bulk_selected.clear();
         self.recompute_search();
         self.screen = Screen::Search;
     }
@@ -236,8 +275,13 @@ impl App {
     }
 
     /// Open whatever is highlighted in the Search screen: a direct "go to
-    /// issue" jump, or the selected match from the work list.
+    /// issue" jump, or the selected match from the work list — or, in
+    /// bulk-add mode, apply the pending add instead of navigating at all.
     pub fn confirm_search(&mut self) {
+        if let SearchPurpose::AddToRelease(version_name) = self.search.purpose.clone() {
+            self.confirm_add_to_release(version_name);
+            return;
+        }
         let Some(row) = self.search.rows.get(self.search.selected).cloned() else {
             return;
         };
@@ -256,5 +300,55 @@ impl App {
                 }
             }
         }
+    }
+
+    /// `Tab` — toggle the highlighted row into/out of `bulk_selected`. A
+    /// no-op outside bulk-add mode, so `Tab` staying unbound in ordinary
+    /// Search doesn't need its own separate guard at the key-handling layer.
+    pub fn search_toggle_bulk_selected(&mut self) {
+        if self.search.purpose == SearchPurpose::GoTo {
+            return;
+        }
+        let Some(row) = self.search.rows.get(self.search.selected).cloned() else {
+            return;
+        };
+        let Some(key) = self.search_row_key(&row) else {
+            return;
+        };
+        if !self.search.bulk_selected.remove(&key) {
+            self.search.bulk_selected.insert(key);
+        }
+    }
+
+    /// The issue key a `SearchRow` refers to — shared by
+    /// `search_toggle_bulk_selected`, `confirm_add_to_release`'s
+    /// highlighted-row fallback, and `ui::search`'s bulk-mode checkbox
+    /// rendering.
+    pub(crate) fn search_row_key(&self, row: &SearchRow) -> Option<String> {
+        match row {
+            SearchRow::Goto(key) => Some(key.clone()),
+            SearchRow::Match(idx) => self.all_issues.get(*idx).map(|i| i.key.clone()),
+            SearchRow::Live(idx) => self.search.live_results.get(*idx).map(|i| i.key.clone()),
+        }
+    }
+
+    /// Apply the bulk add: every key in `bulk_selected`, or — if nothing
+    /// was explicitly toggled — just the highlighted row, so `Enter` with
+    /// one obvious match still does something useful without requiring
+    /// `Tab` first. Leaves Search back to `return_to` (Release) either way.
+    fn confirm_add_to_release(&mut self, version_name: String) {
+        let mut keys: Vec<String> = self.search.bulk_selected.iter().cloned().collect();
+        if keys.is_empty() {
+            if let Some(row) = self.search.rows.get(self.search.selected).cloned() {
+                if let Some(key) = self.search_row_key(&row) {
+                    keys.push(key);
+                }
+            }
+        }
+        self.screen = self.search.return_to;
+        if keys.is_empty() {
+            return;
+        }
+        self.release_add_to_release(version_name, keys);
     }
 }

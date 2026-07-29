@@ -177,6 +177,7 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
                     vec![
                         hint("t", "transition"),
                         hint("A", "assign"),
+                        hint("R", "version(s)"),
                         hint("e", "edit"),
                         hint("c", "comment"),
                         hint("y/Y", "copy key/URL"),
@@ -213,6 +214,13 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
                 hint("esc", "cancel"),
             ])
         }
+        Screen::Search if app.search.purpose != crate::app::SearchPurpose::GoTo => single(vec![
+            hint("type", "to filter"),
+            hint("↑/↓", "move"),
+            hint("tab", "toggle selected"),
+            hint("⏎", "add selected"),
+            hint("esc", "cancel"),
+        ]),
         Screen::Search => single(vec![
             hint("type", "to filter"),
             hint("↑/↓", "move"),
@@ -242,11 +250,47 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
             // its budget and GO (search/view) drops instead — the same
             // width/content tradeoff as Detail's "fold facts" hint (see the
             // comment above `board_footer_advertises_copy_link_pre_fit`)
-            // rather than something to chase by abbreviating either hint.
-            group("ACT", vec![hint("⏎", "open"), hint("y/Y", "copy key/URL")]),
+            // rather than something to chase by abbreviating any of these.
+            group(
+                "ACT",
+                vec![
+                    hint("⏎", "open"),
+                    hint("y/Y", "copy key/URL"),
+                    hint("r", "refresh"),
+                ],
+            ),
             group("GO", vec![hint("/", "search"), hint("V", "view")]),
             tail(vec![hint("esc/q", "back"), hint("?", "all keys")]),
         ],
+        Screen::Release => {
+            let (nav, act) = if app.release.drilled.is_some() {
+                (
+                    vec![hint("↑/↓", "issue")],
+                    vec![
+                        hint("⏎", "open issue"),
+                        hint("space", "select"),
+                        hint("x", "remove selected"),
+                        hint("a", "add issues"),
+                        hint("r", "refresh"),
+                        hint("esc", "back to versions"),
+                    ],
+                )
+            } else {
+                (
+                    vec![hint("↑/↓", "version")],
+                    vec![
+                        hint("⏎", "drill in"),
+                        hint("s", "split/flat"),
+                        hint("r", "refresh"),
+                    ],
+                )
+            };
+            vec![
+                group("NAV", nav),
+                group("ACT", act),
+                tail(vec![hint("esc/q", "back"), hint("?", "all keys")]),
+            ]
+        }
         Screen::About => single(vec![
             hint("esc/←", "back"),
             hint("?", "help"),
@@ -271,6 +315,7 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
                     "ACT",
                     vec![
                         hint("A", "assign"),
+                        hint("R", "version(s)"),
                         hint("c", "comment"),
                         hint("y/Y", "copy key/URL"),
                         hint("r", refresh),
@@ -286,7 +331,14 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
                 "VIEW",
                 vec![hint("v", "quick"), hint("s", "sort"), hint("f", "filter")],
             ),
-            group("GO", vec![hint("b", "board"), hint("/", "search")]),
+            group(
+                "GO",
+                vec![
+                    hint("b", "board"),
+                    hint("R", "releases"),
+                    hint("/", "search"),
+                ],
+            ),
             tail(vec![hint("?", "all keys")]),
         ],
     }

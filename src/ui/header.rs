@@ -29,6 +29,7 @@ fn screen_label(screen: Screen) -> Option<&'static str> {
         Screen::Home | Screen::Welcome | Screen::Detail => None,
         Screen::List => Some("List"),
         Screen::Board => Some("Board"),
+        Screen::Release => Some("Releases"),
         Screen::Search => Some("Search"),
         Screen::FieldMapping => Some("Field Mapping"),
         Screen::Preview => Some("Preview"),
@@ -271,6 +272,7 @@ mod tests {
     fn screen_label_covers_every_screen_with_a_breadcrumb_segment() {
         assert_eq!(screen_label(Screen::List), Some("List"));
         assert_eq!(screen_label(Screen::Board), Some("Board"));
+        assert_eq!(screen_label(Screen::Release), Some("Releases"));
         assert_eq!(screen_label(Screen::Search), Some("Search"));
         assert_eq!(screen_label(Screen::FieldMapping), Some("Field Mapping"));
         assert_eq!(screen_label(Screen::Preview), Some("Preview"));

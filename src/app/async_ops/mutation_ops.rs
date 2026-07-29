@@ -6,7 +6,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::domain::Comment;
 
-use super::super::{App, Screen};
+use super::super::{App, ReleaseBulkKind, Screen};
 use super::AppEvent;
 
 /// Spawn a workflow transition off the render thread, sending the result
@@ -93,6 +93,147 @@ fn assign_issue_blocking(key: &str, account_id: Option<&str>) -> Option<String> 
         }
     }
     None
+}
+
+/// Spawn a Fix/Affects Version update off the render thread, sending the
+/// result back as `AppEvent::VersionsApplied`. `fix_versions`/
+/// `affects_versions` are each `None` when that field is unchanged in the
+/// picker (see `App::confirm_version_picker`) — `set_versions_blocking`
+/// skips a field entirely rather than sending a needless write for it.
+pub(crate) fn dispatch_set_versions(
+    tx: UnboundedSender<AppEvent>,
+    generation: u64,
+    key: String,
+    fix_versions: Option<Vec<String>>,
+    affects_versions: Option<Vec<String>>,
+) {
+    tokio::spawn(async move {
+        let key_for_result = key.clone();
+        let fix_for_result = fix_versions.clone();
+        let affects_for_result = affects_versions.clone();
+        let (fix_error, affects_error) = tokio::task::spawn_blocking(move || {
+            set_versions_blocking(&key, fix_versions.as_deref(), affects_versions.as_deref())
+        })
+        .await
+        .unwrap_or_else(|_| {
+            (
+                Some("internal error: task panicked".into()),
+                Some("internal error: task panicked".into()),
+            )
+        });
+        let _ = tx.send(AppEvent::VersionsApplied {
+            generation,
+            key: key_for_result,
+            fix_versions: if fix_error.is_none() {
+                fix_for_result
+            } else {
+                None
+            },
+            fix_error,
+            affects_versions: if affects_error.is_none() {
+                affects_for_result
+            } else {
+                None
+            },
+            affects_error,
+        });
+    });
+}
+
+/// Mirrors `apply_transition_blocking`'s "no credentials means nothing to do
+/// live" shape, for both fields independently — a `None` field is skipped
+/// entirely rather than sent as an empty write.
+#[allow(unused_variables)]
+fn set_versions_blocking(
+    key: &str,
+    fix_versions: Option<&[String]>,
+    affects_versions: Option<&[String]>,
+) -> (Option<String>, Option<String>) {
+    #[cfg(feature = "live")]
+    {
+        if let Some(cfg) = crate::jira::Config::load() {
+            let fix_error = fix_versions.and_then(|v| {
+                crate::jira::set_fix_versions(&cfg, key, v)
+                    .err()
+                    .map(|e| e.to_string())
+            });
+            let affects_error = affects_versions.and_then(|v| {
+                crate::jira::set_affects_versions(&cfg, key, v)
+                    .err()
+                    .map(|e| e.to_string())
+            });
+            return (fix_error, affects_error);
+        }
+    }
+    (None, None)
+}
+
+/// Spawn a bulk add-to-release or remove-from-release off the render
+/// thread, sending the result back as `AppEvent::ReleaseBulkApplied`. See
+/// `App::release_remove_selected`/`release_add_to_release` for the two
+/// call sites.
+pub(crate) fn dispatch_release_bulk(
+    tx: UnboundedSender<AppEvent>,
+    generation: u64,
+    version_name: String,
+    keys: Vec<String>,
+    kind: ReleaseBulkKind,
+) {
+    tokio::spawn(async move {
+        let version_for_result = version_name.clone();
+        let results =
+            tokio::task::spawn_blocking(move || release_bulk_blocking(&version_name, &keys, kind))
+                .await
+                .unwrap_or_default();
+        let _ = tx.send(AppEvent::ReleaseBulkApplied {
+            generation,
+            version_name: version_for_result,
+            kind,
+            results,
+        });
+    });
+}
+
+/// For each key: fetch its current `fixVersions` (needed so add/remove only
+/// touches `version_name`, preserving any other release the issue already
+/// targets — Jira has no add/remove endpoint, only "replace the whole
+/// array"), edit it, and write the result back. One issue's failure doesn't
+/// stop the rest — each gets its own `Result` in the returned `Vec`.
+#[allow(unused_variables)]
+fn release_bulk_blocking(
+    version_name: &str,
+    keys: &[String],
+    kind: ReleaseBulkKind,
+) -> Vec<(String, Result<(), String>)> {
+    #[cfg(feature = "live")]
+    {
+        let Some(cfg) = crate::jira::Config::load() else {
+            return keys
+                .iter()
+                .map(|k| (k.clone(), Err("no credentials configured".to_string())))
+                .collect();
+        };
+        keys.iter()
+            .map(|key| {
+                let outcome = (|| {
+                    let detail = crate::jira::fetch_detail(&cfg, key).map_err(|e| e.to_string())?;
+                    let mut versions = detail.fix_versions;
+                    match kind {
+                        ReleaseBulkKind::Add => {
+                            if !versions.iter().any(|v| v == version_name) {
+                                versions.push(version_name.to_string());
+                            }
+                        }
+                        ReleaseBulkKind::Remove => versions.retain(|v| v != version_name),
+                    }
+                    crate::jira::set_fix_versions(&cfg, key, &versions).map_err(|e| e.to_string())
+                })();
+                (key.clone(), outcome)
+            })
+            .collect()
+    }
+    #[cfg(not(feature = "live"))]
+    Vec::new()
 }
 
 /// Spawn a description update off the render thread, sending the result
@@ -311,5 +452,101 @@ impl App {
             Some(name) => format!("✓ assigned to {name}"),
             None => "✓ unassigned".to_string(),
         });
+    }
+
+    /// Applies `AppEvent::VersionsApplied` — see `dispatch_set_versions`
+    /// above. Unlike the other mutation applies, both fields can fail (or
+    /// succeed) independently in one round-trip, so each is reported and
+    /// applied on its own terms rather than the usual single error branch.
+    pub(super) fn apply_versions_applied(
+        &mut self,
+        generation: u64,
+        key: String,
+        fix_versions: Option<Vec<String>>,
+        fix_error: Option<String>,
+        affects_versions: Option<Vec<String>>,
+        affects_error: Option<String>,
+    ) {
+        if generation != self.version_generation {
+            return;
+        }
+        self.loading = false;
+        self.version_pending = false;
+        self.apply_versions_locally(&key, fix_versions, affects_versions);
+        match (&fix_error, &affects_error) {
+            (None, None) => {
+                self.status = format!("updated {key} versions");
+                self.flash("✓ versions updated");
+            }
+            (Some(e), None) => self.status = format!("fix version update failed: {e}"),
+            (None, Some(e)) => self.status = format!("affects version update failed: {e}"),
+            (Some(fe), Some(ae)) => self.status = format!("version update failed: {fe}; {ae}"),
+        }
+    }
+
+    /// Applies `AppEvent::ReleaseBulkApplied` — see `dispatch_release_bulk`
+    /// above. Each successful `Remove` drops that issue from
+    /// `release.issues`/`release.selected`; a successful `Add` doesn't
+    /// touch `release.issues` directly (the issue may not have been in the
+    /// drilled list at all) — `refresh_release_drill_if_showing` re-fetches
+    /// instead, so the list reflects the real server state rather than a
+    /// locally-guessed one.
+    pub(super) fn apply_release_bulk_applied(
+        &mut self,
+        generation: u64,
+        version_name: String,
+        kind: ReleaseBulkKind,
+        results: Vec<(String, Result<(), String>)>,
+    ) {
+        if generation != self.release_bulk_generation {
+            return;
+        }
+        self.loading = false;
+        self.release.bulk_pending = false;
+
+        // Whether the drill-down is still showing the exact version this
+        // bulk op was for — the user may have backed out and drilled into a
+        // different one while it was in flight. `release_bulk_generation`
+        // only distinguishes this op from a *newer* one, not from unrelated
+        // navigation in between, so it can't stand in for this check: a
+        // late-arriving Remove would otherwise `retain()`/clamp
+        // `release.issues` against whatever version is now on screen,
+        // possibly dropping an issue that belongs to both versions from the
+        // wrong one's list. Mirrors the Add branch's own
+        // `refresh_release_drill_if_showing` guard below.
+        let still_showing =
+            self.release.drilled.as_ref().map(|v| v.name.as_str()) == Some(version_name.as_str());
+
+        let mut failures = 0usize;
+        for (key, result) in &results {
+            match result {
+                Ok(()) => {
+                    if still_showing {
+                        self.release.selected.remove(key);
+                        if kind == ReleaseBulkKind::Remove {
+                            self.release.issues.retain(|i| &i.key != key);
+                        }
+                    }
+                    self.apply_versions_locally_for_bulk(key, &version_name, kind);
+                }
+                Err(_) => failures += 1,
+            }
+        }
+        let succeeded = results.len() - failures;
+        self.status = if failures == 0 {
+            self.flash(format!("✓ updated {succeeded} issue(s)"));
+            format!("updated {succeeded} issue(s) for {version_name}")
+        } else {
+            format!("updated {succeeded} issue(s), {failures} failed for {version_name}")
+        };
+
+        if kind == ReleaseBulkKind::Remove {
+            if still_showing {
+                let len = self.release.issues.len();
+                self.release.issue_cursor = self.release.issue_cursor.min(len.saturating_sub(1));
+            }
+        } else {
+            self.refresh_release_drill_if_showing(&version_name);
+        }
     }
 }

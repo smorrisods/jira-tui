@@ -3,7 +3,7 @@
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::domain::{AssignableUser, IssueDetail, IssueSummary, Source, ViewKind};
+use crate::domain::{AssignableUser, IssueDetail, IssueSummary, Source, Version, ViewKind};
 
 use super::super::loader::load_issues_for;
 use super::super::{App, Screen};
@@ -95,6 +95,37 @@ fn assignable_users_blocking() -> Vec<AssignableUser> {
         if let Some(cfg) = crate::jira::Config::load() {
             if let Ok(users) = crate::jira::assignable_users(&cfg, &cfg.project) {
                 return users;
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// Spawn a one-shot background fetch of the current project's versions,
+/// sending the result back as `AppEvent::ProjectVersionsLoaded`. Dispatched
+/// once from `App::new` for a genuine live session, mirroring
+/// `dispatch_teammate_discovery` — so the version picker (`R`) and the
+/// release review screen both have data the moment the user opens them,
+/// without a dedicated fetch-on-open round-trip.
+pub(crate) fn dispatch_project_versions(tx: UnboundedSender<AppEvent>) {
+    tokio::spawn(async move {
+        let versions = tokio::task::spawn_blocking(project_versions_blocking)
+            .await
+            .unwrap_or_default();
+        let _ = tx.send(AppEvent::ProjectVersionsLoaded { versions });
+    });
+}
+
+/// Mirrors `assignable_users_blocking`'s "no credentials/failure means an
+/// empty list" shape — there's nothing sensible to show in the picker/
+/// release screen for a broken live session either.
+#[allow(unused_variables)]
+fn project_versions_blocking() -> Vec<Version> {
+    #[cfg(feature = "live")]
+    {
+        if let Some(cfg) = crate::jira::Config::load() {
+            if let Ok(versions) = crate::jira::list_versions(&cfg, &cfg.project) {
+                return versions;
             }
         }
     }
@@ -195,6 +226,53 @@ fn text_search_blocking(query: &str) -> (Vec<IssueSummary>, Option<String>) {
     (Vec::new(), None)
 }
 
+/// Spawn the release review screen's drill-down fetch off the render
+/// thread, sending the result back as `AppEvent::ReleaseIssuesLoaded`. Only
+/// dispatched for a genuine live session — demo/cache sessions resolve
+/// `App::open_release_drill` synchronously via `domain::demo_issues_for_version`.
+pub(crate) fn dispatch_release_issues(
+    tx: UnboundedSender<AppEvent>,
+    generation: u64,
+    version_name: String,
+) {
+    tokio::spawn(async move {
+        let (issues, error) =
+            tokio::task::spawn_blocking(move || release_issues_blocking(&version_name))
+                .await
+                .unwrap_or_else(|_| (Vec::new(), Some("internal error: task panicked".into())));
+        let _ = tx.send(AppEvent::ReleaseIssuesLoaded {
+            generation,
+            issues,
+            error,
+        });
+    });
+}
+
+/// Mirrors `text_search_blocking`'s "no fallback data, so a failure is
+/// worth surfacing" shape.
+#[allow(unused_variables)]
+fn release_issues_blocking(version_name: &str) -> (Vec<IssueSummary>, Option<String>) {
+    #[cfg(feature = "live")]
+    {
+        let Some(cfg) = crate::jira::Config::load() else {
+            return (
+                Vec::new(),
+                Some("release issues skipped: no credentials configured".into()),
+            );
+        };
+        let jql = crate::jira::jql_for_version(&cfg.project, version_name);
+        match crate::jira::search_issues(&cfg, &jql) {
+            Ok(issues) => (issues, None),
+            Err(e) => (
+                Vec::new(),
+                Some(format!("release issues fetch failed: {e}")),
+            ),
+        }
+    }
+    #[cfg(not(feature = "live"))]
+    (Vec::new(), None)
+}
+
 impl App {
     /// Applies `AppEvent::Refreshed` — see `dispatch_refresh` above.
     pub(super) fn apply_refreshed(
@@ -276,5 +354,41 @@ impl App {
         let names: Vec<String> = users.iter().map(|u| u.display_name.clone()).collect();
         self.merge_teammate_names(&names);
         self.assignable_users = users;
+    }
+
+    /// Applies `AppEvent::ProjectVersionsLoaded` — see
+    /// `dispatch_project_versions` above. Also rebuilds `release.versions`
+    /// (not just `project_versions`) when the release review screen is
+    /// showing the version list — `App::release_refresh` dispatches this
+    /// same fetch to reload it, and the two must land together or a manual
+    /// refresh would silently do nothing. `rebuild_release_versions` reads
+    /// `project_versions` (just updated above) via `project_versions_source`,
+    /// so it picks up the fresh list and still respects `list_mode`.
+    pub(super) fn apply_project_versions_loaded(&mut self, versions: Vec<Version>) {
+        self.project_versions = versions;
+        if self.screen == Screen::Release && self.release.drilled.is_none() {
+            self.rebuild_release_versions();
+        }
+    }
+
+    /// Applies `AppEvent::ReleaseIssuesLoaded` — see
+    /// `dispatch_release_issues` above. Sorted by status here (not just at
+    /// the demo-data call site) so `release_status_groups`' contiguous-run
+    /// grouping stays valid regardless of source.
+    pub(super) fn apply_release_issues_loaded(
+        &mut self,
+        generation: u64,
+        mut issues: Vec<IssueSummary>,
+        error: Option<String>,
+    ) {
+        if generation != self.release_generation {
+            return;
+        }
+        self.release.issues_loading = false;
+        if let Some(e) = error {
+            self.status = format!("⚠ {e}");
+        }
+        issues.sort_by(|a, b| a.status.cmp(&b.status));
+        self.release.issues = issues;
     }
 }

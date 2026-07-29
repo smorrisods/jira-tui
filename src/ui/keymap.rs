@@ -61,7 +61,7 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
         desc: "toggle quick-view panel",
     },
     KeyHint {
-        key: "T",
+        key: "H",
         desc: "toggle parent ↔ child tree view (nests children under parents)",
     },
     KeyHint {
@@ -83,6 +83,27 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
     KeyHint {
         key: "A",
         desc: "assign/unassign (in an issue or quick view) — type to filter, ↑/↓ move",
+    },
+    KeyHint {
+        key: "R",
+        desc: "with an issue open: fix/affects version(s) — space toggle, tab switch field. \
+               Otherwise: release review — versions, drill into one for its issues by status",
+    },
+    KeyHint {
+        key: "s (release)",
+        desc: "cycle the version list's grouping: split unreleased/released (default) or flat",
+    },
+    KeyHint {
+        key: "space (release)",
+        desc: "select an issue, drilled into a release",
+    },
+    KeyHint {
+        key: "x (release)",
+        desc: "remove selected issue(s) — or just the highlighted one — from this release",
+    },
+    KeyHint {
+        key: "a (release)",
+        desc: "add issues to this release, via search",
     },
     KeyHint {
         key: "e / E",
@@ -137,8 +158,8 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
         desc: "cycle view in place (same order as V's picker)",
     },
     KeyHint {
-        key: "a",
-        desc: "about panel",
+        key: "i",
+        desc: "about panel (\"Info\")",
     },
     KeyHint {
         key: "m",
@@ -154,7 +175,8 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
     },
     KeyHint {
         key: "r",
-        desc: "refresh — the list, or the open issue/focused quick view",
+        desc: "refresh whatever's focused — an open issue, focused quick view, the board, \
+               a drilled-into release's issues, or otherwise the list",
     },
     KeyHint {
         key: "⌃K",
@@ -163,6 +185,10 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
     KeyHint {
         key: "? / q",
         desc: "toggle help / quit",
+    },
+    KeyHint {
+        key: "F1",
+        desc: "same as ? — the conventional help key, for anyone reaching for it out of habit",
     },
 ];
 

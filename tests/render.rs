@@ -451,6 +451,54 @@ fn assignee_picker_keeps_the_selection_in_view_on_a_short_terminal() {
 }
 
 #[test]
+fn version_picker_shows_field_tabs_and_checked_versions() {
+    let mut app = demo_app();
+    app.open_by_key("DS-2648"); // demo data: fix v3.5.0, affects v3.4.0
+    app.open_version_picker();
+    let text = render(&app);
+    assert!(text.contains("Fix Version(s)"), "picker should show tabs");
+    assert!(
+        text.contains("Affects Version(s)"),
+        "picker should show tabs"
+    );
+    assert!(
+        text.contains("v3.4.0"),
+        "picker should list project versions"
+    );
+    assert!(
+        text.contains("v3.5.0"),
+        "picker should list project versions"
+    );
+    assert!(
+        text.contains('✓'),
+        "the issue's current fix version should be checked"
+    );
+}
+
+#[test]
+fn version_picker_tab_switches_which_field_is_checked() {
+    let mut app = demo_app();
+    app.open_by_key("DS-2648");
+    app.open_version_picker();
+    app.version_picker_switch_field();
+    assert_eq!(
+        app.version_picker.field,
+        jira_tui::app::VersionField::Affects
+    );
+    let text = render(&app);
+    // v3.4.0 is the issue's affects version, now the active field — matched
+    // by "released" (only the picker's own row carries a release-date
+    // suffix) so this can't accidentally match the Detail screen's own
+    // "affects version(s): v3.4.0" fact row showing through behind the
+    // popup.
+    let v34_line = text
+        .lines()
+        .find(|l| l.contains("v3.4.0") && l.contains("released"))
+        .unwrap();
+    assert!(v34_line.contains('✓'));
+}
+
+#[test]
 fn command_palette_shows_on_key_view_and_app_groups_with_transitions() {
     let mut app = demo_app();
     app.selected = 0;
@@ -1255,6 +1303,117 @@ fn board_screen_shows_columns_and_lanes() {
 }
 
 #[test]
+fn release_screen_lists_versions() {
+    let mut app = demo_app();
+    app.open_release_screen();
+    let text = render(&app);
+    assert!(text.contains("releases"), "release screen should render");
+    assert!(text.contains("v3.4.0"), "should list the released version");
+    assert!(text.contains("v3.5.0"), "should list the upcoming version");
+    assert!(text.contains("released"));
+    assert!(text.contains("unreleased"));
+}
+
+#[test]
+fn release_screen_defaults_to_split_grouping_and_s_cycles_to_flat() {
+    let mut app = demo_app();
+    app.open_release_screen();
+    let text = render(&app);
+    assert!(
+        text.contains("Unreleased") && text.contains("Released"),
+        "the default view should split unreleased from released: {text}"
+    );
+    assert!(text.contains("split unreleased/released"));
+
+    app.release_cycle_list_mode();
+    let text = render(&app);
+    assert!(
+        !text.contains("Unreleased") && !text.contains("Released"),
+        "the flat view should show no group headers: {text}"
+    );
+    assert!(text.contains(" flat"));
+}
+
+#[test]
+fn release_screen_drill_shows_progress_and_grouped_issues() {
+    let mut app = demo_app();
+    app.open_release_screen();
+    let idx = app
+        .release
+        .versions
+        .iter()
+        .position(|v| v.name == "v3.4.0")
+        .unwrap();
+    app.release.cursor = idx;
+    app.release_confirm();
+    let text = render(&app);
+    assert!(
+        text.contains("release · v3.4.0"),
+        "drill title should name the version"
+    );
+    assert!(
+        text.contains("done"),
+        "should show a done/total progress line"
+    );
+    assert!(text.contains("DS-"), "should list the version's issues");
+}
+
+#[test]
+fn release_screen_drill_on_an_empty_version_says_so() {
+    let mut app = demo_app();
+    app.open_release_screen();
+    let idx = app
+        .release
+        .versions
+        .iter()
+        .position(|v| v.name == "v3.6.0")
+        .unwrap();
+    app.release.cursor = idx;
+    app.release_confirm();
+    let text = render(&app);
+    assert!(text.contains("No issues target this release"));
+}
+
+#[test]
+fn release_screen_drill_shows_selected_count_and_checkbox() {
+    let mut app = demo_app();
+    app.open_release_screen();
+    let idx = app
+        .release
+        .versions
+        .iter()
+        .position(|v| v.name == "v3.4.0")
+        .unwrap();
+    app.release.cursor = idx;
+    app.release_confirm();
+    app.release.issue_cursor = 0;
+    app.release_toggle_selected();
+
+    let text = render(&app);
+    assert!(text.contains("1 selected"));
+    assert!(text.contains('✓'));
+}
+
+#[test]
+fn search_screen_bulk_mode_shows_title_and_checkboxes() {
+    let mut app = demo_app();
+    app.screen = Screen::Release;
+    app.open_search_for_release("v3.5.0".into());
+    let text = render(&app);
+    assert!(text.contains("add issues to v3.5.0"));
+    assert!(
+        text.contains('○'),
+        "unselected rows should show an empty checkbox"
+    );
+
+    app.search.selected = 0;
+    app.search_toggle_bulk_selected();
+    let text = render(&app);
+    assert!(text.contains("1 selected"));
+    assert!(text.contains('✓'));
+}
+
+#[test]
 fn board_screen_highlights_selected_card() {
     let mut app = demo_app();
     app.open_board();
@@ -1289,21 +1448,28 @@ fn board_footer_shows_every_group_at_the_default_test_width() {
     // group content (inflated by the unbound `t transition` hint above) was
     // too wide for the footer's hint column.
     //
-    // ACT's `y/Y copy key/URL` hint (added alongside this test) re-tightens
-    // that same budget on its own, so GO drops again at 120 columns — a
-    // width/content tradeoff, not a reintroduction of the original bug (see
-    // `ui::footer::tests::board_footer_advertises_copy_link_pre_fit` for the
-    // pre-fit assertion that the hint is really there, and Detail's
-    // analogous `x` "fold facts" hint for the same pattern). A wider
-    // terminal has room for both.
+    // ACT now carries three hints — `y/Y copy key/URL` (footer-
+    // discoverability work) and `r refresh` (board/release refresh
+    // support) both landed independently and add to that same budget — so
+    // at 120 columns even ACT itself drops, not just GO; a wider terminal
+    // has room for progressively more (see
+    // `ui::footer::tests::board_footer_advertises_copy_link_pre_fit` for
+    // the pre-fit assertion that the copy-link hint is really there, and
+    // Detail's analogous `x` "fold facts" hint for the same kind of
+    // width/content tradeoff, not a reintroduction of the original bug).
     let mut app = demo_app();
     app.open_board();
     let text = render(&app);
     assert!(text.contains("NAV"), "NAV group should render");
-    assert!(text.contains("ACT"), "ACT group should render");
     assert!(text.contains("all keys"), "the pinned tail should render");
 
-    let text = render_at(&app, 150, 40);
+    let text = render_at(&app, 130, 40);
+    assert!(
+        text.contains("ACT"),
+        "ACT group should render once the terminal is wide enough for it"
+    );
+
+    let text = render_at(&app, 160, 40);
     assert!(
         text.contains("GO"),
         "GO group should render once the terminal is wide enough for every group"
@@ -1362,7 +1528,11 @@ fn help_overlay_shows_every_row_without_clipping() {
     // count instead, so every row — especially the last one — must render.
     let mut app = demo_app();
     app.show_help = true;
-    let text = render(&app);
+    // KEYMAP has grown past the default 120x40 reference size's capacity
+    // (see `ui::help::draw_help_overlay`'s clamp-to-frame-height comment) —
+    // tall enough that every row, including the trailing close hint, fits
+    // without clipping.
+    let text = render_at(&app, 120, 46);
     assert!(
         text.contains("? / q") && text.contains("toggle help"),
         "the last help row (close help/quit) must not be clipped"
