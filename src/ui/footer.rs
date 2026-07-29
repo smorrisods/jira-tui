@@ -179,6 +179,7 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
                         hint("A", "assign"),
                         hint("e", "edit"),
                         hint("c", "comment"),
+                        hint("y/Y", "copy key/URL"),
                     ],
                 ),
                 group("NAV", nav),
@@ -237,7 +238,12 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
             // "open the transition picker from a card" is a proposed
             // addition for a later phase, not implemented yet, so it's not
             // advertised here.
-            group("ACT", vec![hint("⏎", "open")]),
+            // At the 120-column reference width this pushes the group past
+            // its budget and GO (search/view) drops instead — the same
+            // width/content tradeoff as Detail's "fold facts" hint (see the
+            // comment above `board_footer_advertises_copy_link_pre_fit`)
+            // rather than something to chase by abbreviating either hint.
+            group("ACT", vec![hint("⏎", "open"), hint("y/Y", "copy key/URL")]),
             group("GO", vec![hint("/", "search"), hint("V", "view")]),
             tail(vec![hint("esc/q", "back"), hint("?", "all keys")]),
         ],
@@ -266,6 +272,7 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
                     vec![
                         hint("A", "assign"),
                         hint("c", "comment"),
+                        hint("y/Y", "copy key/URL"),
                         hint("r", refresh),
                     ],
                 ),
@@ -274,6 +281,7 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
         }
         _ => vec![
             group("NAV", vec![hint("↑/↓", "move"), hint("→/⏎", "open")]),
+            group("ACT", vec![hint("y/Y", "copy key/URL")]),
             group(
                 "VIEW",
                 vec![hint("v", "quick"), hint("s", "sort"), hint("f", "filter")],
@@ -325,6 +333,24 @@ mod tests {
         assert!(
             narrow_nav.hints.iter().any(|h| h.key == "x"),
             "the narrow layout should advertise 'x' to fold the facts panel"
+        );
+    }
+
+    /// Checked against the pre-fit group content, not a rendered frame — at
+    /// the 120-column reference width the hint is already dropped along
+    /// with GO (see `board_footer_does_not_advertise_the_unbound_t_key`'s
+    /// sibling test in `tests/render.rs` for that width/content tradeoff).
+    #[test]
+    fn board_footer_advertises_copy_link_pre_fit() {
+        let mut app = App::new(true);
+        app.open_board();
+        let act = footer_groups(&app)
+            .into_iter()
+            .find(|g| g.label == Some("ACT"))
+            .unwrap();
+        assert!(
+            act.hints.iter().any(|h| h.key == "y/Y"),
+            "Board's ACT group should advertise copying the card's key/URL"
         );
     }
 
