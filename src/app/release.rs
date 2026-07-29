@@ -138,6 +138,26 @@ impl App {
         true
     }
 
+    /// `r` — refresh whatever's currently shown: re-fetch the drilled
+    /// version's issues, or reload the project's version list. Mirrors
+    /// `r`'s own "act on whatever's focused" shape elsewhere in the app.
+    pub fn release_refresh(&mut self) {
+        if let Some(version) = self.release.drilled.clone() {
+            self.open_release_drill(version);
+            return;
+        }
+        if !matches!(self.source, Source::Live { .. }) {
+            self.release.versions = self.project_versions_source();
+            let len = self.release.versions.len();
+            self.release.cursor = self.release.cursor.min(len.saturating_sub(1));
+            return;
+        }
+        // `apply_project_versions_loaded` also refreshes `release.versions`
+        // (not just `project_versions`) when this screen is showing the
+        // version list, so nothing further is needed here once this lands.
+        async_ops::dispatch_project_versions(self.events_tx.clone());
+    }
+
     /// `Space` (drill mode only) — toggle the highlighted issue into/out of
     /// `release.selected`, the pending set `release_remove_selected` acts on.
     pub fn release_toggle_selected(&mut self) {

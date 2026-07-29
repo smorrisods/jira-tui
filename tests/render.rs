@@ -1428,21 +1428,28 @@ fn board_footer_shows_every_group_at_the_default_test_width() {
     // group content (inflated by the unbound `t transition` hint above) was
     // too wide for the footer's hint column.
     //
-    // ACT's `y/Y copy key/URL` hint (added alongside this test) re-tightens
-    // that same budget on its own, so GO drops again at 120 columns — a
-    // width/content tradeoff, not a reintroduction of the original bug (see
-    // `ui::footer::tests::board_footer_advertises_copy_link_pre_fit` for the
-    // pre-fit assertion that the hint is really there, and Detail's
-    // analogous `x` "fold facts" hint for the same pattern). A wider
-    // terminal has room for both.
+    // ACT now carries three hints — `y/Y copy key/URL` (footer-
+    // discoverability work) and `r refresh` (board/release refresh
+    // support) both landed independently and add to that same budget — so
+    // at 120 columns even ACT itself drops, not just GO; a wider terminal
+    // has room for progressively more (see
+    // `ui::footer::tests::board_footer_advertises_copy_link_pre_fit` for
+    // the pre-fit assertion that the copy-link hint is really there, and
+    // Detail's analogous `x` "fold facts" hint for the same kind of
+    // width/content tradeoff, not a reintroduction of the original bug).
     let mut app = demo_app();
     app.open_board();
     let text = render(&app);
     assert!(text.contains("NAV"), "NAV group should render");
-    assert!(text.contains("ACT"), "ACT group should render");
     assert!(text.contains("all keys"), "the pinned tail should render");
 
-    let text = render_at(&app, 150, 40);
+    let text = render_at(&app, 130, 40);
+    assert!(
+        text.contains("ACT"),
+        "ACT group should render once the terminal is wide enough for it"
+    );
+
+    let text = render_at(&app, 160, 40);
     assert!(
         text.contains("GO"),
         "GO group should render once the terminal is wide enough for every group"

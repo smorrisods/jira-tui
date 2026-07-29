@@ -61,7 +61,7 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
         desc: "toggle quick-view panel",
     },
     KeyHint {
-        key: "T",
+        key: "H",
         desc: "toggle parent ↔ child tree view (nests children under parents)",
     },
     KeyHint {
@@ -71,10 +71,6 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
     KeyHint {
         key: "b",
         desc: "swimlane board (Kanban-style, grouped by epic)",
-    },
-    KeyHint {
-        key: "w",
-        desc: "release review — versions, drill into one for its issues by status",
     },
     KeyHint {
         key: "h/j/k/l (board)",
@@ -90,7 +86,20 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
     },
     KeyHint {
         key: "R",
-        desc: "fix/affects version(s) (in an issue or quick view) — space toggle, tab switch field",
+        desc: "with an issue open: fix/affects version(s) — space toggle, tab switch field. \
+               Otherwise: release review — versions, drill into one for its issues by status",
+    },
+    KeyHint {
+        key: "space (release)",
+        desc: "select an issue, drilled into a release",
+    },
+    KeyHint {
+        key: "x (release)",
+        desc: "remove selected issue(s) — or just the highlighted one — from this release",
+    },
+    KeyHint {
+        key: "a (release)",
+        desc: "add issues to this release, via search",
     },
     KeyHint {
         key: "e / E",
@@ -145,10 +154,6 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
         desc: "cycle view in place (same order as V's picker)",
     },
     KeyHint {
-        key: "a",
-        desc: "about panel",
-    },
-    KeyHint {
         key: "m",
         desc: "toggle mouse mode",
     },
@@ -162,7 +167,8 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
     },
     KeyHint {
         key: "r",
-        desc: "refresh — the list, or the open issue/focused quick view",
+        desc: "refresh whatever's focused — an open issue, focused quick view, the board, \
+               a drilled-into release's issues, or otherwise the list",
     },
     KeyHint {
         key: "⌃K",

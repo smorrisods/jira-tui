@@ -357,9 +357,18 @@ impl App {
     }
 
     /// Applies `AppEvent::ProjectVersionsLoaded` — see
-    /// `dispatch_project_versions` above.
+    /// `dispatch_project_versions` above. Also refreshes `release.versions`
+    /// (not just `project_versions`) when the release review screen is
+    /// showing the version list — `App::release_refresh` dispatches this
+    /// same fetch to reload it, and the two must land together or a manual
+    /// refresh would silently do nothing.
     pub(super) fn apply_project_versions_loaded(&mut self, versions: Vec<Version>) {
-        self.project_versions = versions;
+        self.project_versions = versions.clone();
+        if self.screen == Screen::Release && self.release.drilled.is_none() {
+            let len = versions.len();
+            self.release.versions = versions;
+            self.release.cursor = self.release.cursor.min(len.saturating_sub(1));
+        }
     }
 
     /// Applies `AppEvent::ReleaseIssuesLoaded` — see

@@ -250,8 +250,15 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
             // its budget and GO (search/view) drops instead — the same
             // width/content tradeoff as Detail's "fold facts" hint (see the
             // comment above `board_footer_advertises_copy_link_pre_fit`)
-            // rather than something to chase by abbreviating either hint.
-            group("ACT", vec![hint("⏎", "open"), hint("y/Y", "copy key/URL")]),
+            // rather than something to chase by abbreviating any of these.
+            group(
+                "ACT",
+                vec![
+                    hint("⏎", "open"),
+                    hint("y/Y", "copy key/URL"),
+                    hint("r", "refresh"),
+                ],
+            ),
             group("GO", vec![hint("/", "search"), hint("V", "view")]),
             tail(vec![hint("esc/q", "back"), hint("?", "all keys")]),
         ],
@@ -264,11 +271,15 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
                         hint("space", "select"),
                         hint("x", "remove selected"),
                         hint("a", "add issues"),
+                        hint("r", "refresh"),
                         hint("esc", "back to versions"),
                     ],
                 )
             } else {
-                (vec![hint("↑/↓", "version")], vec![hint("⏎", "drill in")])
+                (
+                    vec![hint("↑/↓", "version")],
+                    vec![hint("⏎", "drill in"), hint("r", "refresh")],
+                )
             };
             vec![
                 group("NAV", nav),
@@ -320,7 +331,7 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
                 "GO",
                 vec![
                     hint("b", "board"),
-                    hint("w", "releases"),
+                    hint("R", "releases"),
                     hint("/", "search"),
                 ],
             ),
