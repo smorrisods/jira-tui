@@ -272,7 +272,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('/') => app.open_search(),
             KeyCode::Char('V') => app.open_view_picker(),
             KeyCode::Char('r') => app.refresh(),
-            KeyCode::Char('?') => app.show_help = true,
+            KeyCode::Char('?') | KeyCode::F(1) => app.show_help = true,
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => back_or_quit(app),
             _ => {}
         }
@@ -308,7 +308,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             // vs. one flat list) — no-op in drill mode, mirroring the work
             // list's own `s` sort-cycle key.
             KeyCode::Char('s') if app.release.drilled.is_none() => app.release_cycle_list_mode(),
-            KeyCode::Char('?') => app.show_help = true,
+            KeyCode::Char('?') | KeyCode::F(1) => app.show_help = true,
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left | KeyCode::Backspace
                 if !app.release_back() =>
             {
@@ -320,7 +320,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
     }
 
     match key.code {
-        KeyCode::Char('?') => app.show_help = true,
+        KeyCode::Char('?') | KeyCode::F(1) => app.show_help = true,
         // `a` no longer opens About directly — it's a legacy, rarely-used
         // screen, not worth the primary lowercase slot (still reachable via
         // the command palette). Reserved on Home/List for a future "new
@@ -660,6 +660,23 @@ mod tests {
             app.selected, 0,
             "the swallowed keypress must not also move the selection"
         );
+    }
+
+    /// `F1` is a plain alias for `?` — the conventional help key most
+    /// software uses, alongside this app's own `?`.
+    #[test]
+    fn f1_opens_help_same_as_question_mark() {
+        for screen in [Screen::Home, Screen::List, Screen::Board] {
+            let mut app = demo_app();
+            app.screen = screen;
+            handle_key(&mut app, KeyEvent::from(KeyCode::F(1)));
+            assert!(app.show_help, "F1 should open help from {screen:?}");
+        }
+
+        let mut app = demo_app();
+        app.open_release_screen();
+        handle_key(&mut app, KeyEvent::from(KeyCode::F(1)));
+        assert!(app.show_help, "F1 should open help from the release screen");
     }
 
     /// Regression test: a terminal that misreports pointer movement as a

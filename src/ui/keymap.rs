@@ -182,6 +182,10 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
         key: "? / q",
         desc: "toggle help / quit",
     },
+    KeyHint {
+        key: "F1",
+        desc: "same as ? — the conventional help key, for anyone reaching for it out of habit",
+    },
 ];
 
 #[cfg(test)]
