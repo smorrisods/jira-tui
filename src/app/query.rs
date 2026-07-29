@@ -105,16 +105,19 @@ impl App {
         Some(self.issue_url_for(&self.selected_issue()?.key))
     }
 
-    /// `y`: copy the selected issue's key to the clipboard via OSC 52.
-    /// The command palette's "copy issue key" calls `copy_key_value`
-    /// directly with its own already-resolved key (e.g. a Board-selected
-    /// card, which `selected_issue()` doesn't reflect) rather than through
-    /// this entry point — see `app::palette`.
+    /// `y`: copy whichever issue is actually in view to the clipboard via
+    /// OSC 52. Resolved via `palette_context` — the same screen-aware
+    /// lookup the command palette uses (Detail/quick-view's own detail,
+    /// Board's `board_sel`-tracked card, otherwise the list's
+    /// `selected_issue()`) — rather than `selected_issue()` directly, which
+    /// doesn't reflect a Board selection at all: `board_move_card`/`_col`/
+    /// `_lane` never touch `self.selected`, so pressing `y` on a highlighted
+    /// board card used to silently copy whatever the list's own selection
+    /// happened to be instead.
     pub fn copy_key(&mut self) {
-        let Some(issue) = self.selected_issue() else {
+        let Some(key) = self.palette_context().0 else {
             return;
         };
-        let key = issue.key.clone();
         self.copy_key_value(&key);
     }
 
@@ -124,14 +127,13 @@ impl App {
         self.flash(format!("✓ copied {key}"));
     }
 
-    /// `Y`: copy the selected issue's browse URL to the clipboard via OSC
-    /// 52. See `copy_key`'s doc comment — the palette calls
-    /// `copy_url_for_key` with its own resolved key instead.
+    /// `Y`: copy whichever issue is actually in view's browse URL to the
+    /// clipboard via OSC 52. See `copy_key`'s doc comment for why this
+    /// resolves through `palette_context` rather than `selected_issue()`.
     pub fn copy_url(&mut self) {
-        let Some(issue) = self.selected_issue() else {
+        let Some(key) = self.palette_context().0 else {
             return;
         };
-        let key = issue.key.clone();
         self.copy_url_for_key(&key);
     }
 
