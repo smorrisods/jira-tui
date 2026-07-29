@@ -371,26 +371,33 @@ fn linked_panel_title(detail: &IssueDetail) -> Line<'static> {
     ))
 }
 
-pub(crate) fn description_lines(detail: &IssueDetail) -> Vec<Line<'static>> {
-    let mut lines = adf::render(&detail.description).lines;
+/// `width` is the column width this description will actually be wrapped
+/// to (see `adf::render`'s doc comment) — needed so a blockquote/code-block
+/// bar can be pre-wrapped to survive line wrapping instead of vanishing on
+/// continuation rows.
+pub(crate) fn description_lines(detail: &IssueDetail, width: usize) -> Vec<Line<'static>> {
+    let mut lines = adf::render(&detail.description, width).lines;
     if let Some(ac) = &detail.acceptance_criteria {
         lines.push(divider());
         lines.push(Line::from(Span::styled(
             "Acceptance Criteria",
             Style::default().fg(accent()).add_modifier(Modifier::BOLD),
         )));
-        lines.extend(adf::render(ac).lines);
+        lines.extend(adf::render(ac, width).lines);
     }
     lines
 }
 
 /// The wide/narrow layouts' comment-card rendering (SPEC.md §6): a 2-cell
 /// left rule — maple for the current user's own comments, orchid otherwise
-/// — ahead of the author/timestamp header and every ADF body line. Same
+/// — ahead of the author/timestamp header and every ADF body line, each
+/// pre-wrapped to `width` (via `wrap_with_bar`) so the rule survives a long
+/// line wrapping instead of only showing on its first on-screen row. Same
 /// section-local-offset contract as `activity_lines_plain`.
 fn activity_lines_cards(
     comments: &[Comment],
     current_user: &str,
+    width: usize,
 ) -> (Vec<Line<'static>>, Option<usize>, Vec<usize>) {
     let mut lines = Vec::new();
     let mut header = None;
@@ -413,8 +420,7 @@ fn activity_lines_cards(
             };
             lines.push(Line::default());
             starts.push(lines.len());
-            lines.push(Line::from(vec![
-                Span::styled("▌ ", Style::default().fg(rule)),
+            let header_line = Line::from(vec![
                 Span::styled(
                     comment.author.clone(),
                     Style::default()
@@ -425,11 +431,15 @@ fn activity_lines_cards(
                     format!(" · {}", comment.created),
                     Style::default().fg(muted()),
                 ),
-            ]));
-            for body_line in adf::render(&comment.body).lines {
-                let mut spans = vec![Span::styled("▌ ", Style::default().fg(rule))];
-                spans.extend(body_line.spans);
-                lines.push(Line::from(spans));
+            ]);
+            lines.extend(wrap_with_bar(&header_line, width, "▌ ", rule));
+            // Nested content (e.g. a blockquote inside the comment) is
+            // rendered at `width` minus this card's own 2-column bar, so
+            // any *inner* bar it adds is sized against the space actually
+            // left over rather than the full column width.
+            let body_width = width.saturating_sub(2).max(1);
+            for body_line in adf::render(&comment.body, body_width).lines {
+                lines.extend(wrap_with_bar(&body_line, width, "▌ ", rule));
             }
         }
     }
@@ -518,16 +528,24 @@ fn linkify_panel(mut lines: Vec<Line<'static>>, pane: DetailPane) -> Panel {
 /// column (description + activity); the other four fields are the static
 /// side rail, each independently linkified and pane-tagged so `{`/`}`
 /// cycling reaches every one of them even though only `main` gets mouse
-/// hit-testing (see `app::mouse::link_at`).
-pub fn wide_detail(detail: &IssueDetail, current_user: &str, updated: &str) -> WideDetail {
+/// hit-testing (see `app::mouse::link_at`). `main_width` is the actual
+/// column width `main` will be rendered/wrapped at — see `adf::render`'s
+/// doc comment for why the description/comment bars need it up front.
+pub fn wide_detail(
+    detail: &IssueDetail,
+    current_user: &str,
+    updated: &str,
+    main_width: usize,
+) -> WideDetail {
     let identity = linkify_panel(identity_lines(detail), DetailPane::Identity);
     let workflow = linkify_panel(workflow_lines(detail), DetailPane::Workflow);
     let meta = linkify_panel(meta_lines(detail, updated), DetailPane::Meta);
     let links = linkify_panel(links_lines(detail), DetailPane::Links);
     let children = linkify_panel(children_lines(detail), DetailPane::Children);
 
-    let mut main_lines = description_lines(detail);
-    let (activity, header, starts) = activity_lines_cards(&detail.comments, current_user);
+    let mut main_lines = description_lines(detail, main_width);
+    let (activity, header, starts) =
+        activity_lines_cards(&detail.comments, current_user, main_width);
     if !activity.is_empty() {
         main_lines.push(divider());
     }
@@ -573,12 +591,15 @@ pub fn wide_detail_links(wide: &WideDetail) -> Vec<LinkTarget> {
 
 /// The Detail screen's narrow layout (SPEC.md §6): identity → facts panel
 /// (foldable) → description → linked → activity, all one scrollable
-/// document (same single-pane model as `issue_detail_lines`).
+/// document (same single-pane model as `issue_detail_lines`). `width` is
+/// the actual column width this single pane will be rendered/wrapped at —
+/// see `wide_detail`'s `main_width` doc comment.
 pub fn narrow_detail(
     detail: &IssueDetail,
     current_user: &str,
     updated: &str,
     facts_folded: bool,
+    width: usize,
 ) -> NarrowDetail {
     let mut lines = identity_lines(detail);
     lines.push(facts_panel_title(facts_folded));
@@ -589,7 +610,7 @@ pub fn narrow_detail(
         lines.extend(workflow_lines(detail));
     }
     lines.push(divider());
-    lines.extend(description_lines(detail));
+    lines.extend(description_lines(detail, width));
 
     let linked = linked_lines(detail);
     if !linked.is_empty() {
@@ -598,7 +619,7 @@ pub fn narrow_detail(
         lines.extend(linked);
     }
 
-    let (activity, header, starts) = activity_lines_cards(&detail.comments, current_user);
+    let (activity, header, starts) = activity_lines_cards(&detail.comments, current_user, width);
     if !activity.is_empty() {
         lines.push(divider());
     }
@@ -628,9 +649,16 @@ pub struct QuickViewWide {
     pub meta: Panel,
 }
 
-pub fn quick_view_wide(detail: &IssueDetail, updated: &str) -> QuickViewWide {
+pub fn quick_view_wide(
+    detail: &IssueDetail,
+    updated: &str,
+    description_width: usize,
+) -> QuickViewWide {
     QuickViewWide {
-        description: linkify_panel(description_lines(detail), DetailPane::Main),
+        description: linkify_panel(
+            description_lines(detail, description_width),
+            DetailPane::Main,
+        ),
         meta: linkify_panel(quick_view_meta_lines(detail, updated), DetailPane::Meta),
     }
 }
@@ -656,14 +684,14 @@ pub struct QuickViewNarrow {
     pub panel: Panel,
 }
 
-pub fn quick_view_narrow(detail: &IssueDetail, updated: &str) -> QuickViewNarrow {
+pub fn quick_view_narrow(detail: &IssueDetail, updated: &str, width: usize) -> QuickViewNarrow {
     let mut lines = vec![
         quick_view_chip_line(detail),
         Line::default(),
         quick_view_inline_kv_line(detail, updated),
         Line::default(),
     ];
-    lines.extend(description_lines(detail));
+    lines.extend(description_lines(detail, width));
     let links = linkify(&mut lines, DetailPane::Main);
     QuickViewNarrow {
         panel: Panel { lines, links },
@@ -684,6 +712,65 @@ pub fn highlight_target(lines: &mut [Line<'static>], target: &LinkTarget) {
             Style::default().add_modifier(Modifier::REVERSED),
         );
     }
+}
+
+/// Extract the character range `range` (into `line`'s flattened text, same
+/// space `restyle_range`/`wrapped_row_ranges` use) as a standalone `Line`,
+/// preserving each character's original span style. The building block
+/// `wrap_with_bar` uses to turn one logical (pre-wrap) `Line` into several
+/// physical rows that each still carry their own copy of a persistent
+/// left-margin bar.
+fn slice_line(line: &Line<'static>, range: std::ops::Range<usize>) -> Line<'static> {
+    let mut chars: Vec<char> = Vec::new();
+    let mut owner: Vec<usize> = Vec::new();
+    for (si, span) in line.spans.iter().enumerate() {
+        for c in span.content.chars() {
+            chars.push(c);
+            owner.push(si);
+        }
+    }
+    let end = range.end.min(chars.len());
+    let start = range.start.min(end);
+    let mut new_spans: Vec<Span<'static>> = Vec::new();
+    let mut idx = start;
+    while idx < end {
+        let span_idx = owner[idx];
+        let s0 = idx;
+        while idx < end && owner[idx] == span_idx {
+            idx += 1;
+        }
+        let run: String = chars[s0..idx].iter().collect();
+        new_spans.push(Span::styled(run, line.spans[span_idx].style));
+    }
+    Line::from(new_spans)
+}
+
+/// Word-wrap `line` to `width` columns (matching ratatui's own
+/// `Wrap { trim: false }`, via `wrapped_row_ranges`) and prepend
+/// `bar_glyph` (styled `bar_colour`) to *every* resulting row, not just the
+/// first. `Paragraph`'s automatic wrap only re-flows text — it has no
+/// notion of a prefix that should repeat on every wrapped visual row, so a
+/// `"┃ "`/`"▌ "` span added once to a long logical `Line` only shows up on
+/// that line's first on-screen row, leaving continuation rows with no bar.
+/// Used by ADF blockquote/code-block rendering (`adf::render`) and the
+/// comment-card left rule (`activity_lines_cards`) — the two places that
+/// need a bar to survive a line wrapping.
+pub(crate) fn wrap_with_bar(
+    line: &Line<'static>,
+    width: usize,
+    bar_glyph: &'static str,
+    bar_colour: Color,
+) -> Vec<Line<'static>> {
+    let bar_width = Line::from(bar_glyph).width();
+    let content_width = width.saturating_sub(bar_width).max(1);
+    wrapped_row_ranges(line, content_width)
+        .into_iter()
+        .map(|range| {
+            let mut spans = vec![Span::styled(bar_glyph, Style::default().fg(bar_colour))];
+            spans.extend(slice_line(line, range).spans);
+            Line::from(spans)
+        })
+        .collect()
 }
 
 /// Patch every span covering `[start, end)` chars of `line`'s flattened
@@ -996,7 +1083,7 @@ mod link_tests {
     #[test]
     fn quick_view_narrow_finds_parent_and_link_and_body_keys() {
         let detail = demo_detail(&demo_issues()[1].key);
-        let rendered = quick_view_narrow(&detail, "12m ago");
+        let rendered = quick_view_narrow(&detail, "12m ago", 120);
         assert!(!rendered.panel.links.is_empty());
         // Every recorded target actually points at text within its line's
         // bounds.
@@ -1011,7 +1098,7 @@ mod link_tests {
     #[test]
     fn quick_view_wide_meta_shows_only_the_seven_spec_fields() {
         let detail = demo_detail(&demo_issues()[1].key);
-        let wide = quick_view_wide(&detail, "12m ago");
+        let wide = quick_view_wide(&detail, "12m ago", 120);
         let meta_text: String = wide
             .meta
             .lines
@@ -1034,7 +1121,7 @@ mod link_tests {
     #[test]
     fn quick_view_wide_links_reads_description_before_meta() {
         let detail = demo_detail(&demo_issues()[1].key);
-        let wide = quick_view_wide(&detail, "12m ago");
+        let wide = quick_view_wide(&detail, "12m ago", 120);
         let combined = quick_view_wide_links(&wide);
         assert_eq!(
             combined.len(),
@@ -1055,7 +1142,7 @@ mod link_tests {
     #[test]
     fn wide_detail_main_offsets_are_valid_indices() {
         let detail = demo_detail(&demo_issues()[1].key);
-        let wide = wide_detail(&detail, "you", "12m ago");
+        let wide = wide_detail(&detail, "you", "12m ago", 120);
         if let Some(header) = wide.main.comments_header {
             assert!(header < wide.main.lines.len());
         }
@@ -1078,9 +1165,41 @@ mod link_tests {
     #[test]
     fn narrow_detail_folded_facts_has_fewer_lines_than_unfolded() {
         let detail = demo_detail(&demo_issues()[1].key);
-        let folded = narrow_detail(&detail, "you", "12m ago", true);
-        let unfolded = narrow_detail(&detail, "you", "12m ago", false);
+        let folded = narrow_detail(&detail, "you", "12m ago", true, 120);
+        let unfolded = narrow_detail(&detail, "you", "12m ago", false, 120);
         assert!(folded.lines.lines.len() < unfolded.lines.lines.len());
+    }
+
+    /// Regression test: a comment's left rule (`▌ `) used to be added once
+    /// per logical ADF line, so a long comment body only showed the bar on
+    /// each paragraph's *first* on-screen row — once `Paragraph::wrap`
+    /// re-flowed a long line, its continuation rows had no bar at all.
+    /// `activity_lines_cards` now pre-wraps each line (`wrap_with_bar`) at
+    /// the actual column width, so every wrapped row carries its own copy.
+    #[test]
+    fn comment_card_bar_repeats_on_every_wrapped_row() {
+        let long_text = "word ".repeat(30);
+        let comment = Comment {
+            id: "1".into(),
+            author: "Ada".into(),
+            created: "1h ago".into(),
+            body: serde_json::json!({
+                "type": "doc", "version": 1,
+                "content": [
+                    { "type": "paragraph", "content": [ { "type": "text", "text": long_text } ] }
+                ]
+            }),
+        };
+        let (lines, _header, starts) = activity_lines_cards(&[comment], "someone else", 20);
+        assert_eq!(starts.len(), 1);
+        let comment_lines = &lines[starts[0]..];
+        assert!(
+            comment_lines.len() > 3,
+            "a long comment body at width 20 should wrap across several rows"
+        );
+        for l in comment_lines {
+            assert_eq!(l.spans[0].content.as_ref(), "▌ ");
+        }
     }
 }
 
@@ -1133,5 +1252,46 @@ mod wrap_row_tests {
     fn line_col_at_row_clamps_a_column_past_the_end_of_its_row() {
         let lines = vec![line("hi")];
         assert_eq!(line_col_at_row(&lines, 10, 0, 99), Some((0, 2)));
+    }
+
+    /// Regression test: a `"┃ "`/`"▌ "` bar added once to a long logical
+    /// `Line` only showed up on that line's first on-screen row once
+    /// `Paragraph::wrap` re-flowed it — `wrap_with_bar` exists so every
+    /// wrapped row gets its own copy of the bar instead.
+    #[test]
+    fn wrap_with_bar_repeats_the_bar_on_every_wrapped_row() {
+        let rows = wrap_with_bar(&line("aaaaa bbbbb ccccc"), 10, "┃ ", Color::DarkGray);
+        assert_eq!(rows.len(), 3, "the same 3-row split wrapped_row_ranges finds at width 10 (minus the 2-col bar) for this text");
+        for row in &rows {
+            assert_eq!(row.spans[0].content.as_ref(), "┃ ");
+            assert_eq!(row.spans[0].style.fg, Some(Color::DarkGray));
+        }
+        let joined: String = rows
+            .iter()
+            .flat_map(|l| l.spans[1..].iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(joined, "aaaaabbbbbccccc");
+    }
+
+    #[test]
+    fn wrap_with_bar_preserves_span_styling_across_the_split() {
+        let styled = Line::from(vec![
+            Span::styled("bold ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw("plain text that keeps going"),
+        ]);
+        let rows = wrap_with_bar(&styled, 12, "▌ ", Color::Red);
+        assert!(rows.len() > 1);
+        assert!(rows[0]
+            .spans
+            .iter()
+            .any(|s| s.style.add_modifier.contains(Modifier::BOLD) && s.content.contains("bold")));
+    }
+
+    #[test]
+    fn wrap_with_bar_leaves_a_short_line_as_a_single_bar_row() {
+        let rows = wrap_with_bar(&line("short"), 40, "┃ ", Color::DarkGray);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].spans[0].content.as_ref(), "┃ ");
     }
 }

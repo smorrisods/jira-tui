@@ -46,9 +46,10 @@ impl App {
         }
         let current_user = self.current_user_display();
         let updated = self.issue_updated(&detail.key).to_string();
+        let width = self.detail_main_width();
         match detail_layout_for_width(self.detail_area.get().width) {
             DetailLayout::Wide => {
-                let wide = crate::render::wide_detail(detail, &current_user, &updated);
+                let wide = crate::render::wide_detail(detail, &current_user, &updated, width);
                 (wide.main.comments_header, wide.main.comment_starts)
             }
             DetailLayout::Narrow => {
@@ -57,6 +58,7 @@ impl App {
                     &current_user,
                     &updated,
                     self.facts_folded,
+                    width,
                 );
                 (narrow.lines.comments_header, narrow.lines.comment_starts)
             }

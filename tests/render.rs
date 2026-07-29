@@ -237,6 +237,40 @@ fn detail_screen_shows_comment_indicator_and_jumps_to_comments() {
 }
 
 #[test]
+fn comment_card_bar_stays_continuous_across_a_wrapped_body_line() {
+    // Regression test, end-to-end through the real render pipeline: the
+    // comment card's left `▌` rule used to be added once per logical ADF
+    // line, so a long comment body only showed it on the first on-screen
+    // row once `Paragraph::wrap` re-flowed the rest — leaving a visible gap
+    // on every wrapped continuation row (see `render::wrap_with_bar`).
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.selected = 0;
+    app.open_detail();
+    // `jump_to_comments` picks its offset from the last-rendered
+    // `detail_area`'s width (see the sibling test above), so render once at
+    // the target width *first* — narrow enough that the demo's first
+    // comment (a full sentence) wraps across more than one row.
+    let _ = render_at(&app, 70, 40);
+    app.jump_to_comments();
+    let text = render_at(&app, 70, 40);
+    let bar_rows: Vec<usize> = text
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains('▌'))
+        .map(|(i, _)| i)
+        .collect();
+    assert!(
+        bar_rows.len() >= 2,
+        "expected the wrapped comment body to show the bar on more than one row, got {bar_rows:?} in:\n{text}"
+    );
+    assert!(
+        bar_rows.windows(2).any(|pair| pair[1] - pair[0] == 1),
+        "expected at least one pair of *adjacent* bar rows (proving the bar survived a wrap, not just showing on scattered single rows), got {bar_rows:?} in:\n{text}"
+    );
+}
+
+#[test]
 fn quick_view_panel_no_longer_shows_comments_or_activity() {
     // SPEC.md §4 (phase 7): quick view is now description-excerpt + compact
     // meta grid only — no workflow strip, no comments/activity section
@@ -1254,13 +1288,26 @@ fn board_footer_shows_every_group_at_the_default_test_width() {
     // silently drop even at the standard 120-column test width because the
     // group content (inflated by the unbound `t transition` hint above) was
     // too wide for the footer's hint column.
+    //
+    // ACT's `y/Y copy key/URL` hint (added alongside this test) re-tightens
+    // that same budget on its own, so GO drops again at 120 columns — a
+    // width/content tradeoff, not a reintroduction of the original bug (see
+    // `ui::footer::tests::board_footer_advertises_copy_link_pre_fit` for the
+    // pre-fit assertion that the hint is really there, and Detail's
+    // analogous `x` "fold facts" hint for the same pattern). A wider
+    // terminal has room for both.
     let mut app = demo_app();
     app.open_board();
     let text = render(&app);
     assert!(text.contains("NAV"), "NAV group should render");
     assert!(text.contains("ACT"), "ACT group should render");
-    assert!(text.contains("GO"), "GO group should render");
     assert!(text.contains("all keys"), "the pinned tail should render");
+
+    let text = render_at(&app, 150, 40);
+    assert!(
+        text.contains("GO"),
+        "GO group should render once the terminal is wide enough for every group"
+    );
 }
 
 // The Detail footer's NAV group (which the `x` "fold facts" hint joins) is

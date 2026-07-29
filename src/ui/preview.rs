@@ -41,7 +41,7 @@ pub(crate) fn draw_preview(f: &mut Frame, app: &App, area: Rect) {
         divider(),
     ];
     if let Some(adf) = app.pending_edit.as_ref() {
-        lines.extend(adf::render(adf).lines);
+        lines.extend(adf::render(adf, inner.width as usize).lines);
     }
     let para = Paragraph::new(Text::from(lines))
         .wrap(Wrap { trim: false })

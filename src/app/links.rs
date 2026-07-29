@@ -34,21 +34,30 @@ impl App {
         };
         if self.screen != Screen::Detail {
             let updated = self.issue_updated(&detail.key).to_string();
+            let width = self.quick_view_description_width();
             return match quick_view_layout_for_width(self.quick_view_area.get().width) {
                 QuickViewLayout::Wide => {
-                    render::quick_view_wide_links(&render::quick_view_wide(detail, &updated))
+                    render::quick_view_wide_links(&render::quick_view_wide(detail, &updated, width))
                 }
-                QuickViewLayout::Narrow => render::quick_view_narrow(detail, &updated).panel.links,
+                QuickViewLayout::Narrow => {
+                    render::quick_view_narrow(detail, &updated, width)
+                        .panel
+                        .links
+                }
             };
         }
         let current_user = self.current_user_display();
         let updated = self.issue_updated(&detail.key).to_string();
+        let width = self.detail_main_width();
         match detail_layout_for_width(self.detail_area.get().width) {
-            DetailLayout::Wide => {
-                render::wide_detail_links(&render::wide_detail(detail, &current_user, &updated))
-            }
+            DetailLayout::Wide => render::wide_detail_links(&render::wide_detail(
+                detail,
+                &current_user,
+                &updated,
+                width,
+            )),
             DetailLayout::Narrow => {
-                render::narrow_detail(detail, &current_user, &updated, self.facts_folded)
+                render::narrow_detail(detail, &current_user, &updated, self.facts_folded, width)
                     .lines
                     .links
             }
@@ -67,9 +76,10 @@ impl App {
         if self.screen != Screen::Detail {
             // Quick view only ever has Main (description) and Meta panes.
             let updated = self.issue_updated(&detail.key).to_string();
+            let width = self.quick_view_description_width();
             return match quick_view_layout_for_width(self.quick_view_area.get().width) {
                 QuickViewLayout::Wide => {
-                    let wide = render::quick_view_wide(detail, &updated);
+                    let wide = render::quick_view_wide(detail, &updated, width);
                     match pane {
                         DetailPane::Main => Some(wide.description.lines),
                         DetailPane::Meta => Some(wide.meta.lines),
@@ -77,26 +87,35 @@ impl App {
                     }
                 }
                 QuickViewLayout::Narrow => match pane {
-                    DetailPane::Main => {
-                        Some(render::quick_view_narrow(detail, &updated).panel.lines)
-                    }
+                    DetailPane::Main => Some(
+                        render::quick_view_narrow(detail, &updated, width)
+                            .panel
+                            .lines,
+                    ),
                     _ => None,
                 },
             };
         }
         let current_user = self.current_user_display();
         let updated = self.issue_updated(&detail.key).to_string();
+        let width = self.detail_main_width();
         match detail_layout_for_width(self.detail_area.get().width) {
             DetailLayout::Narrow => match pane {
                 DetailPane::Main => Some(
-                    render::narrow_detail(detail, &current_user, &updated, self.facts_folded)
-                        .lines
-                        .lines,
+                    render::narrow_detail(
+                        detail,
+                        &current_user,
+                        &updated,
+                        self.facts_folded,
+                        width,
+                    )
+                    .lines
+                    .lines,
                 ),
                 _ => None,
             },
             DetailLayout::Wide => {
-                let wide = render::wide_detail(detail, &current_user, &updated);
+                let wide = render::wide_detail(detail, &current_user, &updated, width);
                 Some(match pane {
                     DetailPane::Identity => wide.identity.lines,
                     DetailPane::Main => wide.main.lines,

@@ -3,10 +3,40 @@
 //! counts Home's rail renders.
 
 use crate::domain::{IssueSummary, Source};
+use crate::ui::detail_columns::{detail_layout_for_width, rail_width_for, DetailLayout};
+use crate::ui::quick_view_columns::{meta_width_for, quick_view_layout_for_width, QuickViewLayout};
 
 use super::{App, Screen};
 
 impl App {
+    /// The Detail screen's main/scrollable column width for whichever
+    /// layout (wide/narrow) `detail_area`'s last-rendered width picks — the
+    /// same width `ui::detail::draw_wide`/`draw_narrow` actually render at.
+    /// `app::comments`/`app::links` recompute `wide_detail`/`narrow_detail`
+    /// to find comment/link offsets, and need this so their pre-wrapped
+    /// bar lines (`render::wrap_with_bar`, via `adf::render`) land on the
+    /// same line boundaries the real render used — otherwise a jump-to-comment
+    /// or link-cycle could land a row off from what's on screen.
+    pub(crate) fn detail_main_width(&self) -> usize {
+        let width = self.detail_area.get().width;
+        let content = match detail_layout_for_width(width) {
+            DetailLayout::Wide => width.saturating_sub(rail_width_for(width)),
+            DetailLayout::Narrow => width,
+        };
+        content as usize
+    }
+
+    /// The quick-view panel's description column width — `detail_main_width`'s
+    /// `quick_view_area` counterpart.
+    pub(crate) fn quick_view_description_width(&self) -> usize {
+        let width = self.quick_view_area.get().width;
+        let content = match quick_view_layout_for_width(width) {
+            QuickViewLayout::Wide => width.saturating_sub(meta_width_for(width)),
+            QuickViewLayout::Narrow => width,
+        };
+        content as usize
+    }
+
     pub fn selected_issue(&self) -> Option<&IssueSummary> {
         self.issues.get(self.selected)
     }
