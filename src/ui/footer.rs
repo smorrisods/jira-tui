@@ -177,6 +177,7 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
                     vec![
                         hint("t", "transition"),
                         hint("A", "assign"),
+                        hint("R", "version(s)"),
                         hint("e", "edit"),
                         hint("c", "comment"),
                         hint("y/Y", "copy key/URL"),
@@ -271,6 +272,7 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
                     "ACT",
                     vec![
                         hint("A", "assign"),
+                        hint("R", "version(s)"),
                         hint("c", "comment"),
                         hint("y/Y", "copy key/URL"),
                         hint("r", refresh),

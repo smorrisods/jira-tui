@@ -451,6 +451,54 @@ fn assignee_picker_keeps_the_selection_in_view_on_a_short_terminal() {
 }
 
 #[test]
+fn version_picker_shows_field_tabs_and_checked_versions() {
+    let mut app = demo_app();
+    app.open_by_key("DS-2648"); // demo data: fix v3.5.0, affects v3.4.0
+    app.open_version_picker();
+    let text = render(&app);
+    assert!(text.contains("Fix Version(s)"), "picker should show tabs");
+    assert!(
+        text.contains("Affects Version(s)"),
+        "picker should show tabs"
+    );
+    assert!(
+        text.contains("v3.4.0"),
+        "picker should list project versions"
+    );
+    assert!(
+        text.contains("v3.5.0"),
+        "picker should list project versions"
+    );
+    assert!(
+        text.contains('✓'),
+        "the issue's current fix version should be checked"
+    );
+}
+
+#[test]
+fn version_picker_tab_switches_which_field_is_checked() {
+    let mut app = demo_app();
+    app.open_by_key("DS-2648");
+    app.open_version_picker();
+    app.version_picker_switch_field();
+    assert_eq!(
+        app.version_picker.field,
+        jira_tui::app::VersionField::Affects
+    );
+    let text = render(&app);
+    // v3.4.0 is the issue's affects version, now the active field — matched
+    // by "released" (only the picker's own row carries a release-date
+    // suffix) so this can't accidentally match the Detail screen's own
+    // "affects version(s): v3.4.0" fact row showing through behind the
+    // popup.
+    let v34_line = text
+        .lines()
+        .find(|l| l.contains("v3.4.0") && l.contains("released"))
+        .unwrap();
+    assert!(v34_line.contains('✓'));
+}
+
+#[test]
 fn command_palette_shows_on_key_view_and_app_groups_with_transitions() {
     let mut app = demo_app();
     app.selected = 0;

@@ -95,6 +95,79 @@ fn assign_issue_blocking(key: &str, account_id: Option<&str>) -> Option<String> 
     None
 }
 
+/// Spawn a Fix/Affects Version update off the render thread, sending the
+/// result back as `AppEvent::VersionsApplied`. `fix_versions`/
+/// `affects_versions` are each `None` when that field is unchanged in the
+/// picker (see `App::confirm_version_picker`) — `set_versions_blocking`
+/// skips a field entirely rather than sending a needless write for it.
+pub(crate) fn dispatch_set_versions(
+    tx: UnboundedSender<AppEvent>,
+    generation: u64,
+    key: String,
+    fix_versions: Option<Vec<String>>,
+    affects_versions: Option<Vec<String>>,
+) {
+    tokio::spawn(async move {
+        let key_for_result = key.clone();
+        let fix_for_result = fix_versions.clone();
+        let affects_for_result = affects_versions.clone();
+        let (fix_error, affects_error) = tokio::task::spawn_blocking(move || {
+            set_versions_blocking(&key, fix_versions.as_deref(), affects_versions.as_deref())
+        })
+        .await
+        .unwrap_or_else(|_| {
+            (
+                Some("internal error: task panicked".into()),
+                Some("internal error: task panicked".into()),
+            )
+        });
+        let _ = tx.send(AppEvent::VersionsApplied {
+            generation,
+            key: key_for_result,
+            fix_versions: if fix_error.is_none() {
+                fix_for_result
+            } else {
+                None
+            },
+            fix_error,
+            affects_versions: if affects_error.is_none() {
+                affects_for_result
+            } else {
+                None
+            },
+            affects_error,
+        });
+    });
+}
+
+/// Mirrors `apply_transition_blocking`'s "no credentials means nothing to do
+/// live" shape, for both fields independently — a `None` field is skipped
+/// entirely rather than sent as an empty write.
+#[allow(unused_variables)]
+fn set_versions_blocking(
+    key: &str,
+    fix_versions: Option<&[String]>,
+    affects_versions: Option<&[String]>,
+) -> (Option<String>, Option<String>) {
+    #[cfg(feature = "live")]
+    {
+        if let Some(cfg) = crate::jira::Config::load() {
+            let fix_error = fix_versions.and_then(|v| {
+                crate::jira::set_fix_versions(&cfg, key, v)
+                    .err()
+                    .map(|e| e.to_string())
+            });
+            let affects_error = affects_versions.and_then(|v| {
+                crate::jira::set_affects_versions(&cfg, key, v)
+                    .err()
+                    .map(|e| e.to_string())
+            });
+            return (fix_error, affects_error);
+        }
+    }
+    (None, None)
+}
+
 /// Spawn a description update off the render thread, sending the result
 /// back as `AppEvent::DescriptionUpdated`.
 pub(crate) fn dispatch_update_description(
@@ -311,5 +384,35 @@ impl App {
             Some(name) => format!("✓ assigned to {name}"),
             None => "✓ unassigned".to_string(),
         });
+    }
+
+    /// Applies `AppEvent::VersionsApplied` — see `dispatch_set_versions`
+    /// above. Unlike the other mutation applies, both fields can fail (or
+    /// succeed) independently in one round-trip, so each is reported and
+    /// applied on its own terms rather than the usual single error branch.
+    pub(super) fn apply_versions_applied(
+        &mut self,
+        generation: u64,
+        key: String,
+        fix_versions: Option<Vec<String>>,
+        fix_error: Option<String>,
+        affects_versions: Option<Vec<String>>,
+        affects_error: Option<String>,
+    ) {
+        if generation != self.version_generation {
+            return;
+        }
+        self.loading = false;
+        self.version_pending = false;
+        self.apply_versions_locally(&key, fix_versions, affects_versions);
+        match (&fix_error, &affects_error) {
+            (None, None) => {
+                self.status = format!("updated {key} versions");
+                self.flash("✓ versions updated");
+            }
+            (Some(e), None) => self.status = format!("fix version update failed: {e}"),
+            (None, Some(e)) => self.status = format!("affects version update failed: {e}"),
+            (Some(fe), Some(ae)) => self.status = format!("version update failed: {fe}; {ae}"),
+        }
     }
 }

@@ -28,11 +28,12 @@ mod setup_ops;
 pub use events::AppEvent;
 
 pub(crate) use list_ops::{
-    dispatch_detail_fetch, dispatch_refresh, dispatch_switch_view, dispatch_teammate_discovery,
-    dispatch_text_search,
+    dispatch_detail_fetch, dispatch_project_versions, dispatch_refresh, dispatch_switch_view,
+    dispatch_teammate_discovery, dispatch_text_search,
 };
 pub(crate) use mutation_ops::{
-    dispatch_add_comment, dispatch_assign, dispatch_transition, dispatch_update_description,
+    dispatch_add_comment, dispatch_assign, dispatch_set_versions, dispatch_transition,
+    dispatch_update_description,
 };
 pub(crate) use setup_ops::dispatch_field_mapping;
 #[cfg(feature = "live")]

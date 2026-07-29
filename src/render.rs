@@ -186,6 +186,18 @@ fn meta_lines(detail: &IssueDetail, updated: &str) -> Vec<Line<'static>> {
             Style::default().fg(muted()),
         )));
     }
+    if !detail.fix_versions.is_empty() {
+        lines.push(Line::from(Span::styled(
+            format!("fix version(s): {}", detail.fix_versions.join(", ")),
+            Style::default().fg(muted()),
+        )));
+    }
+    if !detail.affects_versions.is_empty() {
+        lines.push(Line::from(Span::styled(
+            format!("affects version(s): {}", detail.affects_versions.join(", ")),
+            Style::default().fg(muted()),
+        )));
+    }
     lines.push(Line::from(Span::styled(
         format!("updated: {updated}"),
         Style::default().fg(muted()),
@@ -214,6 +226,12 @@ fn facts_pairs(detail: &IssueDetail, updated: &str) -> Vec<(&'static str, String
     }
     if !detail.labels.is_empty() {
         pairs.push(("labels", detail.labels.join(", ")));
+    }
+    if !detail.fix_versions.is_empty() {
+        pairs.push(("fix version(s)", detail.fix_versions.join(", ")));
+    }
+    if !detail.affects_versions.is_empty() {
+        pairs.push(("affects version(s)", detail.affects_versions.join(", ")));
     }
     pairs.push(("updated", updated.to_string()));
     pairs
@@ -447,10 +465,14 @@ fn activity_lines_cards(
 }
 
 /// Quick view's compact kv fields (SPEC.md §4): assignee, parent (if any),
-/// labels (if any), updated — a narrower set than `facts_pairs`' (no
-/// reporter/components), since quick view aims for a compact excerpt rather
-/// than the full field list. Type/status/priority are shown separately, as
-/// chips (`quick_view_chip_line`), not in this kv list.
+/// labels (if any), fix version(s) (if any), updated — a narrower set than
+/// `facts_pairs`' (no reporter/components/affects versions), since quick
+/// view aims for a compact excerpt rather than the full field list. Fix
+/// version(s) earns a spot in that excerpt anyway (unlike affects versions)
+/// since quick view is one of the two places `R` opens the version picker
+/// from — worth being visible at a glance, not just editable blind. Type/
+/// status/priority are shown separately, as chips (`quick_view_chip_line`),
+/// not in this kv list.
 fn quick_view_kv_fields(detail: &IssueDetail, updated: &str) -> Vec<(&'static str, String)> {
     let mut pairs = vec![(
         "assignee",
@@ -464,6 +486,9 @@ fn quick_view_kv_fields(detail: &IssueDetail, updated: &str) -> Vec<(&'static st
     }
     if !detail.labels.is_empty() {
         pairs.push(("labels", detail.labels.join(", ")));
+    }
+    if !detail.fix_versions.is_empty() {
+        pairs.push(("fix version(s)", detail.fix_versions.join(", ")));
     }
     pairs.push(("updated", updated.to_string()));
     pairs

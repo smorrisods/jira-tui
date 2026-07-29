@@ -3,7 +3,7 @@
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::domain::{AssignableUser, IssueDetail, IssueSummary, Source, ViewKind};
+use crate::domain::{AssignableUser, IssueDetail, IssueSummary, Source, Version, ViewKind};
 
 use super::super::loader::load_issues_for;
 use super::super::{App, Screen};
@@ -95,6 +95,37 @@ fn assignable_users_blocking() -> Vec<AssignableUser> {
         if let Some(cfg) = crate::jira::Config::load() {
             if let Ok(users) = crate::jira::assignable_users(&cfg, &cfg.project) {
                 return users;
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// Spawn a one-shot background fetch of the current project's versions,
+/// sending the result back as `AppEvent::ProjectVersionsLoaded`. Dispatched
+/// once from `App::new` for a genuine live session, mirroring
+/// `dispatch_teammate_discovery` — so the version picker (`R`) and the
+/// release review screen both have data the moment the user opens them,
+/// without a dedicated fetch-on-open round-trip.
+pub(crate) fn dispatch_project_versions(tx: UnboundedSender<AppEvent>) {
+    tokio::spawn(async move {
+        let versions = tokio::task::spawn_blocking(project_versions_blocking)
+            .await
+            .unwrap_or_default();
+        let _ = tx.send(AppEvent::ProjectVersionsLoaded { versions });
+    });
+}
+
+/// Mirrors `assignable_users_blocking`'s "no credentials/failure means an
+/// empty list" shape — there's nothing sensible to show in the picker/
+/// release screen for a broken live session either.
+#[allow(unused_variables)]
+fn project_versions_blocking() -> Vec<Version> {
+    #[cfg(feature = "live")]
+    {
+        if let Some(cfg) = crate::jira::Config::load() {
+            if let Ok(versions) = crate::jira::list_versions(&cfg, &cfg.project) {
+                return versions;
             }
         }
     }
@@ -276,5 +307,11 @@ impl App {
         let names: Vec<String> = users.iter().map(|u| u.display_name.clone()).collect();
         self.merge_teammate_names(&names);
         self.assignable_users = users;
+    }
+
+    /// Applies `AppEvent::ProjectVersionsLoaded` — see
+    /// `dispatch_project_versions` above.
+    pub(super) fn apply_project_versions_loaded(&mut self, versions: Vec<Version>) {
+        self.project_versions = versions;
     }
 }

@@ -108,6 +108,23 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Modal: the Fix/Affects Version picker. Arrow/j/k move the cursor,
+    // space toggles the highlighted version, tab switches which field is
+    // being edited — unlike the assignee/palette pickers, this isn't
+    // type-to-filter, so `j`/`k` are free for movement here.
+    if app.version_picker_open {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => app.version_picker_move(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.version_picker_move(1),
+            KeyCode::Tab => app.version_picker_switch_field(),
+            KeyCode::Char(' ') => app.version_picker_toggle(),
+            KeyCode::Enter => app.confirm_version_picker(),
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => app.close_version_picker(),
+            _ => {}
+        }
+        return;
+    }
+
     // Modal: the spelling-suggestion picker (`F2`, opened from `Screen::Edit`
     // only — see the `KeyCode::F(2)` arm in that screen's own block below).
     if app.spell_suggest_open {
@@ -365,6 +382,15 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
                     && app.quick_view_detail().is_some()) =>
         {
             app.open_assignee_picker();
+        }
+        // Fix/Affects Version picker: same target-resolution scope as `A`.
+        KeyCode::Char('R')
+            if (app.screen == Screen::Detail && app.detail.is_some())
+                || (matches!(app.screen, Screen::Home | Screen::List)
+                    && app.quick_view
+                    && app.quick_view_detail().is_some()) =>
+        {
+            app.open_version_picker();
         }
         KeyCode::Char(']')
             if app.screen == Screen::Detail

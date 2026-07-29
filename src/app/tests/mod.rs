@@ -2,8 +2,8 @@
 //! per-submodule split (`assign`, `board`, `comments`, `detail`, `edit`,
 //! `field_mapping`, `history`, `links`, `mouse`, `onboarding`, `palette`,
 //! `query`, `quick_view`, `search`, `sort_filter`, `spell_suggest`,
-//! `view_switch`), plus a `transitions` file for the workflow-transition
-//! tests. `support` carries the shared `App` builders (`demo_app`/
+//! `versions`, `view_switch`), plus a `transitions` file for the workflow-
+//! transition tests. `support` carries the shared `App` builders (`demo_app`/
 //! `non_demo_app`/`live_app`/`onboarding_app`) and the async event-loop
 //! helper `next_event`.
 
@@ -25,4 +25,5 @@ mod sort_filter;
 mod spell_suggest;
 mod support;
 mod transitions;
+mod versions;
 mod view_switch;

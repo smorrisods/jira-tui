@@ -85,6 +85,10 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
         desc: "assign/unassign (in an issue or quick view) — type to filter, ↑/↓ move",
     },
     KeyHint {
+        key: "R",
+        desc: "fix/affects version(s) (in an issue or quick view) — space toggle, tab switch field",
+    },
+    KeyHint {
         key: "e / E",
         desc: "edit description (in-TUI / $EDITOR)",
     },
