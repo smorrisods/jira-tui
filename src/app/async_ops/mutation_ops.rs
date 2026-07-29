@@ -504,13 +504,28 @@ impl App {
         self.loading = false;
         self.release.bulk_pending = false;
 
+        // Whether the drill-down is still showing the exact version this
+        // bulk op was for — the user may have backed out and drilled into a
+        // different one while it was in flight. `release_bulk_generation`
+        // only distinguishes this op from a *newer* one, not from unrelated
+        // navigation in between, so it can't stand in for this check: a
+        // late-arriving Remove would otherwise `retain()`/clamp
+        // `release.issues` against whatever version is now on screen,
+        // possibly dropping an issue that belongs to both versions from the
+        // wrong one's list. Mirrors the Add branch's own
+        // `refresh_release_drill_if_showing` guard below.
+        let still_showing =
+            self.release.drilled.as_ref().map(|v| v.name.as_str()) == Some(version_name.as_str());
+
         let mut failures = 0usize;
         for (key, result) in &results {
             match result {
                 Ok(()) => {
-                    self.release.selected.remove(key);
-                    if kind == ReleaseBulkKind::Remove {
-                        self.release.issues.retain(|i| &i.key != key);
+                    if still_showing {
+                        self.release.selected.remove(key);
+                        if kind == ReleaseBulkKind::Remove {
+                            self.release.issues.retain(|i| &i.key != key);
+                        }
                     }
                     self.apply_versions_locally_for_bulk(key, &version_name, kind);
                 }
@@ -526,8 +541,10 @@ impl App {
         };
 
         if kind == ReleaseBulkKind::Remove {
-            let len = self.release.issues.len();
-            self.release.issue_cursor = self.release.issue_cursor.min(len.saturating_sub(1));
+            if still_showing {
+                let len = self.release.issues.len();
+                self.release.issue_cursor = self.release.issue_cursor.min(len.saturating_sub(1));
+            }
         } else {
             self.refresh_release_drill_if_showing(&version_name);
         }

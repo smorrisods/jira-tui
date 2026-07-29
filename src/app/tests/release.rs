@@ -314,6 +314,76 @@ async fn release_bulk_remove_against_a_live_source_dispatches_and_applies() {
     let _ = version_name;
 }
 
+/// Regression test: `release_bulk_generation` only distinguishes a bulk op
+/// from a *newer* one — it says nothing about whether the user has since
+/// navigated away. Backing out of the drilled version a bulk-remove was
+/// dispatched for, then drilling into a different one, must not let that
+/// bulk-remove's late-arriving result mutate the newly-displayed version's
+/// issue list once it lands.
+///
+/// Applies a constructed `AppEvent::ReleaseBulkApplied` directly (with a
+/// successful `Ok(())` result) rather than going through the real
+/// dispatch/`live_app()` round trip: the credential-less test harness makes
+/// `release_bulk_blocking` return `Err("no credentials configured")` for
+/// every key, so a test that only drains a genuine dispatch never reaches
+/// the success branch this bug actually lives in — see
+/// `release_bulk_remove_against_a_live_source_dispatches_and_applies` above,
+/// which only checks `bulk_pending` for exactly that reason.
+#[test]
+fn stale_bulk_remove_does_not_mutate_a_different_versions_issue_list() {
+    let mut app = demo_app();
+    app.open_release_screen();
+
+    // Drill into version A; simulate a bulk-remove already having been
+    // dispatched against it (its own generation bumped, as
+    // `release_remove_selected` would do).
+    let idx_a = app
+        .release
+        .versions
+        .iter()
+        .position(|v| v.name == "v3.4.0")
+        .unwrap();
+    app.release.cursor = idx_a;
+    app.release_confirm();
+    let issue = crate::domain::demo_issues()[0].clone();
+    let issue_key = issue.key.clone();
+    app.release.issues = vec![issue.clone()];
+    app.release_bulk_generation += 1;
+    let stale_generation = app.release_bulk_generation;
+
+    // Navigate away before that result lands: back out, then drill into a
+    // different version B.
+    assert!(app.release_back());
+    let idx_b = app
+        .release
+        .versions
+        .iter()
+        .position(|v| v.name == "v3.5.0")
+        .unwrap();
+    app.release.cursor = idx_b;
+    app.release_confirm();
+    app.release.issues = vec![issue]; // B's controlled, known state
+
+    // The stale bulk-remove result for A lands now, reporting success.
+    app.apply_event(AppEvent::ReleaseBulkApplied {
+        generation: stale_generation,
+        version_name: "v3.4.0".to_string(),
+        kind: ReleaseBulkKind::Remove,
+        results: vec![(issue_key.clone(), Ok(()))],
+    });
+
+    assert_eq!(
+        app.release
+            .issues
+            .iter()
+            .map(|i| i.key.as_str())
+            .collect::<Vec<_>>(),
+        vec![issue_key.as_str()],
+        "a bulk-remove result for a version navigated away from must not \
+         mutate the now-displayed version's issue list"
+    );
+}
+
 #[tokio::test]
 async fn release_confirm_against_a_live_source_dispatches_and_applies_on_completion() {
     let _guard = crate::test_support::lock_env_async().await;
