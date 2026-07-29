@@ -841,12 +841,21 @@ pub(crate) fn wrapped_row_ranges(line: &Line, width: usize) -> Vec<std::ops::Ran
         return vec![0..chars.len()];
     }
 
-    let mut rows: Vec<std::ops::Range<usize>> = Vec::new();
-    let mut row_start = words[0].start;
-    let mut row_end = row_start;
-    let mut col = 0usize;
+    // Leading whitespace (e.g. code-block indentation) is real rendered
+    // width, not free — `Wrap { trim: false }` (what this approximates)
+    // preserves it, so the first row starts at char 0 with that whitespace
+    // already spent from its column budget, rather than at the first word
+    // as if the line began there (which silently dropped it entirely once
+    // this range was used to slice out the actual displayed text, not just
+    // to count rows).
+    let leading_ws = words[0].start;
 
-    for word in &words {
+    let mut rows: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut row_start = 0usize;
+    let mut row_end = 0usize;
+    let mut col = leading_ws;
+
+    for (word_idx, word) in words.iter().enumerate() {
         let word_str: String = chars[word.clone()].iter().collect();
         let word_width = Line::from(word_str.as_str()).width();
         if word_width > width {
@@ -865,7 +874,11 @@ pub(crate) fn wrapped_row_ranges(line: &Line, width: usize) -> Vec<std::ops::Ran
             col = word.end - wi;
             continue;
         }
-        let gap = if col == 0 { 0 } else { 1 };
+        // The first word's leading gap is already spent via the seeded
+        // `col` above (the line's real leading whitespace); every later
+        // word gets the usual single-column approximation for whatever
+        // whitespace separates it from the previous one.
+        let gap = if word_idx == 0 || col == 0 { 0 } else { 1 };
         if col + gap + word_width > width {
             rows.push(row_start..row_end);
             row_start = word.start;
@@ -1293,5 +1306,50 @@ mod wrap_row_tests {
         let rows = wrap_with_bar(&line("short"), 40, "┃ ", Color::DarkGray);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].spans[0].content.as_ref(), "┃ ");
+    }
+
+    /// Regression test: `wrapped_row_ranges` used to start the first row at
+    /// the first non-whitespace character (`words[0].start`), silently
+    /// dropping any leading whitespace — harmless while this only fed a row
+    /// *count*, but once `wrap_with_bar`/`slice_line` started using the
+    /// range to slice out the actual displayed text (for code-block
+    /// indentation, or an indented line inside a comment), that whitespace
+    /// vanished from what's shown on screen.
+    #[test]
+    fn wrapped_row_ranges_preserves_leading_whitespace() {
+        let ranges = wrapped_row_ranges(&line("    indented"), 40);
+        assert_eq!(
+            ranges,
+            vec![0..12],
+            "the leading 4 spaces must stay in range"
+        );
+    }
+
+    #[test]
+    fn wrap_with_bar_preserves_code_block_indentation() {
+        let rows = wrap_with_bar(&line("    def f():"), 40, "│ ", Color::DarkGray);
+        assert_eq!(rows.len(), 1);
+        let text: String = rows[0]
+            .spans
+            .iter()
+            .skip(1)
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(
+            text, "    def f():",
+            "leading indentation must survive wrapping"
+        );
+    }
+
+    /// Leading whitespace must count against the row's width budget, not be
+    /// free — otherwise a deeply indented line could overflow past `width`
+    /// instead of wrapping.
+    #[test]
+    fn wrapped_row_ranges_counts_leading_whitespace_against_the_width_budget() {
+        // 6 columns of indentation + a 6-char word == 12, past a width of 10,
+        // so the word must wrap onto its own row rather than sharing the
+        // first one.
+        let ranges = wrapped_row_ranges(&line("      abcdef"), 10);
+        assert_eq!(ranges.len(), 2, "the indent should force an early wrap");
     }
 }
