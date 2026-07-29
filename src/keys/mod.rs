@@ -304,6 +304,10 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
                 app.open_search_for_release(version_name);
             }
             KeyCode::Char('r') => app.release_refresh(),
+            // Cycle the version list's grouping (split unreleased/released
+            // vs. one flat list) — no-op in drill mode, mirroring the work
+            // list's own `s` sort-cycle key.
+            KeyCode::Char('s') if app.release.drilled.is_none() => app.release_cycle_list_mode(),
             KeyCode::Char('?') => app.show_help = true,
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left | KeyCode::Backspace
                 if !app.release_back() =>

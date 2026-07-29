@@ -53,7 +53,7 @@ pub use mouse::{ListFocus, MouseState, SelectionSpan};
 pub use onboarding::{Field, OnboardingState, WelcomePhase};
 pub use palette::{PaletteAction, PaletteState};
 pub(crate) use palette::{PaletteGroup, PaletteRow};
-pub use release::{ReleaseBulkKind, ReleaseState};
+pub use release::{ReleaseBulkKind, ReleaseListMode, ReleaseState};
 pub use search::{SearchPurpose, SearchRow, SearchState};
 pub use sort_filter::SortKey;
 pub use spell_suggest::SpellSuggestState;

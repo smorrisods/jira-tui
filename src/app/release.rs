@@ -1,9 +1,9 @@
-//! The release review screen (`w`): browsing the project's versions, then
-//! drilling into one to see its issues grouped by status with a done/total
-//! progress line. Two-level navigation within one `Screen::Release` (list ↔
-//! drill), the same "one screen, internal state decides what's drawn" shape
-//! `app::board` uses for its own nested lane/column/card cursor, rather than
-//! a second `Screen` variant.
+//! The release review screen (`R`, when no issue is in view): browsing the
+//! project's versions, then drilling into one to see its issues grouped by
+//! status with a done/total progress line. Two-level navigation within one
+//! `Screen::Release` (list ↔ drill), the same "one screen, internal state
+//! decides what's drawn" shape `app::board` uses for its own nested lane/
+//! column/card cursor, rather than a second `Screen` variant.
 //!
 //! Fetching a version's issues mirrors the Search screen's live text-search
 //! fallback (`app::search`): a live session dispatches a JQL search
@@ -30,17 +30,34 @@ pub enum ReleaseBulkKind {
     Remove,
 }
 
+/// How the version list groups its rows — cycled with `s`, mirroring the
+/// work list's own sort-cycle key. `Split` (the default) separates
+/// Unreleased from Released into their own labelled groups, since the
+/// unreleased ones are almost always what you actually came here to look
+/// at; `Flat` is one undifferentiated list in whatever order the source
+/// returned, for when you want to eyeball everything at once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ReleaseListMode {
+    #[default]
+    Split,
+    Flat,
+}
+
 /// The release review screen's state. `drilled` distinguishes the two
 /// modes: `None` is the version list (`cursor` indexes `versions`), `Some`
 /// is a specific version's issue list (`issue_cursor` indexes `issues`,
 /// which is always kept sorted by status so the flat cursor and the
 /// grouped-by-status render agree on order — see `App::release_status_groups`).
+/// `versions` is likewise always kept in whatever order `list_mode`
+/// implies (see `App::rebuild_release_versions`), so `cursor` and the
+/// grouped render (`App::release_version_groups`) can't disagree either.
 /// `selected` is drill-mode-only: issue keys checked via `Space`, acted on
 /// in bulk by `release_remove_selected`.
 #[derive(Clone, Debug, Default)]
 pub struct ReleaseState {
     pub cursor: usize,
     pub versions: Vec<Version>,
+    pub list_mode: ReleaseListMode,
     pub drilled: Option<Version>,
     pub issues: Vec<IssueSummary>,
     pub issues_loading: bool,
@@ -53,15 +70,74 @@ pub struct ReleaseState {
 }
 
 impl App {
-    /// `w` — open the release review screen at the version list.
+    /// Open the release review screen at the version list. `list_mode`
+    /// deliberately isn't reset here — like `sort_key`/`filter_status` on
+    /// the work list, it persists across visits within the session, only
+    /// starting fresh (at its `Split` default) on a new `App`.
     pub fn open_release_screen(&mut self) {
-        self.release.versions = self.project_versions_source();
         self.release.cursor = 0;
         self.release.drilled = None;
         self.release.issues.clear();
         self.release.issue_cursor = 0;
         self.release.selected.clear();
+        self.rebuild_release_versions();
         self.screen = Screen::Release;
+    }
+
+    /// `s` (version list only) — cycle `list_mode` and re-derive `versions`
+    /// for it.
+    pub fn release_cycle_list_mode(&mut self) {
+        self.release.list_mode = match self.release.list_mode {
+            ReleaseListMode::Split => ReleaseListMode::Flat,
+            ReleaseListMode::Flat => ReleaseListMode::Split,
+        };
+        self.rebuild_release_versions();
+    }
+
+    /// Re-derive `release.versions` from `project_versions_source()` in
+    /// whatever order the current `list_mode` implies, clamping `cursor` to
+    /// the (possibly now-shorter) result. Always rebuilds from the source
+    /// fresh rather than re-sorting the existing `versions` in place, so
+    /// toggling `Split` → `Flat` → `Split` can't lose the source's original
+    /// ordering along the way. Shared by `open_release_screen`,
+    /// `release_cycle_list_mode`, `release_refresh`'s demo/cache path, and
+    /// `apply_project_versions_loaded`'s live-refresh path.
+    pub(crate) fn rebuild_release_versions(&mut self) {
+        let mut versions = self.project_versions_source();
+        if self.release.list_mode == ReleaseListMode::Split {
+            // Stable partition: every unreleased version first, then every
+            // released one, each group keeping the source's relative order.
+            let (mut unreleased, released): (Vec<Version>, Vec<Version>) =
+                versions.into_iter().partition(|v| !v.released);
+            unreleased.extend(released);
+            versions = unreleased;
+        }
+        let len = versions.len();
+        self.release.versions = versions;
+        self.release.cursor = self.release.cursor.min(len.saturating_sub(1));
+    }
+
+    /// The version list's rows, grouped for display: `Split` mode splits
+    /// into labelled "Unreleased"/"Released" runs (valid because
+    /// `rebuild_release_versions` always keeps `versions` in exactly that
+    /// order); `Flat` mode is a single unlabelled group.
+    pub(crate) fn release_version_groups(&self) -> Vec<(Option<&'static str>, Vec<&Version>)> {
+        if self.release.list_mode == ReleaseListMode::Flat {
+            return vec![(None, self.release.versions.iter().collect())];
+        }
+        let mut groups: Vec<(Option<&'static str>, Vec<&Version>)> = Vec::new();
+        for version in &self.release.versions {
+            let label = if version.released {
+                "Released"
+            } else {
+                "Unreleased"
+            };
+            match groups.last_mut() {
+                Some((Some(l), items)) if *l == label => items.push(version),
+                _ => groups.push((Some(label), vec![version])),
+            }
+        }
+        groups
     }
 
     /// Move the highlight: through `versions` in list mode, or through
@@ -147,9 +223,7 @@ impl App {
             return;
         }
         if !matches!(self.source, Source::Live { .. }) {
-            self.release.versions = self.project_versions_source();
-            let len = self.release.versions.len();
-            self.release.cursor = self.release.cursor.min(len.saturating_sub(1));
+            self.rebuild_release_versions();
             return;
         }
         // `apply_project_versions_loaded` also refreshes `release.versions`

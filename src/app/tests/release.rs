@@ -20,6 +20,58 @@ fn open_release_screen_lists_demo_versions() {
 }
 
 #[test]
+fn split_is_the_default_and_puts_unreleased_before_released() {
+    let mut app = demo_app();
+    app.open_release_screen();
+    assert_eq!(app.release.list_mode, ReleaseListMode::Split);
+    let names: Vec<&str> = app
+        .release
+        .versions
+        .iter()
+        .map(|v| v.name.as_str())
+        .collect();
+    // Demo data's natural order is v3.4.0 (released), v3.5.0, v3.6.0
+    // (both unreleased) — Split must move both unreleased ones ahead of
+    // the released one, preserving their relative order.
+    assert_eq!(names, vec!["v3.5.0", "v3.6.0", "v3.4.0"]);
+
+    let groups = app.release_version_groups();
+    assert_eq!(groups[0].0, Some("Unreleased"));
+    assert_eq!(groups[0].1.len(), 2);
+    assert_eq!(groups[1].0, Some("Released"));
+    assert_eq!(groups[1].1.len(), 1);
+}
+
+#[test]
+fn cycling_to_flat_restores_the_sources_natural_order_then_back_to_split() {
+    let mut app = demo_app();
+    app.open_release_screen();
+
+    app.release_cycle_list_mode();
+    assert_eq!(app.release.list_mode, ReleaseListMode::Flat);
+    let flat_names: Vec<&str> = app
+        .release
+        .versions
+        .iter()
+        .map(|v| v.name.as_str())
+        .collect();
+    assert_eq!(flat_names, vec!["v3.4.0", "v3.5.0", "v3.6.0"]);
+    let groups = app.release_version_groups();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].0, None);
+
+    app.release_cycle_list_mode();
+    assert_eq!(app.release.list_mode, ReleaseListMode::Split);
+    let split_names: Vec<&str> = app
+        .release
+        .versions
+        .iter()
+        .map(|v| v.name.as_str())
+        .collect();
+    assert_eq!(split_names, vec!["v3.5.0", "v3.6.0", "v3.4.0"]);
+}
+
+#[test]
 fn release_move_clamps_to_bounds_in_list_mode() {
     let mut app = demo_app();
     app.open_release_screen();

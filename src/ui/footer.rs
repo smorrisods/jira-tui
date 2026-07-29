@@ -278,7 +278,11 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
             } else {
                 (
                     vec![hint("↑/↓", "version")],
-                    vec![hint("⏎", "drill in"), hint("r", "refresh")],
+                    vec![
+                        hint("⏎", "drill in"),
+                        hint("s", "split/flat"),
+                        hint("r", "refresh"),
+                    ],
                 )
             };
             vec![

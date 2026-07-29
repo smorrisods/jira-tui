@@ -90,6 +90,10 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
                Otherwise: release review — versions, drill into one for its issues by status",
     },
     KeyHint {
+        key: "s (release)",
+        desc: "cycle the version list's grouping: split unreleased/released (default) or flat",
+    },
+    KeyHint {
         key: "space (release)",
         desc: "select an issue, drilled into a release",
     },

@@ -1315,6 +1315,26 @@ fn release_screen_lists_versions() {
 }
 
 #[test]
+fn release_screen_defaults_to_split_grouping_and_s_cycles_to_flat() {
+    let mut app = demo_app();
+    app.open_release_screen();
+    let text = render(&app);
+    assert!(
+        text.contains("Unreleased") && text.contains("Released"),
+        "the default view should split unreleased from released: {text}"
+    );
+    assert!(text.contains("split unreleased/released"));
+
+    app.release_cycle_list_mode();
+    let text = render(&app);
+    assert!(
+        !text.contains("Unreleased") && !text.contains("Released"),
+        "the flat view should show no group headers: {text}"
+    );
+    assert!(text.contains(" flat"));
+}
+
+#[test]
 fn release_screen_drill_shows_progress_and_grouped_issues() {
     let mut app = demo_app();
     app.open_release_screen();
