@@ -321,11 +321,11 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
 
     match key.code {
         KeyCode::Char('?') | KeyCode::F(1) => app.show_help = true,
-        // `a` no longer opens About directly — it's a legacy, rarely-used
-        // screen, not worth the primary lowercase slot (still reachable via
-        // the command palette). Reserved on Home/List for a future "new
-        // issue" entry point (see issue #89) — deliberately left unbound
-        // here rather than repurposed early.
+        // `i` for "Info" — About moved off `a` (freed for the reserved
+        // "new issue" entry point on Home/List, see issue #89, and already
+        // used for "add issues" in the Release drill-down) since it isn't
+        // a primary action and doesn't deserve the primary lowercase slot.
+        KeyCode::Char('i') => app.open_about(),
         KeyCode::Char('g') => app.screen = Screen::Home,
         // `r` refreshes whatever's actually being looked at: the open
         // issue in Detail, or the quick-view panel once it has keyboard
@@ -721,13 +721,9 @@ mod tests {
     /// discarding whatever screen it was opened from.
     #[test]
     fn about_from_detail_returns_to_detail_not_home() {
-        // `a` no longer opens About directly (it's reachable via the
-        // command palette instead — see `palette_confirm_runs_the_selected_action_and_closes`
-        // for that path); `open_about`/`about_return_screen` themselves are
-        // unchanged, so this test drives them directly.
         let mut app = demo_app();
         app.screen = Screen::Detail;
-        app.open_about();
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('i')));
         assert_eq!(app.screen, Screen::About);
         handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
         assert_eq!(app.screen, Screen::Detail);
@@ -739,8 +735,8 @@ mod tests {
     fn about_reopened_from_about_does_not_corrupt_return_screen() {
         let mut app = demo_app();
         app.screen = Screen::Detail;
-        app.open_about();
-        app.open_about();
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('i')));
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('i')));
         assert_eq!(app.screen, Screen::About);
         handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
         assert_eq!(app.screen, Screen::Detail);
@@ -968,11 +964,13 @@ mod tests {
     /// palette-only (see `about_from_detail_returns_to_detail_not_home`)
     /// and reserved on Home/List for a future "new issue" entry point.
     #[test]
-    fn lowercase_a_no_longer_opens_about() {
+    fn lowercase_a_no_longer_opens_about_i_does() {
         let mut app = demo_app();
         app.screen = Screen::Home;
         handle_key(&mut app, KeyEvent::from(KeyCode::Char('a')));
-        assert_eq!(app.screen, Screen::Home);
+        assert_eq!(app.screen, Screen::Home, "'a' is reserved, not About");
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('i')));
+        assert_eq!(app.screen, Screen::About, "'i' (Info) should open About");
     }
 
     #[test]

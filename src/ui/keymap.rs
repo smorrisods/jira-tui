@@ -158,6 +158,10 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
         desc: "cycle view in place (same order as V's picker)",
     },
     KeyHint {
+        key: "i",
+        desc: "about panel (\"Info\")",
+    },
+    KeyHint {
         key: "m",
         desc: "toggle mouse mode",
     },
