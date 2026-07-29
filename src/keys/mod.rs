@@ -273,6 +273,28 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // The release review screen: version list ↔ a drilled-in version's
+    // issue list (see `app::release`'s doc comment for why this is one
+    // screen with internal state, not two `Screen` variants). `Esc` backs
+    // out one level at a time — from the issue list to the version list,
+    // then (via `back_or_quit`, once `release_back` has nothing left to
+    // undo) out of the screen entirely.
+    if app.screen == Screen::Release {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => app.release_move(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.release_move(1),
+            KeyCode::Enter | KeyCode::Right => app.release_confirm(),
+            KeyCode::Char('?') => app.show_help = true,
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left | KeyCode::Backspace
+                if !app.release_back() =>
+            {
+                back_or_quit(app);
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match key.code {
         KeyCode::Char('?') => app.show_help = true,
         KeyCode::Char('a') => app.open_about(),
@@ -292,6 +314,9 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('r') => app.refresh(),
         KeyCode::Char('m') => mouse::toggle_mouse(app),
         KeyCode::Char('b') if matches!(app.screen, Screen::Home | Screen::List) => app.open_board(),
+        KeyCode::Char('w') if matches!(app.screen, Screen::Home | Screen::List) => {
+            app.open_release_screen()
+        }
         KeyCode::Char('/')
             if matches!(app.screen, Screen::Home | Screen::List | Screen::Detail) =>
         {
@@ -540,6 +565,7 @@ fn nav(app: &mut App, delta: isize) {
         | Screen::Edit
         | Screen::Search
         | Screen::Board
+        | Screen::Release
         | Screen::FieldMapping => {}
     }
 }
@@ -550,7 +576,9 @@ fn back_or_quit(app: &mut App) {
         Screen::Preview | Screen::Edit => app.cancel_edit(),
         Screen::Search => app.close_search(),
         Screen::FieldMapping => app.close_field_mapping(),
-        Screen::List | Screen::Detail | Screen::Board => app.screen = Screen::Home,
+        Screen::List | Screen::Detail | Screen::Board | Screen::Release => {
+            app.screen = Screen::Home
+        }
         Screen::About => app.screen = app.about_return_screen,
     }
 }

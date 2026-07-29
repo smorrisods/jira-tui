@@ -248,6 +248,21 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
             group("GO", vec![hint("/", "search"), hint("V", "view")]),
             tail(vec![hint("esc/q", "back"), hint("?", "all keys")]),
         ],
+        Screen::Release => {
+            let (nav, act) = if app.release.drilled.is_some() {
+                (
+                    vec![hint("↑/↓", "issue")],
+                    vec![hint("⏎", "open issue"), hint("esc", "back to versions")],
+                )
+            } else {
+                (vec![hint("↑/↓", "version")], vec![hint("⏎", "drill in")])
+            };
+            vec![
+                group("NAV", nav),
+                group("ACT", act),
+                tail(vec![hint("esc/q", "back"), hint("?", "all keys")]),
+            ]
+        }
         Screen::About => single(vec![
             hint("esc/←", "back"),
             hint("?", "help"),
@@ -288,7 +303,14 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
                 "VIEW",
                 vec![hint("v", "quick"), hint("s", "sort"), hint("f", "filter")],
             ),
-            group("GO", vec![hint("b", "board"), hint("/", "search")]),
+            group(
+                "GO",
+                vec![
+                    hint("b", "board"),
+                    hint("w", "releases"),
+                    hint("/", "search"),
+                ],
+            ),
             tail(vec![hint("?", "all keys")]),
         ],
     }

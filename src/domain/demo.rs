@@ -218,6 +218,24 @@ fn demo_versions_for(key: &str) -> (Vec<String>, Vec<String>) {
     }
 }
 
+/// Every demo issue whose `fix_versions` includes `version_name` — the
+/// offline stand-in for the release drill-down screen's live JQL search
+/// (`jira::live::search::jql_for_version`). `IssueSummary` doesn't carry
+/// `fix_versions` itself (only `IssueDetail` does, to keep the lightweight
+/// list-summary type lean), so this goes through `demo_detail` per issue —
+/// fine for demo mode's small, fixed dataset.
+pub fn demo_issues_for_version(version_name: &str) -> Vec<IssueSummary> {
+    demo_issues()
+        .into_iter()
+        .filter(|issue| {
+            demo_detail(&issue.key)
+                .fix_versions
+                .iter()
+                .any(|v| v == version_name)
+        })
+        .collect()
+}
+
 /// A detailed view for a demo issue key, with a rich ADF description so the
 /// ADF renderer is genuinely exercised offline.
 ///
@@ -486,6 +504,24 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn demo_issues_for_version_matches_the_per_issue_fix_versions_mapping() {
+        let v35 = demo_issues_for_version("v3.5.0");
+        let keys: Vec<&str> = v35.iter().map(|i| i.key.as_str()).collect();
+        assert!(keys.contains(&"DS-2722"));
+        assert!(keys.contains(&"DS-2725"));
+        assert!(keys.contains(&"DS-2648"));
+        assert!(
+            !keys.contains(&"DS-2603"),
+            "DS-2603 targets v3.4.0, not v3.5.0"
+        );
+    }
+
+    #[test]
+    fn demo_issues_for_version_is_empty_for_a_version_with_no_issues() {
+        assert!(demo_issues_for_version("v3.6.0").is_empty());
     }
 
     #[test]

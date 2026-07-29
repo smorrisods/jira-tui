@@ -3,7 +3,10 @@
 mod demo;
 mod types;
 
-pub use demo::{demo_assignable_users, demo_detail, demo_issues, demo_versions, DEMO_CURRENT_USER};
+pub use demo::{
+    demo_assignable_users, demo_detail, demo_issues, demo_issues_for_version, demo_versions,
+    DEMO_CURRENT_USER,
+};
 pub use types::{
     AssignableUser, ChildIssue, Comment, IssueDetail, IssueLink, IssueSummary, Priority, Source,
     Transition, Version, ViewKind,

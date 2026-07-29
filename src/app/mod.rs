@@ -32,6 +32,7 @@ mod onboarding;
 mod palette;
 mod query;
 mod quick_view;
+mod release;
 mod search;
 mod sort_filter;
 mod spell_suggest;
@@ -52,6 +53,7 @@ pub use mouse::{ListFocus, MouseState, SelectionSpan};
 pub use onboarding::{Field, OnboardingState, WelcomePhase};
 pub use palette::{PaletteAction, PaletteState};
 pub(crate) use palette::{PaletteGroup, PaletteRow};
+pub use release::ReleaseState;
 pub use search::{SearchRow, SearchState};
 pub use sort_filter::SortKey;
 pub use spell_suggest::SpellSuggestState;
@@ -72,6 +74,7 @@ pub enum Screen {
     Edit,
     Search,
     Board,
+    Release,
     About,
     FieldMapping,
 }
@@ -320,6 +323,13 @@ pub struct App {
     /// instead — see `App::project_versions_source`). Also backs the
     /// release review screen's version list.
     pub(crate) project_versions: Vec<Version>,
+    /// The release review screen's state (`w`) — see `app::release`.
+    pub release: ReleaseState,
+    /// Bumped on every drilled-into version (including re-entering the
+    /// version list and drilling into a different one); a completed
+    /// `dispatch_release_issues` fetch whose generation no longer matches
+    /// this is stale and dropped, mirroring `search_generation`.
+    pub(crate) release_generation: u64,
     /// Whether the command palette (`ctrl-k`, SPEC.md §8) is currently open.
     pub palette_open: bool,
     pub palette: PaletteState,
@@ -450,6 +460,8 @@ impl App {
             version_picker_open: false,
             version_picker: VersionPickerState::default(),
             project_versions: Vec::new(),
+            release: ReleaseState::default(),
+            release_generation: 0,
             palette_open: false,
             palette: PaletteState::default(),
             assignable_users: Vec::new(),

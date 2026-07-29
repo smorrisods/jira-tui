@@ -1303,6 +1303,58 @@ fn board_screen_shows_columns_and_lanes() {
 }
 
 #[test]
+fn release_screen_lists_versions() {
+    let mut app = demo_app();
+    app.open_release_screen();
+    let text = render(&app);
+    assert!(text.contains("releases"), "release screen should render");
+    assert!(text.contains("v3.4.0"), "should list the released version");
+    assert!(text.contains("v3.5.0"), "should list the upcoming version");
+    assert!(text.contains("released"));
+    assert!(text.contains("unreleased"));
+}
+
+#[test]
+fn release_screen_drill_shows_progress_and_grouped_issues() {
+    let mut app = demo_app();
+    app.open_release_screen();
+    let idx = app
+        .release
+        .versions
+        .iter()
+        .position(|v| v.name == "v3.4.0")
+        .unwrap();
+    app.release.cursor = idx;
+    app.release_confirm();
+    let text = render(&app);
+    assert!(
+        text.contains("release · v3.4.0"),
+        "drill title should name the version"
+    );
+    assert!(
+        text.contains("done"),
+        "should show a done/total progress line"
+    );
+    assert!(text.contains("DS-"), "should list the version's issues");
+}
+
+#[test]
+fn release_screen_drill_on_an_empty_version_says_so() {
+    let mut app = demo_app();
+    app.open_release_screen();
+    let idx = app
+        .release
+        .versions
+        .iter()
+        .position(|v| v.name == "v3.6.0")
+        .unwrap();
+    app.release.cursor = idx;
+    app.release_confirm();
+    let text = render(&app);
+    assert!(text.contains("No issues target this release"));
+}
+
+#[test]
 fn board_screen_highlights_selected_card() {
     let mut app = demo_app();
     app.open_board();
@@ -1410,7 +1462,11 @@ fn help_overlay_shows_every_row_without_clipping() {
     // count instead, so every row — especially the last one — must render.
     let mut app = demo_app();
     app.show_help = true;
-    let text = render(&app);
+    // KEYMAP has grown past the default 120x40 reference size's capacity
+    // (see `ui::help::draw_help_overlay`'s clamp-to-frame-height comment) —
+    // tall enough that every row, including the trailing close hint, fits
+    // without clipping.
+    let text = render_at(&app, 120, 46);
     assert!(
         text.contains("? / q") && text.contains("toggle help"),
         "the last help row (close help/quit) must not be clipped"

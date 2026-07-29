@@ -145,6 +145,19 @@ pub enum AppEvent {
         affects_versions: Option<Vec<String>>,
         affects_error: Option<String>,
     },
+    /// The release review screen's drill-down fetch resolved — see
+    /// `App::open_release_drill`/`dispatch_release_issues`. Carries its own
+    /// `release_generation`, distinct from every other counter, so
+    /// re-drilling into a different version (or backing out) can't be
+    /// clobbered by, or clobber, an unrelated in-flight fetch.
+    ReleaseIssuesLoaded {
+        generation: u64,
+        issues: Vec<IssueSummary>,
+        /// Set on a failed/skipped fetch (no credentials, network error) —
+        /// surfaced via `App::status` since there's no fallback data to
+        /// quietly show in its place.
+        error: Option<String>,
+    },
 }
 
 impl App {
@@ -244,6 +257,11 @@ impl App {
                 affects_versions,
                 affects_error,
             ),
+            AppEvent::ReleaseIssuesLoaded {
+                generation,
+                issues,
+                error,
+            } => self.apply_release_issues_loaded(generation, issues, error),
         }
     }
 }

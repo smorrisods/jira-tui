@@ -73,6 +73,10 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
         desc: "swimlane board (Kanban-style, grouped by epic)",
     },
     KeyHint {
+        key: "w",
+        desc: "release review — versions, drill into one for its issues by status",
+    },
+    KeyHint {
         key: "h/j/k/l (board)",
         desc: "vim-style card/column nav — arrow keys also work",
     },

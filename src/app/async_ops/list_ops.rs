@@ -226,6 +226,53 @@ fn text_search_blocking(query: &str) -> (Vec<IssueSummary>, Option<String>) {
     (Vec::new(), None)
 }
 
+/// Spawn the release review screen's drill-down fetch off the render
+/// thread, sending the result back as `AppEvent::ReleaseIssuesLoaded`. Only
+/// dispatched for a genuine live session — demo/cache sessions resolve
+/// `App::open_release_drill` synchronously via `domain::demo_issues_for_version`.
+pub(crate) fn dispatch_release_issues(
+    tx: UnboundedSender<AppEvent>,
+    generation: u64,
+    version_name: String,
+) {
+    tokio::spawn(async move {
+        let (issues, error) =
+            tokio::task::spawn_blocking(move || release_issues_blocking(&version_name))
+                .await
+                .unwrap_or_else(|_| (Vec::new(), Some("internal error: task panicked".into())));
+        let _ = tx.send(AppEvent::ReleaseIssuesLoaded {
+            generation,
+            issues,
+            error,
+        });
+    });
+}
+
+/// Mirrors `text_search_blocking`'s "no fallback data, so a failure is
+/// worth surfacing" shape.
+#[allow(unused_variables)]
+fn release_issues_blocking(version_name: &str) -> (Vec<IssueSummary>, Option<String>) {
+    #[cfg(feature = "live")]
+    {
+        let Some(cfg) = crate::jira::Config::load() else {
+            return (
+                Vec::new(),
+                Some("release issues skipped: no credentials configured".into()),
+            );
+        };
+        let jql = crate::jira::jql_for_version(&cfg.project, version_name);
+        match crate::jira::search_issues(&cfg, &jql) {
+            Ok(issues) => (issues, None),
+            Err(e) => (
+                Vec::new(),
+                Some(format!("release issues fetch failed: {e}")),
+            ),
+        }
+    }
+    #[cfg(not(feature = "live"))]
+    (Vec::new(), None)
+}
+
 impl App {
     /// Applies `AppEvent::Refreshed` — see `dispatch_refresh` above.
     pub(super) fn apply_refreshed(
@@ -313,5 +360,26 @@ impl App {
     /// `dispatch_project_versions` above.
     pub(super) fn apply_project_versions_loaded(&mut self, versions: Vec<Version>) {
         self.project_versions = versions;
+    }
+
+    /// Applies `AppEvent::ReleaseIssuesLoaded` — see
+    /// `dispatch_release_issues` above. Sorted by status here (not just at
+    /// the demo-data call site) so `release_status_groups`' contiguous-run
+    /// grouping stays valid regardless of source.
+    pub(super) fn apply_release_issues_loaded(
+        &mut self,
+        generation: u64,
+        mut issues: Vec<IssueSummary>,
+        error: Option<String>,
+    ) {
+        if generation != self.release_generation {
+            return;
+        }
+        self.release.issues_loading = false;
+        if let Some(e) = error {
+            self.status = format!("⚠ {e}");
+        }
+        issues.sort_by(|a, b| a.status.cmp(&b.status));
+        self.release.issues = issues;
     }
 }

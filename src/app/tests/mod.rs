@@ -20,6 +20,7 @@ mod onboarding;
 mod palette;
 mod query;
 mod quick_view;
+mod release;
 mod search;
 mod sort_filter;
 mod spell_suggest;

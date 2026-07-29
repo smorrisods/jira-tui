@@ -40,6 +40,7 @@ mod palette;
 mod preview;
 mod quick_view;
 pub(crate) mod quick_view_columns;
+mod release;
 mod search;
 mod spell_suggest;
 mod transition_picker;
@@ -62,6 +63,7 @@ use list::draw_list;
 use palette::draw_palette;
 use preview::draw_preview;
 use quick_view::draw_quick_view;
+use release::draw_release;
 use search::draw_search;
 use spell_suggest::draw_spell_suggest;
 use transition_picker::draw_transition_picker;
@@ -237,6 +239,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Screen::Edit => draw_editor(f, app, body_area),
         Screen::Search => draw_search(f, app, body_area),
         Screen::Board => draw_board(f, app, body_area),
+        Screen::Release => draw_release(f, app, body_area),
         Screen::About => draw_about(f, app, body_area),
         Screen::FieldMapping => draw_field_mapping(f, app, body_area),
     }
