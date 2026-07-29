@@ -5,7 +5,8 @@ use chrono::{Duration, Utc};
 use serde_json::json;
 
 use super::types::{
-    AssignableUser, ChildIssue, Comment, IssueDetail, IssueLink, IssueSummary, Priority, Transition,
+    AssignableUser, ChildIssue, Comment, IssueDetail, IssueLink, IssueSummary, Priority,
+    Transition, Version,
 };
 
 /// The implicit "you" in demo mode — offline `Source::Demo` carries no real
@@ -173,6 +174,50 @@ pub fn demo_assignable_users() -> Vec<AssignableUser> {
     ]
 }
 
+/// Offline stand-in for `jira::live::versions::list_versions`, so the
+/// release review screen (`app::release`) and the per-issue version picker
+/// (`R`) are fully explorable in demo mode. `v3.4.0` is released with issues
+/// in a mix of statuses (including one still open, as a real project would
+/// have); `v3.5.0` is the upcoming release most demo issues target; `v3.6.0`
+/// has no issues at all, so an empty release is explorable too.
+pub fn demo_versions() -> Vec<Version> {
+    vec![
+        Version {
+            id: "10001".into(),
+            name: "v3.4.0".into(),
+            released: true,
+            release_date: Some("2026-05-15".into()),
+        },
+        Version {
+            id: "10002".into(),
+            name: "v3.5.0".into(),
+            released: false,
+            release_date: Some("2026-08-01".into()),
+        },
+        Version {
+            id: "10003".into(),
+            name: "v3.6.0".into(),
+            released: false,
+            release_date: None,
+        },
+    ]
+}
+
+/// `fix_versions`/`affects_versions` for a demo issue key, keyed by hand so
+/// `v3.4.0` (released) and `v3.5.0` (upcoming) both have a mix of issues in
+/// different statuses — see `demo_versions`. Keys not listed here (including
+/// `demo_detail_not_found`'s placeholder) get neither field.
+fn demo_versions_for(key: &str) -> (Vec<String>, Vec<String>) {
+    match key {
+        "DS-2722" | "DS-2725" | "DS-2631" => (vec!["v3.5.0".into()], vec![]),
+        "DS-2603" | "DS-2604" => (vec!["v3.4.0".into()], vec![]),
+        "DS-2648" => (vec!["v3.5.0".into()], vec!["v3.4.0".into()]),
+        "DS-2661" => (vec!["v3.4.0".into()], vec!["v3.4.0".into()]),
+        "DS-2640" => (vec![], vec!["v3.4.0".into()]),
+        _ => (vec![], vec![]),
+    }
+}
+
 /// A detailed view for a demo issue key, with a rich ADF description so the
 /// ADF renderer is genuinely exercised offline.
 ///
@@ -239,6 +284,8 @@ pub fn demo_detail(key: &str) -> IssueDetail {
         ]
     });
 
+    let (fix_versions, affects_versions) = demo_versions_for(&base.key);
+
     IssueDetail {
         key: base.key.clone(),
         summary: base.summary.clone(),
@@ -249,6 +296,8 @@ pub fn demo_detail(key: &str) -> IssueDetail {
         reporter: Some("jane.reporter".into()),
         labels: vec!["accordion".into(), "web-components".into(), "a11y".into()],
         components: vec!["Accordion".into(), "Web Components".into()],
+        fix_versions,
+        affects_versions,
         parent: if base.issue_type == "Epic" {
             None
         } else {
@@ -359,6 +408,8 @@ fn demo_detail_not_found(key: &str) -> IssueDetail {
         reporter: None,
         labels: Vec::new(),
         components: Vec::new(),
+        fix_versions: Vec::new(),
+        affects_versions: Vec::new(),
         parent: None,
         links: Vec::new(),
         children: Vec::new(),
@@ -409,6 +460,32 @@ mod tests {
         let d = demo_detail("DS-0000");
         assert_eq!(d.key, "DS-0000");
         assert!(!d.summary.is_empty());
+    }
+
+    #[test]
+    fn demo_versions_are_unique_and_include_a_released_and_unreleased_one() {
+        let versions = demo_versions();
+        let mut names: Vec<&str> = versions.iter().map(|v| v.name.as_str()).collect();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), versions.len(), "version names must be unique");
+        assert!(versions.iter().any(|v| v.released));
+        assert!(versions.iter().any(|v| !v.released));
+    }
+
+    #[test]
+    fn demo_detail_fix_and_affects_versions_reference_real_demo_versions() {
+        let version_names: Vec<String> = demo_versions().into_iter().map(|v| v.name).collect();
+        for issue in demo_issues() {
+            let detail = demo_detail(&issue.key);
+            for v in detail.fix_versions.iter().chain(&detail.affects_versions) {
+                assert!(
+                    version_names.contains(v),
+                    "{} references version {v}, missing from demo_versions",
+                    issue.key
+                );
+            }
+        }
     }
 
     #[test]

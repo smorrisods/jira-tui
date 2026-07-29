@@ -77,6 +77,15 @@ pub struct IssueDetail {
     pub reporter: Option<String>,
     pub labels: Vec<String>,
     pub components: Vec<String>,
+    /// Releases this issue is targeted to ship in (Jira's `fixVersions`) —
+    /// the field `App::open_version_picker` edits. Version names, matching
+    /// how `labels`/`components` above store names rather than ids.
+    pub fix_versions: Vec<String>,
+    /// Releases this issue affects, i.e. where the bug/gap was found
+    /// (Jira's `versions`) — editable like any other field, but with no
+    /// dedicated review screen or bulk-editing surface (unlike
+    /// `fix_versions`, see `Version` / `app::release`).
+    pub affects_versions: Vec<String>,
     pub parent: Option<String>,
     pub links: Vec<IssueLink>,
     /// This issue's children: an Epic's child stories/tasks, or a
@@ -132,6 +141,19 @@ pub struct ChildIssue {
     pub issue_type: String,
     pub summary: String,
     pub status: String,
+}
+
+/// A project release (Jira "version") — the unit `fix_versions`/
+/// `affects_versions` reference by name, and what the release review
+/// screen (`app::release`) lists and drills into.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Version {
+    pub id: String,
+    pub name: String,
+    pub released: bool,
+    /// Jira's date format (`YYYY-MM-DD`), already display-ready. `None` when
+    /// the version has no target date set.
+    pub release_date: Option<String>,
 }
 
 /// A user assignable to issues in the configured project — carries the

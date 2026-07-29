@@ -31,6 +31,18 @@ pub fn jql_for(view: &crate::domain::ViewKind, project: &str) -> String {
     }
 }
 
+/// Build the JQL behind the release review screen's drill-down (`app::release`):
+/// every issue in the configured project targeted at `version_name`,
+/// regardless of status — the drill-down itself groups the result by status,
+/// so nothing is filtered out here.
+pub fn jql_for_version(project: &str, version_name: &str) -> String {
+    let escaped_project = escape_jql_string(project);
+    let escaped_version = escape_jql_string(version_name);
+    format!(
+        "project = \"{escaped_project}\" AND fixVersion = \"{escaped_version}\" ORDER BY status ASC, updated DESC"
+    )
+}
+
 /// Escape a string for embedding in a double-quoted JQL string literal.
 /// Backslashes are escaped *before* quotes — JQL strings use `\` as their
 /// escape character, so a value ending in `\` would otherwise absorb the
@@ -168,6 +180,23 @@ mod tests {
         assert_eq!(
             jql,
             "assignee = \"Back\\\\slash \\\"Quote\\\"\" AND statusCategory != Done ORDER BY updated DESC"
+        );
+    }
+
+    #[test]
+    fn jql_for_version_builds_the_expected_query() {
+        assert_eq!(
+            jql_for_version("PROJ", "v1.0.0"),
+            "project = \"PROJ\" AND fixVersion = \"v1.0.0\" ORDER BY status ASC, updated DESC"
+        );
+    }
+
+    #[test]
+    fn jql_for_version_escapes_embedded_quotes() {
+        let jql = jql_for_version("PROJ", "Robert \"Bob\" Smith");
+        assert_eq!(
+            jql,
+            "project = \"PROJ\" AND fixVersion = \"Robert \\\"Bob\\\" Smith\" ORDER BY status ASC, updated DESC"
         );
     }
 

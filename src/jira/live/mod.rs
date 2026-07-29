@@ -19,6 +19,7 @@ mod fields;
 mod mutations;
 mod search;
 mod support;
+mod versions;
 
 pub use comments::add_comment;
 pub use detail::fetch_detail;
@@ -28,6 +29,8 @@ pub use mutations::{
     update_description, update_summary,
 };
 pub use search::{
-    fetch_my_work, jql_for, search_by_text, search_issues, MY_WORK_JQL, SEARCH_RESULTS_CAP,
+    fetch_my_work, jql_for, jql_for_version, search_by_text, search_issues, MY_WORK_JQL,
+    SEARCH_RESULTS_CAP,
 };
 pub use support::whoami;
+pub use versions::{list_versions, set_affects_versions, set_fix_versions};

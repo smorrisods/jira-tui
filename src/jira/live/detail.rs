@@ -13,7 +13,7 @@ use crate::domain::{ChildIssue, IssueDetail, IssueLink};
 
 pub fn fetch_detail(cfg: &Config, key: &str) -> anyhow::Result<IssueDetail> {
     let mut fields = "summary,status,issuetype,priority,assignee,reporter,labels,\
-        components,parent,issuelinks,description,subtasks"
+        components,fixVersions,versions,parent,issuelinks,description,subtasks"
         .to_string();
     if let Some(ac_field) = &cfg.acceptance_criteria_field {
         fields.push(',');
@@ -41,6 +41,8 @@ pub fn fetch_detail(cfg: &Config, key: &str) -> anyhow::Result<IssueDetail> {
                 .collect()
         })
         .unwrap_or_default();
+    let fix_versions = version_names(&f, "fixVersions");
+    let affects_versions = version_names(&f, "versions");
     let links = f
         .get("issuelinks")
         .and_then(|l| l.as_array())
@@ -70,6 +72,8 @@ pub fn fetch_detail(cfg: &Config, key: &str) -> anyhow::Result<IssueDetail> {
         reporter: str_field(&f, &["reporter", "displayName"]),
         labels,
         components,
+        fix_versions,
+        affects_versions,
         parent: str_field(&f, &["parent", "key"]),
         links,
         children,
@@ -81,6 +85,20 @@ pub fn fetch_detail(cfg: &Config, key: &str) -> anyhow::Result<IssueDetail> {
         transitions: fetch_transitions(cfg, key).unwrap_or_default(),
         comments: fetch_comments(cfg, key).unwrap_or_default(),
     })
+}
+
+/// Extract version names from a `fixVersions`/`versions` array field —
+/// shared by both since Jira shapes them identically (`[{"name": ...}, ...]`).
+fn version_names(fields: &Value, field: &str) -> Vec<String> {
+    fields
+        .get(field)
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.get("name").and_then(|n| n.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn parse_links(arr: &[Value]) -> Vec<IssueLink> {
@@ -176,7 +194,7 @@ mod tests {
         let issue_mock = server
             .mock(
                 "GET",
-                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,parent,issuelinks,description,subtasks,customfield_10001",
+                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,fixVersions,versions,parent,issuelinks,description,subtasks,customfield_10001",
             )
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -219,7 +237,7 @@ mod tests {
         let issue_mock = server
             .mock(
                 "GET",
-                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,parent,issuelinks,description,subtasks",
+                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,fixVersions,versions,parent,issuelinks,description,subtasks",
             )
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -238,12 +256,69 @@ mod tests {
     }
 
     #[test]
+    fn fetch_detail_parses_fix_and_affects_versions() {
+        let mut server = mockito::Server::new();
+        let issue_mock = server
+            .mock(
+                "GET",
+                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,fixVersions,versions,parent,issuelinks,description,subtasks",
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "fields": {
+                        "summary": "Ships in the next release",
+                        "fixVersions": [{"name": "v1.0.0"}, {"name": "v1.1.0"}],
+                        "versions": [{"name": "v0.9.0"}]
+                    }
+                }"#,
+            )
+            .create();
+        server
+            .mock("GET", "/rest/api/3/issue/DS-1/transitions")
+            .with_status(404)
+            .create();
+
+        let cfg = test_config(server.url());
+        let detail = fetch_detail(&cfg, "DS-1").unwrap();
+
+        issue_mock.assert();
+        assert_eq!(detail.fix_versions, vec!["v1.0.0", "v1.1.0"]);
+        assert_eq!(detail.affects_versions, vec!["v0.9.0"]);
+    }
+
+    #[test]
+    fn fetch_detail_defaults_to_empty_versions_when_absent() {
+        let mut server = mockito::Server::new();
+        server
+            .mock(
+                "GET",
+                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,fixVersions,versions,parent,issuelinks,description,subtasks",
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"fields": {"summary": "No versions here"}}"#)
+            .create();
+        server
+            .mock("GET", "/rest/api/3/issue/DS-1/transitions")
+            .with_status(404)
+            .create();
+
+        let cfg = test_config(server.url());
+        let detail = fetch_detail(&cfg, "DS-1").unwrap();
+
+        assert!(detail.fix_versions.is_empty());
+        assert!(detail.affects_versions.is_empty());
+    }
+
+    #[test]
     fn fetch_detail_parses_inline_subtasks_for_non_epic_issues() {
         let mut server = mockito::Server::new();
         let issue_mock = server
             .mock(
                 "GET",
-                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,parent,issuelinks,description,subtasks",
+                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,fixVersions,versions,parent,issuelinks,description,subtasks",
             )
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -290,7 +365,7 @@ mod tests {
         let issue_mock = server
             .mock(
                 "GET",
-                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,parent,issuelinks,description,subtasks",
+                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,fixVersions,versions,parent,issuelinks,description,subtasks",
             )
             .with_status(200)
             .with_header("content-type", "application/json")
