@@ -6,12 +6,12 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use crate::app::{App, SearchRow};
+use crate::app::{App, SearchPurpose, SearchRow};
 use crate::domain::Source;
 
 use super::list::{flat_guide, issue_row};
 use super::list_columns::column_set_for_width;
-use super::{accent, accent2, card, card_bordered, maple, muted, selected_style, warn};
+use super::{accent, accent2, card, card_bordered, maple, muted, ok, selected_style, warn};
 
 pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
     let rows = Layout::default()
@@ -27,10 +27,14 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
     let live_available = matches!(app.source, Source::Live { .. });
 
     // Query input line.
-    let input_title = if live_available {
-        "  search / go to issue  ".to_string()
-    } else {
-        "  search / go to issue — local only, not a live session  ".to_string()
+    let input_title = match &app.search.purpose {
+        SearchPurpose::AddToRelease(version_name) => {
+            format!("  add issues to {version_name} — tab select, ⏎ confirm  ",)
+        }
+        SearchPurpose::GoTo if live_available => "  search / go to issue  ".to_string(),
+        SearchPurpose::GoTo => {
+            "  search / go to issue — local only, not a live session  ".to_string()
+        }
     };
     let input_block = card_bordered(&input_title, accent(), accent());
     let input_inner = input_block.inner(rows[0]);
@@ -51,7 +55,7 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
     // outcome visible in the title (not just a transient status message) —
     // "0 found" for a genuinely empty result reads very differently from a
     // live search that never got dispatched at all.
-    let results_title = if app.search.live_loading {
+    let mut results_title = if app.search.live_loading {
         "  results — searching Jira…  ".to_string()
     } else if let Some(live_q) = &app.search.live_query {
         format!(
@@ -61,6 +65,13 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
     } else {
         "  results  ".to_string()
     };
+    if !app.search.bulk_selected.is_empty() {
+        results_title = format!(
+            "{} ({} selected)  ",
+            results_title.trim_end(),
+            app.search.bulk_selected.len()
+        );
+    }
     let results_block = card(&results_title, accent2());
     let inner = results_block.inner(rows[1]);
     f.render_widget(results_block, rows[1]);
@@ -98,6 +109,7 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
             },
             selected,
         );
+        let row_start = lines.len();
         match row {
             SearchRow::Goto(key) => {
                 lines.push(Line::from(vec![
@@ -138,6 +150,24 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
                         ),
                     )));
                 }
+            }
+        }
+        // Bulk-add mode: prepend a checkbox onto this row's first line —
+        // `app.search_row_key` is the same key resolution
+        // `search_toggle_bulk_selected` toggles against, so a row's
+        // checkbox always agrees with whether `Tab` would check or uncheck it.
+        if app.search.purpose != crate::app::SearchPurpose::GoTo {
+            if let Some(first) = lines.get_mut(row_start) {
+                let checked = app
+                    .search_row_key(row)
+                    .is_some_and(|key| app.search.bulk_selected.contains(&key));
+                let checkbox = if checked { "✓ " } else { "○ " };
+                let mut spans = vec![Span::styled(
+                    checkbox,
+                    Style::default().fg(if checked { ok() } else { muted() }),
+                )];
+                spans.extend(std::mem::take(&mut first.spans));
+                *first = Line::from(spans);
             }
         }
     }

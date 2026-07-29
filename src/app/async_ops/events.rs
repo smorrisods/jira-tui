@@ -8,7 +8,7 @@ use crate::domain::{
     AssignableUser, Comment, IssueDetail, IssueSummary, Source, Version, ViewKind,
 };
 
-use super::super::{App, Screen};
+use super::super::{App, ReleaseBulkKind, Screen};
 use super::setup_ops::FieldsFetchResult;
 
 /// Sent back from a spawned fetch once it completes. Carries the
@@ -158,6 +158,18 @@ pub enum AppEvent {
         /// quietly show in its place.
         error: Option<String>,
     },
+    /// A bulk add-to-release or remove-from-release resolved — see
+    /// `App::release_remove_selected`/`release_add_to_release` and
+    /// `dispatch_release_bulk`. Each issue succeeds or fails independently
+    /// (one issue's fetch/write failing shouldn't block the rest), so this
+    /// carries a per-key result rather than one pass/fail for the whole
+    /// batch.
+    ReleaseBulkApplied {
+        generation: u64,
+        version_name: String,
+        kind: ReleaseBulkKind,
+        results: Vec<(String, Result<(), String>)>,
+    },
 }
 
 impl App {
@@ -262,6 +274,12 @@ impl App {
                 issues,
                 error,
             } => self.apply_release_issues_loaded(generation, issues, error),
+            AppEvent::ReleaseBulkApplied {
+                generation,
+                version_name,
+                kind,
+                results,
+            } => self.apply_release_bulk_applied(generation, version_name, kind, results),
         }
     }
 }

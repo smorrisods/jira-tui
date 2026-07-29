@@ -53,8 +53,8 @@ pub use mouse::{ListFocus, MouseState, SelectionSpan};
 pub use onboarding::{Field, OnboardingState, WelcomePhase};
 pub use palette::{PaletteAction, PaletteState};
 pub(crate) use palette::{PaletteGroup, PaletteRow};
-pub use release::ReleaseState;
-pub use search::{SearchRow, SearchState};
+pub use release::{ReleaseBulkKind, ReleaseState};
+pub use search::{SearchPurpose, SearchRow, SearchState};
 pub use sort_filter::SortKey;
 pub use spell_suggest::SpellSuggestState;
 pub use tree::ListViewMode;
@@ -330,6 +330,10 @@ pub struct App {
     /// `dispatch_release_issues` fetch whose generation no longer matches
     /// this is stale and dropped, mirroring `search_generation`.
     pub(crate) release_generation: u64,
+    /// Bumped on every dispatched bulk add/remove (`release_remove_selected`/
+    /// `release_add_to_release`); a completed `dispatch_release_bulk` whose
+    /// generation no longer matches this is stale and dropped.
+    pub(crate) release_bulk_generation: u64,
     /// Whether the command palette (`ctrl-k`, SPEC.md §8) is currently open.
     pub palette_open: bool,
     pub palette: PaletteState,
@@ -462,6 +466,7 @@ impl App {
             project_versions: Vec::new(),
             release: ReleaseState::default(),
             release_generation: 0,
+            release_bulk_generation: 0,
             palette_open: false,
             palette: PaletteState::default(),
             assignable_users: Vec::new(),

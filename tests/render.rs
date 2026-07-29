@@ -1355,6 +1355,45 @@ fn release_screen_drill_on_an_empty_version_says_so() {
 }
 
 #[test]
+fn release_screen_drill_shows_selected_count_and_checkbox() {
+    let mut app = demo_app();
+    app.open_release_screen();
+    let idx = app
+        .release
+        .versions
+        .iter()
+        .position(|v| v.name == "v3.4.0")
+        .unwrap();
+    app.release.cursor = idx;
+    app.release_confirm();
+    app.release.issue_cursor = 0;
+    app.release_toggle_selected();
+
+    let text = render(&app);
+    assert!(text.contains("1 selected"));
+    assert!(text.contains('✓'));
+}
+
+#[test]
+fn search_screen_bulk_mode_shows_title_and_checkboxes() {
+    let mut app = demo_app();
+    app.screen = Screen::Release;
+    app.open_search_for_release("v3.5.0".into());
+    let text = render(&app);
+    assert!(text.contains("add issues to v3.5.0"));
+    assert!(
+        text.contains('○'),
+        "unselected rows should show an empty checkbox"
+    );
+
+    app.search.selected = 0;
+    app.search_toggle_bulk_selected();
+    let text = render(&app);
+    assert!(text.contains("1 selected"));
+    assert!(text.contains('✓'));
+}
+
+#[test]
 fn board_screen_highlights_selected_card() {
     let mut app = demo_app();
     app.open_board();

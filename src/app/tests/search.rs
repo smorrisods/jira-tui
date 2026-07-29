@@ -347,3 +347,96 @@ async fn live_results_are_hidden_once_the_query_has_moved_on() {
         "stale live results must disappear once the query no longer matches live_query"
     );
 }
+
+#[test]
+fn open_search_for_release_starts_in_bulk_mode_with_nothing_selected() {
+    let mut app = demo_app();
+    app.screen = Screen::Release;
+    app.open_search_for_release("v3.5.0".into());
+    assert_eq!(app.screen, Screen::Search);
+    assert_eq!(app.search.return_to, Screen::Release);
+    assert_eq!(
+        app.search.purpose,
+        SearchPurpose::AddToRelease("v3.5.0".into())
+    );
+    assert!(app.search.bulk_selected.is_empty());
+}
+
+#[test]
+fn search_toggle_bulk_selected_is_a_no_op_outside_bulk_mode() {
+    let mut app = demo_app();
+    app.open_search();
+    app.search.selected = 0;
+    app.search_toggle_bulk_selected();
+    assert!(app.search.bulk_selected.is_empty());
+}
+
+#[test]
+fn search_toggle_bulk_selected_checks_and_unchecks_the_highlighted_row() {
+    let mut app = demo_app();
+    app.open_search_for_release("v3.5.0".into());
+    let key = match &app.search.rows[0] {
+        SearchRow::Match(idx) => app.all_issues[*idx].key.clone(),
+        other => panic!("expected a Match row first, got {other:?}"),
+    };
+    app.search.selected = 0;
+
+    app.search_toggle_bulk_selected();
+    assert!(app.search.bulk_selected.contains(&key));
+    app.search_toggle_bulk_selected();
+    assert!(!app.search.bulk_selected.contains(&key));
+}
+
+#[test]
+fn confirm_search_in_bulk_mode_adds_selected_issues_and_returns_to_release() {
+    let mut app = demo_app();
+    app.screen = Screen::Release;
+    app.open_release_screen();
+    let idx = app
+        .release
+        .versions
+        .iter()
+        .position(|v| v.name == "v3.6.0")
+        .unwrap();
+    app.release.cursor = idx;
+    app.release_confirm(); // drill into the empty v3.6.0
+
+    app.open_search_for_release("v3.6.0".into());
+    let key = match &app.search.rows[0] {
+        SearchRow::Match(idx) => app.all_issues[*idx].key.clone(),
+        other => panic!("expected a Match row first, got {other:?}"),
+    };
+    app.search.selected = 0;
+    app.search_toggle_bulk_selected();
+
+    app.confirm_search();
+
+    assert_eq!(app.screen, Screen::Release);
+    assert!(app.release.issues.iter().any(|i| i.key == key));
+}
+
+#[test]
+fn confirm_search_in_bulk_mode_with_nothing_toggled_uses_the_highlighted_row() {
+    let mut app = demo_app();
+    app.screen = Screen::Release;
+    app.open_release_screen();
+    let idx = app
+        .release
+        .versions
+        .iter()
+        .position(|v| v.name == "v3.6.0")
+        .unwrap();
+    app.release.cursor = idx;
+    app.release_confirm();
+
+    app.open_search_for_release("v3.6.0".into());
+    let key = match &app.search.rows[0] {
+        SearchRow::Match(idx) => app.all_issues[*idx].key.clone(),
+        other => panic!("expected a Match row first, got {other:?}"),
+    };
+    app.search.selected = 0;
+
+    app.confirm_search(); // nothing toggled — should still add the highlighted row
+
+    assert!(app.release.issues.iter().any(|i| i.key == key));
+}

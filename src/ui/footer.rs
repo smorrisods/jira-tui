@@ -214,6 +214,13 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
                 hint("esc", "cancel"),
             ])
         }
+        Screen::Search if app.search.purpose != crate::app::SearchPurpose::GoTo => single(vec![
+            hint("type", "to filter"),
+            hint("↑/↓", "move"),
+            hint("tab", "toggle selected"),
+            hint("⏎", "add selected"),
+            hint("esc", "cancel"),
+        ]),
         Screen::Search => single(vec![
             hint("type", "to filter"),
             hint("↑/↓", "move"),
@@ -252,7 +259,13 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
             let (nav, act) = if app.release.drilled.is_some() {
                 (
                     vec![hint("↑/↓", "issue")],
-                    vec![hint("⏎", "open issue"), hint("esc", "back to versions")],
+                    vec![
+                        hint("⏎", "open issue"),
+                        hint("space", "select"),
+                        hint("x", "remove selected"),
+                        hint("a", "add issues"),
+                        hint("esc", "back to versions"),
+                    ],
                 )
             } else {
                 (vec![hint("↑/↓", "version")], vec![hint("⏎", "drill in")])

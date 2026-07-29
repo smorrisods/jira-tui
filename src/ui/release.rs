@@ -93,16 +93,20 @@ fn draw_drill(f: &mut Frame, app: &App, area: Rect, version: &Version) {
     const BAR_WIDTH: usize = 20;
     let filled = (BAR_WIDTH * done).checked_div(total).unwrap_or(0);
     let bar: String = "█".repeat(filled) + &"░".repeat(BAR_WIDTH.saturating_sub(filled));
-    f.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(bar, Style::default().fg(ok())),
-            Span::styled(
-                format!("  {done}/{total} done ({pct}%)"),
-                Style::default().fg(muted()),
-            ),
-        ])),
-        rows[0],
-    );
+    let mut progress_spans = vec![
+        Span::styled(bar, Style::default().fg(ok())),
+        Span::styled(
+            format!("  {done}/{total} done ({pct}%)"),
+            Style::default().fg(muted()),
+        ),
+    ];
+    if !app.release.selected.is_empty() {
+        progress_spans.push(Span::styled(
+            format!("  ·  {} selected", app.release.selected.len()),
+            Style::default().fg(accent2()).add_modifier(Modifier::BOLD),
+        ));
+    }
+    f.render_widget(Paragraph::new(Line::from(progress_spans)), rows[0]);
 
     if app.release.issues_loading {
         f.render_widget(
@@ -135,8 +139,19 @@ fn draw_drill(f: &mut Frame, app: &App, area: Rect, version: &Version) {
             Style::default().fg(muted()).add_modifier(Modifier::BOLD),
         )));
         for issue in issues {
-            let selected = idx == app.release.issue_cursor;
-            lines.extend(issue_row(issue, selected, &guide, &columns));
+            let row_selected = idx == app.release.issue_cursor;
+            let checked = app.release.selected.contains(&issue.key);
+            let mut row_lines = issue_row(issue, row_selected, &guide, &columns);
+            if let Some(first) = row_lines.first_mut() {
+                let checkbox = if checked { "✓ " } else { "  " };
+                let mut spans = vec![Span::styled(
+                    checkbox,
+                    Style::default().fg(if checked { ok() } else { muted() }),
+                )];
+                spans.extend(std::mem::take(&mut first.spans));
+                *first = Line::from(spans);
+            }
+            lines.extend(row_lines);
             idx += 1;
         }
     }

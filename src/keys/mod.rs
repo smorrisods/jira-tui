@@ -225,11 +225,16 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // The Search / go-to-issue screen captures typing.
+    // The Search / go-to-issue screen captures typing. `Tab` toggles bulk
+    // selection (only meaningful in the release review screen's bulk-add
+    // mode, see `App::open_search_for_release`) — every other printable
+    // character always types into the query, so bulk mode can't steal a
+    // letter someone's trying to search for.
     if app.screen == Screen::Search {
         match key.code {
             KeyCode::Esc => app.close_search(),
             KeyCode::Enter => app.confirm_search(),
+            KeyCode::Tab => app.search_toggle_bulk_selected(),
             KeyCode::Up => app.search_move(-1),
             KeyCode::Down => app.search_move(1),
             KeyCode::Backspace => app.search_backspace(),
@@ -284,6 +289,19 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             KeyCode::Up | KeyCode::Char('k') => app.release_move(-1),
             KeyCode::Down | KeyCode::Char('j') => app.release_move(1),
             KeyCode::Enter | KeyCode::Right => app.release_confirm(),
+            // Bulk membership: `Space` checks/unchecks an issue for
+            // removal, `x` removes whatever's checked (or just the
+            // highlighted issue if nothing was explicitly checked), `a`
+            // opens Search in bulk-add mode for the drilled version. All
+            // three are drill-mode-only in effect (`release_toggle_selected`/
+            // `release_remove_selected` no-op on an empty issue list; `a`
+            // is guarded here since it needs the drilled version's name).
+            KeyCode::Char(' ') => app.release_toggle_selected(),
+            KeyCode::Char('x') => app.release_remove_selected(),
+            KeyCode::Char('a') if app.release.drilled.is_some() => {
+                let version_name = app.release.drilled.as_ref().unwrap().name.clone();
+                app.open_search_for_release(version_name);
+            }
             KeyCode::Char('?') => app.show_help = true,
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left | KeyCode::Backspace
                 if !app.release_back() =>
