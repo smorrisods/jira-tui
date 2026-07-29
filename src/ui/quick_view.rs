@@ -60,7 +60,18 @@ fn draw_wide(
     detail: &crate::domain::IssueDetail,
     updated: &str,
 ) {
-    let mut wide = render::quick_view_wide(detail, updated);
+    // Computed before `render::quick_view_wide` so the description column's
+    // actual width is known up front — see `ui::detail::draw_wide`'s
+    // matching comment.
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Min(40),
+            Constraint::Length(meta_width_for(area.width)),
+        ])
+        .split(area);
+
+    let mut wide = render::quick_view_wide(detail, updated, cols[0].width as usize);
     if let Some(target) = render::quick_view_wide_links(&wide)
         .get(app.link_index)
         .cloned()
@@ -71,14 +82,6 @@ fn draw_wide(
         };
         render::highlight_target(lines, &target);
     }
-
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Min(40),
-            Constraint::Length(meta_width_for(area.width)),
-        ])
-        .split(area);
 
     draw_with_overflow(f, cols[0], wide.description, app.quick_view_scroll);
     // The meta column never scrolls (there's no dedicated scroll state for
@@ -95,7 +98,7 @@ fn draw_narrow(
     detail: &crate::domain::IssueDetail,
     updated: &str,
 ) {
-    let mut narrow = render::quick_view_narrow(detail, updated);
+    let mut narrow = render::quick_view_narrow(detail, updated, area.width as usize);
     if let Some(target) = narrow.panel.links.get(app.link_index).cloned() {
         render::highlight_target(&mut narrow.panel.lines, &target);
     }

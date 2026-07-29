@@ -19,12 +19,17 @@ const HEADING: Color = Color::Cyan;
 const CODE_FG: Color = Color::LightGreen;
 const MUTED: Color = Color::DarkGray;
 
-/// Render an ADF document into styled lines.
-pub fn render(doc: &Value) -> Text<'static> {
+/// Render an ADF document into styled lines. `width` is the column width
+/// the caller is about to hand these lines to a `Paragraph::wrap(Wrap {
+/// trim: false })` at — needed so blockquote/code-block content can be
+/// pre-wrapped ourselves (see `crate::render::wrap_with_bar`) rather than
+/// left to ratatui's own wrap, which has no way to repeat a left-margin bar
+/// span on a line's wrapped continuation rows.
+pub fn render(doc: &Value, width: usize) -> Text<'static> {
     let mut lines: Vec<Line<'static>> = Vec::new();
     if let Some(content) = doc.get("content").and_then(|c| c.as_array()) {
         for (i, node) in content.iter().enumerate() {
-            render_block(node, &mut lines, 0);
+            render_block(node, &mut lines, 0, width);
             // breathing room between top-level blocks
             if i + 1 < content.len() {
                 lines.push(Line::from(""));
@@ -44,7 +49,7 @@ fn indent(depth: usize) -> String {
     "  ".repeat(depth)
 }
 
-fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize) {
+fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize, width: usize) {
     let ty = node.get("type").and_then(|t| t.as_str()).unwrap_or("");
     match ty {
         "heading" => {
@@ -78,7 +83,7 @@ fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize) {
                     } else {
                         "• ".to_string()
                     };
-                    render_list_item(item, out, depth, &marker);
+                    render_list_item(item, out, depth, &marker, width);
                 }
             }
         }
@@ -124,10 +129,8 @@ fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize) {
             out.push(Line::from(Span::styled(fence, Style::default().fg(MUTED))));
             let text = collect_text(node.get("content"));
             for raw in text.split('\n') {
-                out.push(Line::from(vec![
-                    Span::styled("│ ", Style::default().fg(MUTED)),
-                    Span::styled(raw.to_string(), Style::default().fg(CODE_FG)),
-                ]));
+                let line = Line::from(Span::styled(raw.to_string(), Style::default().fg(CODE_FG)));
+                out.extend(crate::render::wrap_with_bar(&line, width, "│ ", MUTED));
             }
             out.push(Line::from(Span::styled("```", Style::default().fg(MUTED))));
         }
@@ -141,13 +144,11 @@ fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize) {
             let mut inner: Vec<Line<'static>> = Vec::new();
             if let Some(content) = node.get("content").and_then(|c| c.as_array()) {
                 for child in content {
-                    render_block(child, &mut inner, depth);
+                    render_block(child, &mut inner, depth, width);
                 }
             }
             for line in inner {
-                let mut spans = vec![Span::styled("┃ ", Style::default().fg(MUTED))];
-                spans.extend(line.spans);
-                out.push(Line::from(spans));
+                out.extend(crate::render::wrap_with_bar(&line, width, "┃ ", MUTED));
             }
         }
         "table" => render_table(node, out),
@@ -155,14 +156,20 @@ fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize) {
             // generic container: descend if possible
             if let Some(content) = node.get("content").and_then(|c| c.as_array()) {
                 for child in content {
-                    render_block(child, out, depth);
+                    render_block(child, out, depth, width);
                 }
             }
         }
     }
 }
 
-fn render_list_item(item: &Value, out: &mut Vec<Line<'static>>, depth: usize, marker: &str) {
+fn render_list_item(
+    item: &Value,
+    out: &mut Vec<Line<'static>>,
+    depth: usize,
+    marker: &str,
+    width: usize,
+) {
     let content = match item.get("content").and_then(|c| c.as_array()) {
         Some(c) => c,
         None => return,
@@ -171,7 +178,7 @@ fn render_list_item(item: &Value, out: &mut Vec<Line<'static>>, depth: usize, ma
     for child in content {
         let ty = child.get("type").and_then(|t| t.as_str()).unwrap_or("");
         if ty == "bulletList" || ty == "orderedList" || ty == "taskList" {
-            render_block(child, out, depth + 1);
+            render_block(child, out, depth + 1, width);
             continue;
         }
         let mut spans = vec![
@@ -316,7 +323,7 @@ mod tests {
                 ] }
             ]
         });
-        let text = render(&doc);
+        let text = render(&doc, 120);
         let joined: String = text
             .lines
             .iter()
@@ -334,7 +341,7 @@ mod robustness_tests {
     use serde_json::json;
 
     fn flat(doc: &serde_json::Value) -> String {
-        render(doc)
+        render(doc, 120)
             .lines
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.content.clone()))
@@ -343,15 +350,21 @@ mod robustness_tests {
 
     #[test]
     fn empty_and_malformed_docs_do_not_panic() {
-        let _ = render(&json!({}));
-        let _ = render(&json!({ "type": "doc" }));
-        let _ = render(&json!({ "type": "doc", "content": "not-an-array" }));
-        let _ = render(&json!({ "type": "doc", "content": [ { "type": "mystery" } ] }));
+        let _ = render(&json!({}), 120);
+        let _ = render(&json!({ "type": "doc" }), 120);
+        let _ = render(&json!({ "type": "doc", "content": "not-an-array" }), 120);
+        let _ = render(
+            &json!({ "type": "doc", "content": [ { "type": "mystery" } ] }),
+            120,
+        );
         // A heading with no content array must still render safely.
-        let out = render(&json!({
-            "type": "doc",
-            "content": [ { "type": "heading", "attrs": { "level": 2 } } ]
-        }));
+        let out = render(
+            &json!({
+                "type": "doc",
+                "content": [ { "type": "heading", "attrs": { "level": 2 } } ]
+            }),
+            120,
+        );
         assert!(!out.lines.is_empty());
     }
 
@@ -411,5 +424,51 @@ mod robustness_tests {
         let s = flat(&doc);
         assert!(s.contains("Name"));
         assert!(s.contains("Ada"));
+    }
+
+    /// Regression test: a blockquote's `"┃ "` bar used to be added once per
+    /// logical line, so it only showed up on a long paragraph's *first*
+    /// on-screen row once `Paragraph::wrap` re-flowed it. `render_block`'s
+    /// blockquote arm now pre-wraps each line to the actual column width
+    /// (`crate::render::wrap_with_bar`), so every wrapped row carries its
+    /// own copy of the bar.
+    #[test]
+    fn blockquote_bar_repeats_on_every_wrapped_row() {
+        let long_text = "word ".repeat(30);
+        let doc = json!({
+            "type": "doc",
+            "content": [
+                { "type": "blockquote", "content": [
+                    { "type": "paragraph", "content": [ { "type": "text", "text": long_text } ] }
+                ] }
+            ]
+        });
+        let text = render(&doc, 20);
+        assert!(
+            text.lines.len() > 3,
+            "a long quoted paragraph at width 20 should wrap across several rows"
+        );
+        for line in &text.lines {
+            assert_eq!(line.spans[0].content.as_ref(), "┃ ");
+        }
+    }
+
+    /// Same bug, same fix, for a code block's `"│ "` bar.
+    #[test]
+    fn code_block_bar_repeats_on_every_wrapped_row() {
+        let long_code = "x".repeat(60);
+        let doc = json!({
+            "type": "doc",
+            "content": [
+                { "type": "codeBlock",
+                  "content": [ { "type": "text", "text": long_code } ] }
+            ]
+        });
+        let text = render(&doc, 20);
+        // fence, N wrapped code rows, fence.
+        assert!(text.lines.len() > 4);
+        for line in &text.lines[1..text.lines.len() - 1] {
+            assert_eq!(line.spans[0].content.as_ref(), "│ ");
+        }
     }
 }

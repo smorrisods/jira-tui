@@ -50,7 +50,19 @@ fn draw_wide(
     current_user: &str,
     updated: &str,
 ) {
-    let mut wide = render::wide_detail(detail, current_user, updated);
+    // Computed before `render::wide_detail` (not after, as the two-column
+    // split might suggest) — `wide_detail` needs the main column's actual
+    // width up front so a description/comment bar can be pre-wrapped to
+    // survive line wrapping (see `adf::render`'s doc comment).
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Min(40),
+            Constraint::Length(rail_width_for(area.width)),
+        ])
+        .split(area);
+
+    let mut wide = render::wide_detail(detail, current_user, updated, cols[0].width as usize);
     if let Some(target) = render::wide_detail_links(&wide)
         .get(app.link_index)
         .cloned()
@@ -65,14 +77,6 @@ fn draw_wide(
         };
         render::highlight_target(lines, &target);
     }
-
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Min(40),
-            Constraint::Length(rail_width_for(area.width)),
-        ])
-        .split(area);
 
     // The identity block's summary line has no fixed length — a long one
     // needs more than its 2 logical lines once wrapped at the main
@@ -191,7 +195,13 @@ fn draw_narrow(
     current_user: &str,
     updated: &str,
 ) {
-    let mut narrow = render::narrow_detail(detail, current_user, updated, app.facts_folded);
+    let mut narrow = render::narrow_detail(
+        detail,
+        current_user,
+        updated,
+        app.facts_folded,
+        area.width as usize,
+    );
     if let Some(target) = narrow.lines.links.get(app.link_index).cloned() {
         render::highlight_target(&mut narrow.lines.lines, &target);
     }
