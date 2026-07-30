@@ -151,6 +151,21 @@ fn build_palette_rows_omits_field_mapping_outside_home_and_list() {
 }
 
 #[test]
+fn build_palette_rows_offers_new_issue_only_on_home_and_list() {
+    // Same reasoning as field mapping above: the direct `a` key is
+    // Home/List-only, and `cancel_new_issue` always returns to Home.
+    let mut app = demo_app();
+    app.open_board();
+    app.open_palette();
+    assert!(!has_action(&app, |a| matches!(a, PaletteAction::NewIssue)));
+
+    app.close_palette();
+    app.screen = Screen::Home;
+    app.open_palette();
+    assert!(has_action(&app, |a| matches!(a, PaletteAction::NewIssue)));
+}
+
+#[test]
 fn build_palette_rows_carries_the_board_selected_key_not_selected_issue() {
     // Regression test: `App.selected` (the flat List index) and
     // `App.board_sel` (Board's own lane/column/card selection) are

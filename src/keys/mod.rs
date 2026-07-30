@@ -1001,7 +1001,11 @@ mod tests {
         let mut app = demo_app();
         app.screen = Screen::Home;
         handle_key(&mut app, KeyEvent::from(KeyCode::Char('a')));
-        assert_eq!(app.screen, Screen::NewIssue, "'a' should open the new-issue form");
+        assert_eq!(
+            app.screen,
+            Screen::NewIssue,
+            "'a' should open the new-issue form"
+        );
         app.screen = Screen::Home;
         handle_key(&mut app, KeyEvent::from(KeyCode::Char('i')));
         assert_eq!(app.screen, Screen::About, "'i' (Info) should open About");

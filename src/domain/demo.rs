@@ -5,8 +5,8 @@ use chrono::{Duration, Utc};
 use serde_json::json;
 
 use super::types::{
-    AssignableUser, ChildIssue, Comment, IssueDetail, IssueLink, IssueSummary, IssueType,
-    Priority, Transition, Version,
+    AssignableUser, ChildIssue, Comment, IssueDetail, IssueLink, IssueSummary, IssueType, Priority,
+    Transition, Version,
 };
 
 /// The implicit "you" in demo mode — offline `Source::Demo` carries no real

@@ -56,7 +56,10 @@ fn draw_text_field(f: &mut Frame, area: Rect, title: &str, value: &str, focused:
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let mut spans = vec![Span::styled(value.to_string(), Style::default().fg(Color::White))];
+    let mut spans = vec![Span::styled(
+        value.to_string(),
+        Style::default().fg(Color::White),
+    )];
     if focused {
         spans.push(Span::styled("▏", Style::default().fg(accent())));
     }

@@ -314,12 +314,12 @@ impl App {
     /// optional, unlike Description/Comment, which always have real content
     /// to compile by the time this runs.
     pub fn finish_edit(&mut self, markdown: &str) {
-        self.pending_edit = if self.edit_target == EditTarget::NewIssue && markdown.trim().is_empty()
-        {
-            None
-        } else {
-            Some(crate::adf::compile(markdown))
-        };
+        self.pending_edit =
+            if self.edit_target == EditTarget::NewIssue && markdown.trim().is_empty() {
+                None
+            } else {
+                Some(crate::adf::compile(markdown))
+            };
         self.detail_scroll = 0;
         self.screen = Screen::Preview;
     }

@@ -30,7 +30,7 @@ pub enum NewIssueField {
 /// again whenever the project field changes), since a project's creatable
 /// issue types — including any team-specific custom ones — aren't knowable
 /// statically; see `jira::live::list_create_issue_types`.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct NewIssueState {
     pub project: String,
     /// Which project `available_types` was actually fetched for — compared
@@ -240,7 +240,13 @@ impl App {
         let local_key = self.next_local_key(&project);
         let tx = self.events_tx.clone();
         async_ops::dispatch_create_issue(
-            tx, generation, project, issue_type, summary, description, local_key,
+            tx,
+            generation,
+            project,
+            issue_type,
+            summary,
+            description,
+            local_key,
         );
     }
 

@@ -3,7 +3,9 @@
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::domain::{AssignableUser, IssueDetail, IssueSummary, IssueType, Source, Version, ViewKind};
+use crate::domain::{
+    AssignableUser, IssueDetail, IssueSummary, IssueType, Source, Version, ViewKind,
+};
 
 use super::super::loader::load_issues_for;
 use super::super::{App, Screen};

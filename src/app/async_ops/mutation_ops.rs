@@ -347,7 +347,13 @@ pub(crate) fn dispatch_create_issue(
         let summary_for_result = summary.clone();
         let description_for_result = description.clone();
         let result = tokio::task::spawn_blocking(move || {
-            create_issue_blocking(&project, &issue_type, &summary, description.as_ref(), &local_key)
+            create_issue_blocking(
+                &project,
+                &issue_type,
+                &summary,
+                description.as_ref(),
+                &local_key,
+            )
         })
         .await
         .unwrap_or_else(|_| Err("internal error: task panicked".into()));

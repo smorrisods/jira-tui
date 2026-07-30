@@ -8,6 +8,6 @@ pub use demo::{
     demo_versions, DEMO_CURRENT_USER,
 };
 pub use types::{
-    AssignableUser, ChildIssue, Comment, IssueDetail, IssueLink, IssueSummary, IssueType,
-    Priority, Source, Transition, Version, ViewKind,
+    AssignableUser, ChildIssue, Comment, IssueDetail, IssueLink, IssueSummary, IssueType, Priority,
+    Source, Transition, Version, ViewKind,
 };
