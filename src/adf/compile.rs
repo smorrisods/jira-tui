@@ -230,6 +230,20 @@ pub fn parse_inline(text: &str) -> Vec<Value> {
                 continue;
             }
         }
+        // Mention: [~accountid:XXXX] (Jira wiki-markup convention) — tried
+        // before the link syntax below, since a real `[text](href)` link
+        // never starts with `~accountid:` and so falls through untouched.
+        if chars[i] == '[' {
+            if let Some((account_id, next)) = parse_mention(&chars, i) {
+                flush!();
+                nodes.push(json!({
+                    "type": "mention",
+                    "attrs": { "id": account_id, "text": "@mention" }
+                }));
+                i = next;
+                continue;
+            }
+        }
         // Link: [text](href)
         if chars[i] == '[' {
             if let Some((label, href, next)) = parse_link(&chars, i) {
@@ -266,6 +280,25 @@ fn find_seq(chars: &[char], start: usize, seq: &[char]) -> Option<usize> {
         j += 1;
     }
     None
+}
+
+/// Match the Jira wiki-markup mention convention `[~accountid:XXXXX]` — no
+/// trailing `(href)`, which is what distinguishes it from a real link.
+fn parse_mention(chars: &[char], start: usize) -> Option<(String, usize)> {
+    // chars[start] == '['
+    let prefix: Vec<char> = "~accountid:".chars().collect();
+    let body_start = start + 1;
+    if body_start + prefix.len() > chars.len()
+        || chars[body_start..body_start + prefix.len()] != prefix[..]
+    {
+        return None;
+    }
+    let close = find_char(chars, body_start + prefix.len(), ']')?;
+    let id: String = chars[body_start + prefix.len()..close].iter().collect();
+    if id.trim().is_empty() {
+        return None;
+    }
+    Some((id, close + 1))
 }
 
 fn parse_link(chars: &[char], start: usize) -> Option<(String, String, usize)> {
@@ -368,6 +401,33 @@ mod tests {
         assert!(has_mark("strong"));
         assert!(has_mark("em"));
         assert!(has_mark("link"));
+    }
+
+    #[test]
+    fn parses_mention_token() {
+        let nodes = parse_inline("hey [~accountid:abc123] check this");
+        let mention = nodes
+            .iter()
+            .find(|n| n["type"] == "mention")
+            .expect("expected a mention node");
+        assert_eq!(mention["attrs"]["id"].as_str(), Some("abc123"));
+
+        let text: String = nodes
+            .iter()
+            .filter(|n| n["type"] == "text")
+            .filter_map(|n| n["text"].as_str())
+            .collect();
+        assert!(text.contains("hey"));
+        assert!(text.contains("check this"));
+    }
+
+    #[test]
+    fn malformed_mention_falls_through_to_link_or_text() {
+        // Empty accountId: parse_mention must decline, so this either
+        // parses as a normal link (it isn't one, so it stays literal text)
+        // rather than emitting a bogus mention node.
+        let nodes = parse_inline("[~accountid:] not a mention");
+        assert!(nodes.iter().all(|n| n["type"] != "mention"));
     }
 
     #[test]

@@ -130,6 +130,12 @@ struct UpdateDescriptionMarkdownParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct SearchUsersParams {
+    /// Display name or email substring to search for.
+    query: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct AssignIssueParams {
     /// Issue key, e.g. "DS-123".
     key: String,
@@ -435,6 +441,19 @@ impl JiraMcpServer {
     }
 
     #[tool(
+        description = "Search Jira users by display name or email substring — use this to resolve a teammate's accountId, then embed [~accountid:ACCOUNT_ID] in any *_markdown body to @mention them for real (not just plain text). Requires live Jira credentials."
+    )]
+    fn search_users(
+        &self,
+        Parameters(SearchUsersParams { query }): Parameters<SearchUsersParams>,
+    ) -> Result<String, McpError> {
+        let cfg = live_cfg()?;
+        let users = crate::jira::search_users(&cfg, &query)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        to_json(&users)
+    }
+
+    #[tool(
         description = "Assign (or unassign) an issue. `assignee` may be a teammate's display name (see list_assignable_users), the literal string \"me\" for the authenticated user, or omitted/empty to unassign. Requires live Jira credentials."
     )]
     fn assign_issue(
@@ -490,6 +509,11 @@ impl ServerHandler for JiraMcpServer {
                  and update_description_markdown (and create_issue's description_markdown \
                  field) — never construct raw ADF JSON yourself. Use list_assignable_users \
                  and assign_issue to reassign or unassign issues by display name (or \"me\"). \
+                 To @mention a teammate so they're actually notified, call search_users to \
+                 resolve their accountId, then embed [~accountid:ACCOUNT_ID] directly in any \
+                 *_markdown body (add_comment_markdown, update_description_markdown, \
+                 create_issue's description_markdown) — it's converted to a real Jira mention \
+                 automatically. \
                  Read tools work against demo data with no configuration; write tools need \
                  JIRA_EMAIL / \
                  JIRA_API_TOKEN (and optionally JIRA_BASE_URL / JIRA_PROJECT) set the same \
