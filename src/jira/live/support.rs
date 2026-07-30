@@ -50,6 +50,16 @@ pub(super) fn post_or_put(cfg: &Config, method: &str, path: &str, body: Value) -
     Ok(resp.into_json().unwrap_or(Value::Null))
 }
 
+pub(super) fn delete(cfg: &Config, path: &str) -> Result<()> {
+    let url = format!("{}{}", cfg.base_url, path);
+    ureq::delete(&url)
+        .set("Authorization", &auth_header(cfg))
+        .set("Accept", "application/json")
+        .call()
+        .map_err(|e| anyhow!("Jira delete failed: {e}"))?;
+    Ok(())
+}
+
 pub(super) fn url_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 2);
     for b in s.bytes() {

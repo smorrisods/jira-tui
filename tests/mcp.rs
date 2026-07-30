@@ -151,6 +151,64 @@ fn add_comment_markdown_tool_name_and_params_are_consistent() {
     assert!(required.contains(&"key".to_string()));
 }
 
+/// `list_comments` should exist and require the issue `key`, matching the
+/// `GetIssueParams` shape it shares with `get_issue`/`list_transitions`.
+#[test]
+fn list_comments_tool_exists_and_requires_key() {
+    let mut mcp = McpProcess::spawn();
+    let tools = mcp.list_tools();
+
+    let tool = find_tool(&tools, "list_comments");
+    let required = required_params(tool);
+    assert!(
+        required.contains(&"key".to_string()),
+        "list_comments should require a `key` field, got: {required:?}"
+    );
+}
+
+/// `update_comment_markdown` should exist and require `key`, `comment_id`,
+/// and `body_markdown`. The blanket `markdown_tool_names_and_field_names_stay_in_sync`
+/// test already checks that some `_markdown`-suffixed field is required, but
+/// not `comment_id` specifically — check that here.
+#[test]
+fn update_comment_markdown_tool_exists_and_requires_all_fields() {
+    let mut mcp = McpProcess::spawn();
+    let tools = mcp.list_tools();
+
+    let tool = find_tool(&tools, "update_comment_markdown");
+    let required = required_params(tool);
+    assert!(
+        required.contains(&"key".to_string()),
+        "update_comment_markdown should require a `key` field, got: {required:?}"
+    );
+    assert!(
+        required.contains(&"comment_id".to_string()),
+        "update_comment_markdown should require a `comment_id` field, got: {required:?}"
+    );
+    assert!(
+        required.contains(&"body_markdown".to_string()),
+        "update_comment_markdown should require a `body_markdown` field, got: {required:?}"
+    );
+}
+
+/// `delete_comment` should exist and require `key` and `comment_id`.
+#[test]
+fn delete_comment_tool_exists_and_requires_key_and_comment_id() {
+    let mut mcp = McpProcess::spawn();
+    let tools = mcp.list_tools();
+
+    let tool = find_tool(&tools, "delete_comment");
+    let required = required_params(tool);
+    assert!(
+        required.contains(&"key".to_string()),
+        "delete_comment should require a `key` field, got: {required:?}"
+    );
+    assert!(
+        required.contains(&"comment_id".to_string()),
+        "delete_comment should require a `comment_id` field, got: {required:?}"
+    );
+}
+
 /// `update_description_markdown`'s markdown field should itself be named
 /// `description_markdown` (previously just `markdown`), matching
 /// `create_issue`'s `description_markdown` field for the same concept.
