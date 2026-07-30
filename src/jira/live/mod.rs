@@ -22,7 +22,7 @@ mod search;
 mod support;
 mod versions;
 
-pub use comments::add_comment;
+pub use comments::{add_comment, delete_comment, fetch_comments, update_comment};
 pub use detail::fetch_detail;
 pub use fields::{list_fields, FieldInfo};
 pub use issue_types::list_create_issue_types;

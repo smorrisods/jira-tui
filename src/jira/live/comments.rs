@@ -4,7 +4,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use super::super::config::Config;
-use super::support::{get, post_or_put, str_field};
+use super::support::{delete, get, post_or_put, str_field};
 
 /// Add a comment. `body` is a full ADF document (build it with
 /// `crate::adf::compile` from Markdown). Returns the created `Comment` as
@@ -46,6 +46,31 @@ pub fn fetch_comments(cfg: &Config, key: &str) -> Result<Vec<crate::domain::Comm
         }
     }
     Ok(out)
+}
+
+/// Overwrite an existing comment's body. `body` is a full ADF document
+/// (build it with `crate::adf::compile` from Markdown).
+pub fn update_comment(
+    cfg: &Config,
+    key: &str,
+    comment_id: &str,
+    body: &Value,
+) -> Result<crate::domain::Comment> {
+    let resp = post_or_put(
+        cfg,
+        "PUT",
+        &format!("/rest/api/3/issue/{key}/comment/{comment_id}"),
+        serde_json::json!({ "body": body }),
+    )?;
+    Ok(parse_comment(&resp))
+}
+
+/// Delete a comment.
+pub fn delete_comment(cfg: &Config, key: &str, comment_id: &str) -> Result<()> {
+    delete(
+        cfg,
+        &format!("/rest/api/3/issue/{key}/comment/{comment_id}"),
+    )
 }
 
 fn parse_comment(v: &Value) -> crate::domain::Comment {
@@ -203,5 +228,48 @@ mod tests {
 
         mock.assert();
         assert!(comments.is_empty());
+    }
+
+    #[test]
+    fn update_comment_sends_put_and_parses_response() {
+        let mut server = mockito::Server::new();
+        let body = serde_json::json!({"type": "doc", "content": []});
+        let mock = server
+            .mock("PUT", "/rest/api/3/issue/DS-1/comment/10042")
+            .match_body(mockito::Matcher::Json(serde_json::json!({ "body": body })))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "id": "10042",
+                    "author": { "displayName": "Ada Lovelace" },
+                    "created": "2026-07-08T09:00:00.000-0400",
+                    "body": {"type": "doc", "content": []}
+                }"#,
+            )
+            .create();
+
+        let cfg = test_config(server.url());
+        let comment = update_comment(&cfg, "DS-1", "10042", &body).unwrap();
+
+        mock.assert();
+        assert_eq!(comment.id, "10042");
+        assert_eq!(comment.author, "Ada Lovelace");
+        assert_eq!(comment.created, "2026-07-08T09:00:00.000-0400");
+    }
+
+    #[test]
+    fn delete_comment_sends_delete_request() {
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("DELETE", "/rest/api/3/issue/DS-1/comment/10042")
+            .with_status(204)
+            .create();
+
+        let cfg = test_config(server.url());
+        let result = delete_comment(&cfg, "DS-1", "10042");
+
+        mock.assert();
+        assert!(result.is_ok());
     }
 }
