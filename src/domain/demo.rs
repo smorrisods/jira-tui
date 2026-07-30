@@ -5,8 +5,8 @@ use chrono::{Duration, Utc};
 use serde_json::json;
 
 use super::types::{
-    AssignableUser, ChildIssue, Comment, IssueDetail, IssueLink, IssueSummary, Priority,
-    Transition, Version,
+    AssignableUser, ChildIssue, Comment, IssueDetail, IssueLink, IssueSummary, IssueType,
+    Priority, Transition, Version,
 };
 
 /// The implicit "you" in demo mode — offline `Source::Demo` carries no real
@@ -180,6 +180,35 @@ pub fn demo_assignable_users() -> Vec<AssignableUser> {
 /// in a mix of statuses (including one still open, as a real project would
 /// have); `v3.5.0` is the upcoming release most demo issues target; `v3.6.0`
 /// has no issues at all, so an empty release is explorable too.
+/// A stand-in issue-type catalog for demo/cache sessions — offline mode has
+/// no real per-project scheme to reflect, unlike a live session's
+/// `jira::live::list_create_issue_types`, so this is just a fixed sample of
+/// the common Jira defaults.
+pub fn demo_issue_types() -> Vec<IssueType> {
+    vec![
+        IssueType {
+            id: "10000".into(),
+            name: "Task".into(),
+            subtask: false,
+        },
+        IssueType {
+            id: "10001".into(),
+            name: "Bug".into(),
+            subtask: false,
+        },
+        IssueType {
+            id: "10002".into(),
+            name: "Story".into(),
+            subtask: false,
+        },
+        IssueType {
+            id: "10003".into(),
+            name: "Epic".into(),
+            subtask: false,
+        },
+    ]
+}
+
 pub fn demo_versions() -> Vec<Version> {
     vec![
         Version {

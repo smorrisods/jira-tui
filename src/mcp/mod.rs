@@ -236,8 +236,14 @@ impl JiraMcpServer {
     ) -> Result<String, McpError> {
         let cfg = live_cfg()?;
         let description = description_markdown.as_deref().map(crate::adf::compile);
-        let key = crate::jira::create_issue(&cfg, &summary, &issue_type, description.as_ref())
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let key = crate::jira::create_issue(
+            &cfg,
+            &cfg.project,
+            &summary,
+            &issue_type,
+            description.as_ref(),
+        )
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         Ok(format!("Created {key}"))
     }
 
