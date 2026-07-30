@@ -180,7 +180,7 @@ pub enum AppEvent {
     ProjectIssueTypesLoaded {
         generation: u64,
         project: String,
-        types: Vec<IssueType>,
+        result: Result<Vec<IssueType>, String>,
     },
     /// A new issue's creation resolved (or failed) — see
     /// `App::apply_new_issue`/`dispatch_create_issue`. Carries the full
@@ -307,8 +307,8 @@ impl App {
             AppEvent::ProjectIssueTypesLoaded {
                 generation,
                 project,
-                types,
-            } => self.apply_project_issue_types_loaded(generation, project, types),
+                result,
+            } => self.apply_project_issue_types_loaded(generation, project, result),
             AppEvent::IssueCreated {
                 generation,
                 issue_type,

@@ -152,32 +152,36 @@ pub(crate) fn dispatch_project_issue_types(
 ) {
     tokio::spawn(async move {
         let project_for_result = project.clone();
-        let types = tokio::task::spawn_blocking(move || project_issue_types_blocking(&project))
+        let result = tokio::task::spawn_blocking(move || project_issue_types_blocking(&project))
             .await
-            .unwrap_or_default();
+            .unwrap_or_else(|_| Err("internal error: task panicked".into()));
         let _ = tx.send(AppEvent::ProjectIssueTypesLoaded {
             generation,
             project: project_for_result,
-            types,
+            result,
         });
     });
 }
 
-/// Mirrors `project_versions_blocking`'s "no credentials/failure means an
-/// empty list" shape — an empty catalog just means the compose form's
-/// validation blocks advancing until a project with real issue types is
-/// entered.
+/// Unlike `project_versions_blocking`'s "no credentials/failure means an
+/// empty list" shape, a genuine HTTP/decode failure here is surfaced as
+/// `Err` rather than silently folded into an empty catalog — an empty
+/// project-with-no-real-types and "the request itself failed" would
+/// otherwise both show the same "no issue types available" message, with no
+/// way to tell a typo'd project key apart from an expired token or a
+/// network blip. "No live config loaded" is still treated as "nothing to
+/// show" (`Ok(Vec::new())`), not an error: it isn't expected to happen for
+/// a genuine `Source::Live` session (the only source this is ever dispatched
+/// for), so there's nothing actionable to tell the user.
 #[allow(unused_variables)]
-fn project_issue_types_blocking(project: &str) -> Vec<IssueType> {
+fn project_issue_types_blocking(project: &str) -> Result<Vec<IssueType>, String> {
     #[cfg(feature = "live")]
     {
         if let Some(cfg) = crate::jira::Config::load() {
-            if let Ok(types) = crate::jira::list_create_issue_types(&cfg, project) {
-                return types;
-            }
+            return crate::jira::list_create_issue_types(&cfg, project).map_err(|e| e.to_string());
         }
     }
-    Vec::new()
+    Ok(Vec::new())
 }
 
 /// Spawn a full-detail fetch off the render thread, sending the result back
@@ -432,18 +436,30 @@ impl App {
     /// On a genuine apply, resets `issue_type_index` to `0` so it can't
     /// point past the end of a shorter new list, and leaves a status hint if
     /// the (filtered) catalog came back empty (nothing valid to create
-    /// with).
+    /// with) — or, on a genuine fetch failure, a distinct message so it
+    /// doesn't read as "this project just has no issue types". A failure
+    /// leaves `available_types` untouched (there's nothing better to show)
+    /// but deliberately doesn't update `project_for_types`, so the very next
+    /// attempt to submit the form (`confirm_new_issue_form`) still reads as
+    /// out of sync and retries the fetch automatically.
     pub(super) fn apply_project_issue_types_loaded(
         &mut self,
         generation: u64,
         project: String,
-        types: Vec<crate::domain::IssueType>,
+        result: Result<Vec<crate::domain::IssueType>, String>,
     ) {
         if self.screen != Screen::NewIssue || generation != self.new_issue_types_generation {
             return;
         }
-        let types: Vec<_> = types.into_iter().filter(|t| !t.subtask).collect();
         self.new_issue.types_loading = false;
+        let types = match result {
+            Ok(types) => types,
+            Err(e) => {
+                self.status = format!("issue type fetch failed: {e}");
+                return;
+            }
+        };
+        let types: Vec<_> = types.into_iter().filter(|t| !t.subtask).collect();
         self.new_issue.issue_type_index = 0;
         if types.is_empty() {
             self.status = format!("no issue types found for {project}");

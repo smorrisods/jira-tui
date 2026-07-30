@@ -242,7 +242,7 @@ async fn a_stale_generation_issue_type_fetch_is_dropped() {
     app.apply_event(AppEvent::ProjectIssueTypesLoaded {
         generation,
         project: "DS".into(),
-        types: crate::domain::demo_issue_types(),
+        result: Ok(crate::domain::demo_issue_types()),
     });
     assert!(
         app.new_issue.types_loading,
@@ -264,7 +264,7 @@ async fn an_issue_type_fetch_resolving_after_the_form_closed_is_dropped() {
     app.apply_event(AppEvent::ProjectIssueTypesLoaded {
         generation,
         project: "DS".into(),
-        types: crate::domain::demo_issue_types(),
+        result: Ok(crate::domain::demo_issue_types()),
     });
     assert_eq!(
         app.new_issue,
@@ -283,7 +283,7 @@ async fn subtask_issue_types_are_filtered_out_of_the_picker() {
     app.apply_event(AppEvent::ProjectIssueTypesLoaded {
         generation,
         project: "".into(),
-        types: vec![
+        result: Ok(vec![
             crate::domain::IssueType {
                 id: "1".into(),
                 name: "Task".into(),
@@ -294,7 +294,7 @@ async fn subtask_issue_types_are_filtered_out_of_the_picker() {
                 name: "Sub-task".into(),
                 subtask: true,
             },
-        ],
+        ]),
     });
     assert!(
         app.new_issue
@@ -303,6 +303,31 @@ async fn subtask_issue_types_are_filtered_out_of_the_picker() {
             .all(|t| t.name != "Sub-task"),
         "a subtask type can never succeed here (no parent-key field is collected), so it \
          must not be offered"
+    );
+}
+
+#[tokio::test]
+async fn an_issue_type_fetch_failure_is_surfaced_distinctly_from_a_genuinely_empty_catalog() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.open_new_issue();
+    let generation = app.new_issue_types_generation;
+
+    app.apply_event(AppEvent::ProjectIssueTypesLoaded {
+        generation,
+        project: "DS".into(),
+        result: Err("Jira request failed: 401 Unauthorized".into()),
+    });
+    assert!(
+        !app.new_issue.types_loading,
+        "a failed fetch must still clear the loading flag"
+    );
+    assert!(
+        app.status.contains("fetch failed"),
+        "a genuine failure must read differently from \"no issue types found\", which \
+         previously silently absorbed every error (network, auth, decode) into the same \
+         confusing message — got: {:?}",
+        app.status
     );
 }
 

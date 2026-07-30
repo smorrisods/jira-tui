@@ -14,7 +14,11 @@ use crate::domain::IssueType;
 /// Every issue type configured as creatable on `project` — standard (Task/
 /// Bug/Story/Epic) and any project-specific custom types. `GET
 /// /issue/createmeta/{project}/issuetypes` returns the whole list in one
-/// call; Jira projects rarely have enough issue types to need paging.
+/// call, wrapped in an `issueTypes` array (this endpoint's paginated
+/// response envelope — `maxResults`/`startAt`/`total`/`isLast`/`issueTypes`
+/// — names its payload field after the resource rather than a generic
+/// `values`, unlike e.g. `list_versions`'s endpoint); Jira projects rarely
+/// have enough issue types to need paging.
 pub fn list_create_issue_types(cfg: &Config, project: &str) -> Result<Vec<IssueType>> {
     let project = url_encode(project);
     let data = get(
@@ -22,7 +26,7 @@ pub fn list_create_issue_types(cfg: &Config, project: &str) -> Result<Vec<IssueT
         &format!("/rest/api/3/issue/createmeta/{project}/issuetypes"),
     )?;
     let arr = data
-        .get("values")
+        .get("issueTypes")
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
@@ -51,7 +55,11 @@ mod tests {
             .with_header("content-type", "application/json")
             .with_body(
                 r#"{
-                    "values": [
+                    "maxResults": 50,
+                    "startAt": 0,
+                    "total": 3,
+                    "isLast": true,
+                    "issueTypes": [
                         {"id": "10000", "name": "Task", "subtask": false},
                         {"id": "10003", "name": "Sub-task", "subtask": true},
                         {"id": "10500", "name": "Develop", "subtask": false}
