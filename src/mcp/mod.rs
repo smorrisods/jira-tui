@@ -40,6 +40,18 @@ fn issue_summary_json(issues: &[IssueSummary]) -> Result<String, McpError> {
     to_json(&issues)
 }
 
+fn comments_json(comments: &[crate::domain::Comment]) -> serde_json::Value {
+    serde_json::json!(comments
+        .iter()
+        .map(|c| serde_json::json!({
+            "id": c.id,
+            "author": c.author,
+            "created": c.created,
+            "body_markdown": crate::adf::to_markdown(&c.body),
+        }))
+        .collect::<Vec<_>>())
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct GetIssueParams {
     /// Issue key, e.g. "DS-123".
@@ -79,6 +91,25 @@ struct AddCommentMarkdownParams {
     /// Comment body, written in Markdown. Converted to ADF automatically —
     /// never send raw ADF JSON here.
     body_markdown: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct UpdateCommentMarkdownParams {
+    /// Issue key, e.g. "DS-123".
+    key: String,
+    /// Comment id (see list_comments).
+    comment_id: String,
+    /// New comment body, written in Markdown. Converted to ADF automatically
+    /// — never send raw ADF JSON here.
+    body_markdown: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct DeleteCommentParams {
+    /// Issue key, e.g. "DS-123".
+    key: String,
+    /// Comment id (see list_comments).
+    comment_id: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -274,6 +305,58 @@ impl JiraMcpServer {
         Ok(format!("Added comment to {key}"))
     }
 
+    #[tool(
+        description = "List an issue's comments (id, author, created, body as Markdown — never raw ADF). Falls back to demo data if no Jira credentials are configured."
+    )]
+    fn list_comments(
+        &self,
+        Parameters(GetIssueParams { key }): Parameters<GetIssueParams>,
+    ) -> Result<String, McpError> {
+        match live_cfg() {
+            Ok(cfg) => {
+                let comments = crate::jira::fetch_comments(&cfg, &key)
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                to_json(&serde_json::json!({ "comments": comments_json(&comments) }))
+            }
+            Err(_) => {
+                let comments = demo_detail(&key).comments;
+                to_json(&serde_json::json!({
+                    "comments": comments_json(&comments),
+                    "note": "demo data — no Jira credentials configured",
+                }))
+            }
+        }
+    }
+
+    #[tool(
+        description = "Overwrite an existing comment's body, from Markdown (converted to ADF automatically — never send raw ADF JSON here). Requires live Jira credentials."
+    )]
+    fn update_comment_markdown(
+        &self,
+        Parameters(UpdateCommentMarkdownParams {
+            key,
+            comment_id,
+            body_markdown,
+        }): Parameters<UpdateCommentMarkdownParams>,
+    ) -> Result<String, McpError> {
+        let cfg = live_cfg()?;
+        let body = crate::adf::compile(&body_markdown);
+        crate::jira::update_comment(&cfg, &key, &comment_id, &body)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        Ok(format!("Updated comment {comment_id} on {key}"))
+    }
+
+    #[tool(description = "Delete a comment from an issue. Requires live Jira credentials.")]
+    fn delete_comment(
+        &self,
+        Parameters(DeleteCommentParams { key, comment_id }): Parameters<DeleteCommentParams>,
+    ) -> Result<String, McpError> {
+        let cfg = live_cfg()?;
+        crate::jira::delete_comment(&cfg, &key, &comment_id)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        Ok(format!("Deleted comment {comment_id} from {key}"))
+    }
+
     #[tool(description = "List the workflow transitions available from an issue's current status.")]
     fn list_transitions(
         &self,
@@ -402,7 +485,8 @@ impl ServerHandler for JiraMcpServer {
             .with_server_info(Implementation::new("jira-mcp", env!("CARGO_PKG_VERSION")))
             .with_instructions(
                 "Jira MCP server for jira-tui. Always read/write issue descriptions and \
-                 comments as Markdown via add_comment_markdown, get_description_markdown, \
+                 comments as Markdown via add_comment_markdown, list_comments, \
+                 update_comment_markdown, delete_comment, get_description_markdown, \
                  and update_description_markdown (and create_issue's description_markdown \
                  field) — never construct raw ADF JSON yourself. Use list_assignable_users \
                  and assign_issue to reassign or unassign issues by display name (or \"me\"). \
