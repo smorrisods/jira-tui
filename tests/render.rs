@@ -2012,3 +2012,32 @@ fn drag_selection_in_the_detail_main_column_does_not_bleed_into_the_side_rail() 
          (regression guard for the reported whole-row-highlight bug)"
     );
 }
+
+#[test]
+fn new_issue_form_records_each_fields_area() {
+    let mut app = demo_app();
+    app.open_new_issue();
+    let _ = render_at(&app, 120, 40);
+
+    let project = app.new_issue_project_area.get();
+    let issue_type = app.new_issue_type_area.get();
+    let summary = app.new_issue_summary_area.get();
+
+    for (name, area) in [
+        ("project", project),
+        ("issue type", issue_type),
+        ("summary", summary),
+    ] {
+        assert_ne!(
+            area,
+            ratatui::layout::Rect::default(),
+            "the {name} field's area should be recorded during render"
+        );
+        assert_eq!(area.height, 3, "the {name} field is a 3-row bordered card");
+    }
+
+    assert!(
+        project.y < issue_type.y && issue_type.y < summary.y,
+        "the three fields should be recorded top-to-bottom in form order"
+    );
+}

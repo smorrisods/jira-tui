@@ -24,6 +24,9 @@ pub(crate) fn draw_new_issue(f: &mut Frame, app: &App, area: Rect) {
         ])
         .split(area);
 
+    app.new_issue_project_area.set(rows[0]);
+    app.new_issue_summary_area.set(rows[2]);
+
     draw_text_field(
         f,
         rows[0],
@@ -67,6 +70,7 @@ fn draw_text_field(f: &mut Frame, area: Rect, title: &str, value: &str, focused:
 }
 
 fn draw_issue_type_field(f: &mut Frame, area: Rect, app: &App) {
+    app.new_issue_type_area.set(area);
     let focused = app.new_issue.focus == NewIssueField::IssueType;
     let colour = if focused { accent() } else { muted() };
     let block = card_bordered("  issue type  ", accent2(), colour);

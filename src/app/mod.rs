@@ -217,6 +217,15 @@ pub struct App {
     /// navigation (which has no access to layout at input time) can compute
     /// how many rows are visible and auto-scroll the selection into view.
     pub board_area: Cell<Rect>,
+    /// The new-issue compose form's three field cards (the whole bordered
+    /// card, not just the inner text row — clicking the border or title
+    /// focuses the field too), recorded during render for click-to-focus
+    /// hit-testing (`App::new_issue_field_at`). Only meaningful while
+    /// `screen == Screen::NewIssue`, which that hit-test re-checks, so a
+    /// stale `Rect` from a previous visit can't misfire.
+    pub new_issue_project_area: Cell<Rect>,
+    pub new_issue_type_area: Cell<Rect>,
+    pub new_issue_summary_area: Cell<Rect>,
 
     // Onboarding welcome + credential setup.
     pub onboarding: OnboardingState,
@@ -456,6 +465,9 @@ impl App {
             detail_children_area: Cell::new(Rect::default()),
             quick_view_area: Cell::new(Rect::default()),
             board_area: Cell::new(Rect::default()),
+            new_issue_project_area: Cell::new(Rect::default()),
+            new_issue_type_area: Cell::new(Rect::default()),
+            new_issue_summary_area: Cell::new(Rect::default()),
             onboarding: OnboardingState::default(),
             picker_open: false,
             picker_index: 0,

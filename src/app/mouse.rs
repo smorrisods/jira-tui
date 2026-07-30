@@ -6,7 +6,7 @@ use ratatui::layout::Rect;
 use crate::render::DetailPane;
 use crate::ui::quick_view_columns::{meta_width_for, quick_view_layout_for_width, QuickViewLayout};
 
-use super::{App, Screen};
+use super::{App, NewIssueField, Screen};
 
 /// Which panel arrow keys/PageUp/PageDown affect when the quick-view panel is
 /// open; toggled with `Tab`.
@@ -216,11 +216,39 @@ impl App {
             .position(|t| t.pane == pane && t.line == line && col >= t.start && col < t.end)
     }
 
+    /// Which new-issue form field's recorded card contains the point, if
+    /// any. Screen-gated rather than trusting the recorded `Rect` alone —
+    /// same stale-area discipline as `point_in_jax_mini`.
+    pub fn new_issue_field_at(&self, x: u16, y: u16) -> Option<NewIssueField> {
+        if self.screen != Screen::NewIssue {
+            return None;
+        }
+        [
+            (NewIssueField::Project, self.new_issue_project_area.get()),
+            (NewIssueField::IssueType, self.new_issue_type_area.get()),
+            (NewIssueField::Summary, self.new_issue_summary_area.get()),
+        ]
+        .into_iter()
+        .find(|(_, area)| Self::point_in(*area, x, y))
+        .map(|(field, _)| field)
+    }
+
     pub fn mouse_down(&mut self, x: u16, y: u16) {
-        if matches!(self.screen, Screen::Home | Screen::List) {
-            if let Some(idx) = self.list_index_at(y) {
-                self.selected = idx;
+        match self.screen {
+            Screen::Home | Screen::List => {
+                if let Some(idx) = self.list_index_at(y) {
+                    self.selected = idx;
+                }
             }
+            // Click-to-focus: mirrors the list's own "selection moves on
+            // press, action fires on release" split — focusing a field is
+            // the press-time half; there's no release-time action.
+            Screen::NewIssue => {
+                if let Some(field) = self.new_issue_field_at(x, y) {
+                    self.new_issue_focus_field(field);
+                }
+            }
+            _ => {}
         }
         self.mouse.selecting = true;
         self.mouse.sel_start_x = x;

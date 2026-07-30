@@ -268,3 +268,76 @@ fn link_at_ignores_the_wide_quick_views_meta_column() {
         "a click in the meta column must not resolve to a description-pane link"
     );
 }
+
+#[test]
+fn clicking_a_new_issue_field_moves_focus() {
+    let mut app = demo_app();
+    app.screen = Screen::NewIssue;
+    app.new_issue_project_area.set(Rect::new(0, 0, 40, 3));
+    app.new_issue_type_area.set(Rect::new(0, 3, 40, 3));
+    app.new_issue_summary_area.set(Rect::new(0, 6, 40, 3));
+
+    app.mouse_down(5, 3);
+    assert_eq!(app.new_issue.focus, NewIssueField::IssueType);
+
+    app.mouse_down(5, 7);
+    assert_eq!(app.new_issue.focus, NewIssueField::Summary);
+
+    app.mouse_down(5, 1);
+    assert_eq!(app.new_issue.focus, NewIssueField::Project);
+}
+
+#[test]
+fn clicking_outside_any_new_issue_field_leaves_focus_alone() {
+    let mut app = demo_app();
+    app.screen = Screen::NewIssue;
+    app.new_issue_project_area.set(Rect::new(0, 0, 40, 3));
+    app.new_issue_type_area.set(Rect::new(0, 3, 40, 3));
+    app.new_issue_summary_area.set(Rect::new(0, 6, 40, 3));
+    app.new_issue.focus = NewIssueField::Project;
+
+    app.mouse_down(5, 20);
+    assert_eq!(app.new_issue.focus, NewIssueField::Project);
+}
+
+#[test]
+fn a_stale_new_issue_field_rect_does_not_misfire_on_another_screen() {
+    let mut app = demo_app();
+    app.screen = Screen::NewIssue;
+    app.new_issue_summary_area.set(Rect::new(0, 5, 80, 3));
+    app.new_issue.focus = NewIssueField::Project;
+
+    // Same coordinates now belong to the list on Home, not the (stale)
+    // summary field from an earlier visit to the new-issue form.
+    app.screen = Screen::Home;
+    app.list_area.set(Rect::new(0, 4, 80, 8));
+    app.list_start.set(0);
+    app.mouse_down(5, 6);
+
+    assert_eq!(
+        app.new_issue.focus,
+        NewIssueField::Project,
+        "a stale new-issue field rect must not affect focus once the screen has changed"
+    );
+    assert_eq!(app.selected, 1, "the click should hit the list instead");
+}
+
+#[test]
+fn clicking_off_the_project_field_refetches_issue_types_for_demo_sessions() {
+    let mut app = demo_app();
+    app.screen = Screen::NewIssue;
+    app.new_issue_project_area.set(Rect::new(0, 0, 40, 3));
+    app.new_issue_summary_area.set(Rect::new(0, 6, 40, 3));
+    app.new_issue.focus = NewIssueField::Project;
+    app.new_issue.project = "DS".into();
+    app.new_issue.project_for_types = String::new();
+
+    app.mouse_down(5, 7);
+
+    assert_eq!(app.new_issue.focus, NewIssueField::Summary);
+    assert_eq!(app.new_issue.project_for_types, "DS");
+    assert_eq!(
+        app.new_issue.available_types,
+        crate::domain::demo_issue_types()
+    );
+}
