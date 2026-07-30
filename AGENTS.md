@@ -46,7 +46,17 @@ Guidelines for humans and AI agents working in `jira-tui`.
 
 ## Pull Requests
 
-- **Branching:** work happens on a branch, not directly on `main`. Name feature branches `feature/<short-description>` and fix branches `fix/<short-description>` (add an issue number when one exists, e.g. `fix/issue-19-token-file-fallback`).
+- **Branching:** work happens on a branch, not directly on `main`. Every branch name must start with a `prefix/` matching its purpose, followed by a short kebab-case description (add an issue number when one exists, e.g. `fix/issue-19-token-file-fallback`):
+  - `feature/` — new functionality (mirrors the `enhancement` label)
+  - `fix/` — bug fixes (mirrors `bug`)
+  - `chore/` — maintenance, dependency bumps, release prep (mirrors `chore`; release branches are `chore/release-vX.Y.Z`, see Releases below)
+  - `docs/` — documentation-only changes (mirrors `documentation`)
+  - `test/` — test-only changes (mirrors `testing`)
+  - `ci/` — CI/workflow changes (mirrors `ci`)
+  - `build/` — build/packaging changes (mirrors `build`)
+  - `design/` — design docs and mockups with no code change (e.g. `design/ui-refresh-mockups`)
+  - `dependabot/` — Dependabot's own branches; it names these itself, so they're exempt in practice
+  `main`/`master` are exempt (they're the trunk, not a working branch). Enable the repo's `pre-push` hook once per clone with `git config core.hooksPath scripts/hooks` — it rejects a push from a branch that doesn't match this pattern.
 - **Titles:** human-readable summaries starting with a capital letter — no Conventional Commit prefixes (`feat:`, `fix:`, etc.) in the title itself. Describe the outcome/behaviour change, not internal process language.
 - **Content:** PR descriptions must not mention internal workflow artefacts (session notes, todo-tracking mechanics, agent planning chatter) — keep that in `agent-reviews/` and local tooling, not in outward-facing PR text.
 - **Description format:** compact Markdown with `## Summary` and `## Test plan`. Use `###` sub-sections under Summary when it helps group the change (e.g. `### User-facing changes`, `### Internals`, `### Documentation`). Flat bullets with bold lead-ins under each section. Under `## Test plan`, use checklist bullets (`- [x]`/`- [ ]`) naming the concrete commands run; state plainly anything that couldn't be verified. See "Writing style" above for line-wrapping.

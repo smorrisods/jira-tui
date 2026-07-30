@@ -63,3 +63,4 @@ The man page is generated at build time from `src/cli.rs` via `clap_mangen` (`bu
 - **Mouse mode is opt-in:** Shift-drag must fall through to the terminal's native selection.
 - **Preview before any mutating Jira call.**
 - **Canadian spelling** in comments, docs, and UI copy (e.g. "colour"), except for external API fields and crate names.
+- **Branch names start with a `prefix/`:** `feature/`, `fix/`, `chore/`, `docs/`, `test/`, `ci/`, `build/`, or `design/`, followed by a short kebab-case description — see AGENTS.md's "Branching" section for the full list and the `pre-push` hook that enforces it.
