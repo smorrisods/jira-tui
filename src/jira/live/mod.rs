@@ -28,7 +28,7 @@ pub use fields::{list_fields, FieldInfo};
 pub use issue_types::list_create_issue_types;
 pub use mutations::{
     apply_transition, assign_issue, assignable_users, create_issue, fetch_transitions,
-    update_description, update_summary,
+    search_users, update_description, update_summary,
 };
 pub use search::{
     fetch_my_work, jql_for, jql_for_version, search_by_text, search_issues, MY_WORK_JQL,

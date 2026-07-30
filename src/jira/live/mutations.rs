@@ -113,6 +113,37 @@ pub fn assignable_users(cfg: &Config, project: &str) -> Result<Vec<AssignableUse
     Ok(out)
 }
 
+/// Search Jira users by display name or email substring — used to resolve
+/// an accountId for @mentions (see `crate::adf::compile`'s `[~accountid:...]`
+/// convention).
+pub fn search_users(cfg: &Config, query: &str) -> Result<Vec<AssignableUser>> {
+    let query = url_encode(query);
+    let mut out = Vec::new();
+    let mut start_at: u64 = 0;
+    const PAGE_SIZE: u64 = 100;
+    loop {
+        let path = format!(
+            "/rest/api/3/user/search?query={query}&startAt={start_at}&maxResults={PAGE_SIZE}"
+        );
+        let page = get(cfg, &path)?;
+        let users = page.as_array().cloned().unwrap_or_default();
+        let got = users.len() as u64;
+        out.extend(users.iter().filter_map(|u| {
+            let account_id = u.get("accountId").and_then(|v| v.as_str())?.to_string();
+            let display_name = u.get("displayName").and_then(|v| v.as_str())?.to_string();
+            Some(AssignableUser {
+                account_id,
+                display_name,
+            })
+        }));
+        if got < PAGE_SIZE {
+            break;
+        }
+        start_at += got;
+    }
+    Ok(out)
+}
+
 /// Assign (or, with `account_id: None`, unassign) an issue
 /// (`PUT /issue/{key}/assignee`). Jira accepts `null` for `accountId` to
 /// clear the assignee entirely.
@@ -254,6 +285,89 @@ mod tests {
 
         let cfg = test_config(server.url());
         assert!(assignable_users(&cfg, "PROJ").is_err());
+    }
+
+    #[test]
+    fn search_users_returns_display_names_from_a_single_page() {
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("GET", "/rest/api/3/user/search")
+            .match_query(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::UrlEncoded("query".into(), "priya".into()),
+                mockito::Matcher::UrlEncoded("startAt".into(), "0".into()),
+                mockito::Matcher::UrlEncoded("maxResults".into(), "100".into()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"[
+                    {"accountId": "1", "displayName": "Priya Nair"}
+                ]"#,
+            )
+            .create();
+
+        let cfg = test_config(server.url());
+        let users = search_users(&cfg, "priya").unwrap();
+
+        mock.assert();
+        assert_eq!(
+            users,
+            vec![AssignableUser {
+                account_id: "1".into(),
+                display_name: "Priya Nair".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn search_users_pages_until_a_short_page() {
+        let mut server = mockito::Server::new();
+        // A full page (== PAGE_SIZE, 100 users) means there might be more.
+        let full_page: String = (0..100)
+            .map(|i| format!(r#"{{"accountId": "{i}", "displayName": "User {i}"}}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+        let first = server
+            .mock("GET", "/rest/api/3/user/search")
+            .match_query(mockito::Matcher::AllOf(vec![mockito::Matcher::UrlEncoded(
+                "startAt".into(),
+                "0".into(),
+            )]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!("[{full_page}]"))
+            .create();
+        let second = server
+            .mock("GET", "/rest/api/3/user/search")
+            .match_query(mockito::Matcher::AllOf(vec![mockito::Matcher::UrlEncoded(
+                "startAt".into(),
+                "100".into(),
+            )]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"[{"accountId": "100", "displayName": "User 100"}]"#)
+            .create();
+
+        let cfg = test_config(server.url());
+        let users = search_users(&cfg, "user").unwrap();
+
+        first.assert();
+        second.assert();
+        assert_eq!(users.len(), 101);
+        assert_eq!(users[100].display_name, "User 100");
+        assert_eq!(users[100].account_id, "100");
+    }
+
+    #[test]
+    fn search_users_surfaces_http_errors() {
+        let mut server = mockito::Server::new();
+        server
+            .mock("GET", "/rest/api/3/user/search")
+            .with_status(401)
+            .create();
+
+        let cfg = test_config(server.url());
+        assert!(search_users(&cfg, "priya").is_err());
     }
 
     #[test]

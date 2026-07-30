@@ -231,3 +231,19 @@ fn server_instructions_name_the_actual_markdown_tools() {
         "instructions should name `update_description_markdown` explicitly: {instructions}"
     );
 }
+
+/// `search_users` resolves a teammate's accountId for the
+/// `[~accountid:...]` mention convention, and should require a `query`
+/// field.
+#[test]
+fn search_users_tool_exists_and_requires_query() {
+    let mut mcp = McpProcess::spawn();
+    let tools = mcp.list_tools();
+
+    let tool = find_tool(&tools, "search_users");
+    let required = required_params(tool);
+    assert!(
+        required.contains(&"query".to_string()),
+        "search_users should require a `query` field, got: {required:?}"
+    );
+}
