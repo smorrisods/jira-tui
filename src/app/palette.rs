@@ -62,6 +62,7 @@ pub enum PaletteAction {
     OpenFieldMapping,
     OpenAbout,
     OpenHelp,
+    NewIssue,
 }
 
 pub(crate) struct PaletteRow {
@@ -286,7 +287,7 @@ impl App {
             },
             PaletteRow {
                 label: "about".into(),
-                hint: "a",
+                hint: "i",
                 group: PaletteGroup::App,
                 action: PaletteAction::OpenAbout,
             },
@@ -308,6 +309,15 @@ impl App {
                 hint: "F",
                 group: PaletteGroup::App,
                 action: PaletteAction::OpenFieldMapping,
+            });
+            // Same reasoning as `field mapping` above: `a`'s direct binding
+            // is Home/List-only, and `cancel_new_issue` always returns to
+            // `Screen::Home` rather than tracking an origin screen.
+            rows.push(PaletteRow {
+                label: "create new issue".into(),
+                hint: "a",
+                group: PaletteGroup::App,
+                action: PaletteAction::NewIssue,
             });
         }
 

@@ -34,6 +34,25 @@ impl App {
     /// directly.
     pub(crate) fn record_synced(&mut self, issues: Vec<IssueSummary>, source: Source) {
         self.all_issues = issues;
+        // Fold back in any issue created locally while offline (demo/cache)
+        // this session — otherwise a manual refresh right after creating one
+        // would make it vanish, since `demo_issues()`/the cache load has no
+        // idea it exists. Gated on the *resolved* `source` (not `self.source`,
+        // still the pre-refresh value here), not just `App::land_new_issue`
+        // never populating `locally_created` for a live session: a session
+        // can start `Source::Cache` (offline), have the user create an issue
+        // while disconnected, then a later refresh can genuinely resolve to
+        // `Source::Live` once the network recovers — without this check,
+        // the fabricated local entry would keep getting spliced into an
+        // otherwise-real live issue list on every subsequent refresh forever
+        // (nothing else ever clears `locally_created`).
+        if !matches!(source, Source::Live { .. }) {
+            for created in &self.locally_created {
+                if !self.all_issues.iter().any(|i| i.key == created.summary.key) {
+                    self.all_issues.push(created.summary.clone());
+                }
+            }
+        }
         self.source = source;
         self.last_synced = Some(std::time::Instant::now());
     }

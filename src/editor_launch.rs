@@ -89,6 +89,12 @@ pub(crate) fn edit_in_editor(terminal: &mut Term, app: &mut App) -> Result<()> {
             (markdown, "description")
         }
         EditTarget::Comment => (String::new(), "comment"),
+        // Unreachable via any keybinding today — the new-issue compose form
+        // has no external-`$EDITOR` entry point (only `E`/`C`, both gated to
+        // Screen::Detail, prime this path). Kept exhaustive rather than
+        // `unreachable!()` so adding one later doesn't require revisiting
+        // this match.
+        EditTarget::NewIssue => (String::new(), "new-issue"),
     };
     // `edit_key` (not `app.detail`) is the actual source of truth for which
     // issue this session targets — `apply_comment`/`apply_description_edit`

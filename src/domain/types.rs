@@ -156,6 +156,18 @@ pub struct Version {
     pub release_date: Option<String>,
 }
 
+/// An issue type creatable on a given project — standard (Task/Bug/Story/
+/// Epic) or custom (e.g. a team's own "Develop"/"Design" types). Backs the
+/// new-issue compose form's type picker (`app::new_issue`); fetched
+/// per-project since a project's creatable types aren't knowable statically.
+/// See `jira::live::list_create_issue_types`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueType {
+    pub id: String,
+    pub name: String,
+    pub subtask: bool,
+}
+
 /// A user assignable to issues in the configured project — carries the
 /// `accountId` Jira's assign endpoint requires alongside the display name
 /// shown everywhere else (`IssueSummary`/`IssueDetail::assignee` stay

@@ -125,16 +125,20 @@ pub fn assign_issue(cfg: &Config, key: &str, account_id: Option<&str>) -> Result
     )
 }
 
-/// Create a new issue and return its key. `description` is a full ADF
-/// document (build it with `crate::adf::compile` from Markdown).
+/// Create a new issue and return its key. `project` is the project key to
+/// create it under — the caller's choice, not necessarily `cfg.project`
+/// (jira-tui's new-issue compose form lets the user override the configured
+/// default). `description` is a full ADF document (build it with
+/// `crate::adf::compile` from Markdown).
 pub fn create_issue(
     cfg: &Config,
+    project: &str,
     summary: &str,
     issue_type: &str,
     description: Option<&Value>,
 ) -> Result<String> {
     let mut fields = serde_json::json!({
-        "project": { "key": cfg.project },
+        "project": { "key": project },
         "summary": summary,
         "issuetype": { "name": issue_type },
     });
@@ -333,10 +337,38 @@ mod tests {
             .create();
 
         let cfg = test_config(server.url());
-        let key = create_issue(&cfg, "New issue", "Task", None).unwrap();
+        let key = create_issue(&cfg, "PROJ", "New issue", "Task", None).unwrap();
 
         mock.assert();
         assert_eq!(key, "PROJ-42");
+    }
+
+    #[test]
+    fn create_issue_sends_the_passed_in_project_not_cfgs() {
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("POST", "/rest/api/3/issue")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "fields": {
+                    "project": { "key": "OTHER" },
+                    "summary": "New issue",
+                    "issuetype": { "name": "Task" }
+                }
+            })))
+            .with_status(201)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"key": "OTHER-1"}"#)
+            .create();
+
+        // `test_config` sets `cfg.project` to "PROJ" — passing "OTHER"
+        // explicitly must override it, not fall back to the configured
+        // default, since the new-issue compose form lets the user override
+        // the project per-issue.
+        let cfg = test_config(server.url());
+        let key = create_issue(&cfg, "OTHER", "New issue", "Task", None).unwrap();
+
+        mock.assert();
+        assert_eq!(key, "OTHER-1");
     }
 
     // Coverage gap noticed while splitting this file: create_issue and
@@ -353,7 +385,7 @@ mod tests {
             .create();
 
         let cfg = test_config(server.url());
-        assert!(create_issue(&cfg, "New issue", "Task", None).is_err());
+        assert!(create_issue(&cfg, "PROJ", "New issue", "Task", None).is_err());
     }
 
     #[test]
@@ -370,7 +402,7 @@ mod tests {
             .create();
 
         let cfg = test_config(server.url());
-        assert!(create_issue(&cfg, "New issue", "Task", None).is_err());
+        assert!(create_issue(&cfg, "PROJ", "New issue", "Task", None).is_err());
     }
 
     #[test]

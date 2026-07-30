@@ -16,6 +16,7 @@
 mod comments;
 mod detail;
 mod fields;
+mod issue_types;
 mod mutations;
 mod search;
 mod support;
@@ -24,6 +25,7 @@ mod versions;
 pub use comments::add_comment;
 pub use detail::fetch_detail;
 pub use fields::{list_fields, FieldInfo};
+pub use issue_types::list_create_issue_types;
 pub use mutations::{
     apply_transition, assign_issue, assignable_users, create_issue, fetch_transitions,
     update_description, update_summary,

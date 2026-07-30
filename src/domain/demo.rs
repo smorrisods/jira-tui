@@ -5,7 +5,7 @@ use chrono::{Duration, Utc};
 use serde_json::json;
 
 use super::types::{
-    AssignableUser, ChildIssue, Comment, IssueDetail, IssueLink, IssueSummary, Priority,
+    AssignableUser, ChildIssue, Comment, IssueDetail, IssueLink, IssueSummary, IssueType, Priority,
     Transition, Version,
 };
 
@@ -170,6 +170,35 @@ pub fn demo_assignable_users() -> Vec<AssignableUser> {
         AssignableUser {
             account_id: "demo-jane-reporter".into(),
             display_name: "jane.reporter".into(),
+        },
+    ]
+}
+
+/// A stand-in issue-type catalog for demo/cache sessions — offline mode has
+/// no real per-project scheme to reflect, unlike a live session's
+/// `jira::live::list_create_issue_types`, so this is just a fixed sample of
+/// the common Jira defaults.
+pub fn demo_issue_types() -> Vec<IssueType> {
+    vec![
+        IssueType {
+            id: "10000".into(),
+            name: "Task".into(),
+            subtask: false,
+        },
+        IssueType {
+            id: "10001".into(),
+            name: "Bug".into(),
+            subtask: false,
+        },
+        IssueType {
+            id: "10002".into(),
+            name: "Story".into(),
+            subtask: false,
+        },
+        IssueType {
+            id: "10003".into(),
+            name: "Epic".into(),
+            subtask: false,
         },
     ]
 }

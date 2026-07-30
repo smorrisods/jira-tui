@@ -5,7 +5,7 @@
 //! match arm — not a whole logic block — per new `AppEvent` variant.
 
 use crate::domain::{
-    AssignableUser, Comment, IssueDetail, IssueSummary, Source, Version, ViewKind,
+    AssignableUser, Comment, IssueDetail, IssueSummary, IssueType, Source, Version, ViewKind,
 };
 
 use super::super::{App, ReleaseBulkKind, Screen};
@@ -170,6 +170,30 @@ pub enum AppEvent {
         kind: ReleaseBulkKind,
         results: Vec<(String, Result<(), String>)>,
     },
+    /// The new-issue compose form's issue-type fetch resolved — see
+    /// `dispatch_project_issue_types`. Carries its own `generation` (unlike
+    /// `ProjectVersionsLoaded`, which is always for the single fixed
+    /// `cfg.project` and so can never go stale) since `project` here is
+    /// arbitrary user-typed text that can change again before this
+    /// resolves — `apply_project_issue_types_loaded` drops a superseded
+    /// generation.
+    ProjectIssueTypesLoaded {
+        generation: u64,
+        project: String,
+        types: Vec<IssueType>,
+    },
+    /// A new issue's creation resolved (or failed) — see
+    /// `App::apply_new_issue`/`dispatch_create_issue`. Carries the full
+    /// compose state, not just the resulting key: unlike Description/
+    /// Comment, which patch an *existing* `self.detail`, this has to
+    /// *construct* a brand-new issue at apply-time.
+    IssueCreated {
+        generation: u64,
+        issue_type: String,
+        summary: String,
+        description: Option<serde_json::Value>,
+        result: Result<String, String>,
+    },
 }
 
 impl App {
@@ -280,6 +304,18 @@ impl App {
                 kind,
                 results,
             } => self.apply_release_bulk_applied(generation, version_name, kind, results),
+            AppEvent::ProjectIssueTypesLoaded {
+                generation,
+                project,
+                types,
+            } => self.apply_project_issue_types_loaded(generation, project, types),
+            AppEvent::IssueCreated {
+                generation,
+                issue_type,
+                summary,
+                description,
+                result,
+            } => self.apply_issue_created(generation, issue_type, summary, description, result),
         }
     }
 }

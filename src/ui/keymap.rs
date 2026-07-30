@@ -150,6 +150,10 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
         desc: "map a custom field (e.g. Acceptance Criteria)",
     },
     KeyHint {
+        key: "a",
+        desc: "create a new issue (Home/List)",
+    },
+    KeyHint {
         key: "V",
         desc: "switch view (My Work / All Project Issues / teammate)",
     },

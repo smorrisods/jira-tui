@@ -264,7 +264,7 @@ impl App {
 
         if !matches!(self.source, Source::Live { .. }) {
             for key in &keys {
-                let mut fix_versions = crate::domain::demo_detail(key).fix_versions;
+                let mut fix_versions = self.demo_or_local_fix_versions(key);
                 fix_versions.retain(|v| v != &version.name);
                 self.apply_versions_locally(key, Some(fix_versions), None);
             }
@@ -306,7 +306,7 @@ impl App {
             let drilled_here = self.release.drilled.as_ref().map(|v| v.name.as_str())
                 == Some(version_name.as_str());
             for key in &keys {
-                let mut fix_versions = crate::domain::demo_detail(key).fix_versions;
+                let mut fix_versions = self.demo_or_local_fix_versions(key);
                 if !fix_versions.contains(&version_name) {
                     fix_versions.push(version_name.clone());
                 }

@@ -16,7 +16,7 @@ A developer-first, keyboard-driven **Jira terminal UI** written in Rust (`ratatu
 - **Read and add comments.** Comments render inline (oldest first) in both the detail screen and quick-view, with jump/step navigation (`]`/`[`, `n`/`p`) and a built-in composer (`c`) that previews before posting.
 - **Git-aware.** Detects your repo and branch and elevates the `DS-123` issue in your current branch name.
 - **Mouse mode + clipboard.** Optional click-to-open, wheel scroll, and drag-to-copy via OSC 52 — with Shift-drag reserved for native terminal selection.
-- **A bit of soul.** A colour-wave animated ASCII about panel (`a`) and a toggleable ambient mascot, **Jax** (`J`), who fishes, naps, and parties. 🦦
+- **A bit of soul.** A colour-wave animated ASCII about panel (`i`) and a toggleable ambient mascot, **Jax** (`J`), who fishes, naps, and parties. 🦦
 
 ## Quick start
 
@@ -216,7 +216,8 @@ You can also yank without the mouse: **`y`** copies the selected issue key, **`Y
 | `c` | add a comment (in an issue or quick view) |
 | `] / [` | jump to comments section / back to top |
 | `n / p` | next / previous comment |
-| `a` | about panel |
+| `a` | create a new issue (Home/List) |
+| `i` | about panel ("Info") |
 | `m` | toggle mouse mode |
 | `J` | toggle the Jax companion 🦦 |
 | `y` / `Y` | copy issue key / URL to clipboard |

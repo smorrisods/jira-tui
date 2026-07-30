@@ -16,6 +16,10 @@ pub enum EditTarget {
     Description,
     /// Composing a new comment for the issue keyed by `App::edit_key`.
     Comment,
+    /// Composing a brand-new issue's description — project/type/summary
+    /// live in `App::new_issue`, not on `App::edit_key` (there's no issue
+    /// key yet). See `app::new_issue`.
+    NewIssue,
 }
 
 /// A minimal multi-line text editor for in-TUI description editing.
@@ -245,6 +249,21 @@ impl App {
         self.edit_return_screen = return_screen;
     }
 
+    /// Prime the edit-target state for a new issue's description, without
+    /// touching `self.editor`/`self.screen` (the caller, `App::
+    /// confirm_new_issue_form`, seeds the editor and sets the screen itself)
+    /// — the new-issue counterpart to `begin_description_edit_target`/
+    /// `begin_comment_edit_target`. `edit_key` stays `None`: there's no
+    /// issue key yet. `edit_return_screen` is `Screen::NewIssue`, not
+    /// `Screen::Detail`, so backing out of the description step (Esc)
+    /// returns to the compose form with its project/type/summary intact,
+    /// not away from the in-progress issue entirely.
+    pub(crate) fn begin_new_issue_description_edit_target(&mut self) {
+        self.edit_target = EditTarget::NewIssue;
+        self.edit_key = None;
+        self.edit_return_screen = Screen::NewIssue;
+    }
+
     /// Prime the edit-target state for composing a comment via the external
     /// `$EDITOR` round-trip. Mirrors `begin_external_edit`'s guard against
     /// starting a second edit while a previous one is still resolving
@@ -288,10 +307,19 @@ impl App {
             .map(|d| crate::adf::to_markdown(&d.description))
     }
 
-    /// Compile edited Markdown to ADF and show it for confirmation.
+    /// Compile edited Markdown to ADF and show it for confirmation. For a
+    /// new issue specifically, an empty buffer means "no description at
+    /// all" (`pending_edit = None`) rather than a technically-non-empty-but-
+    /// visually-empty ADF document — a new issue's description is genuinely
+    /// optional, unlike Description/Comment, which always have real content
+    /// to compile by the time this runs.
     pub fn finish_edit(&mut self, markdown: &str) {
-        let adf = crate::adf::compile(markdown);
-        self.pending_edit = Some(adf);
+        self.pending_edit =
+            if self.edit_target == EditTarget::NewIssue && markdown.trim().is_empty() {
+                None
+            } else {
+                Some(crate::adf::compile(markdown))
+            };
         self.detail_scroll = 0;
         self.screen = Screen::Preview;
     }
@@ -320,7 +348,12 @@ impl App {
             .as_ref()
             .map(crate::adf::to_markdown)
             .unwrap_or_default();
-        if markdown.trim().is_empty() {
+        // A new issue's description is genuinely optional (see
+        // `finish_edit`'s `None`-for-empty handling), so an empty preview
+        // must still step back to the description editor to keep composing
+        // the rest of the issue — never a full cancel, which would discard
+        // the project/type/summary the user already entered.
+        if markdown.trim().is_empty() && self.edit_target != EditTarget::NewIssue {
             self.cancel_edit();
             return;
         }
@@ -338,7 +371,7 @@ impl App {
     /// importantly the external `$EDITOR` round-trip, which doesn't call
     /// `begin_tui_edit`/`begin_comment` and so can't re-prime a fresh target
     /// itself.
-    fn reset_edit_target(&mut self) {
+    pub(crate) fn reset_edit_target(&mut self) {
         self.edit_target = EditTarget::default();
         self.edit_key = None;
         self.edit_return_screen = Screen::Detail;
@@ -347,9 +380,24 @@ impl App {
     /// Apply the previewed edit — either the description update or a new
     /// comment — live if possible, always locally.
     pub fn apply_edit(&mut self) {
+        // Guards against a duplicate live write: none of the three targets'
+        // apply methods can tell "genuinely nothing pending" apart from
+        // "already submitted, waiting on the network" on their own (a new
+        // issue's description is legitimately optional, so `pending_edit`
+        // being `None` can't double as that signal the way it does for
+        // Description/Comment). Re-entry is reachable in the ordinary UI,
+        // not just via key-repeat: `back_out_of_preview`'s `NewIssue` branch
+        // (see above) returns to `Screen::Edit` without discarding anything,
+        // so pressing Esc then re-confirming while the first submission is
+        // still in flight would otherwise dispatch a second one.
+        if self.edit_pending {
+            self.status = "an update is still in progress".into();
+            return;
+        }
         match self.edit_target {
             EditTarget::Description => self.apply_description_edit(),
             EditTarget::Comment => self.apply_comment(),
+            EditTarget::NewIssue => self.apply_new_issue(),
         }
     }
 

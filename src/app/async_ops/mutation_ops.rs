@@ -326,6 +326,65 @@ fn add_comment_blocking(
     })
 }
 
+/// Spawn a new-issue creation off the render thread, sending the result back
+/// as `AppEvent::IssueCreated`. `local_key` is the key `create_issue_blocking`
+/// falls back to if there's no live config to actually create against — the
+/// same "second safety net" shape as `add_comment_blocking`'s optimistic
+/// local comment, precomputed by the caller (`App::apply_new_issue`, via
+/// `next_local_key`) since only it knows the session's local-key counter.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn dispatch_create_issue(
+    tx: UnboundedSender<AppEvent>,
+    generation: u64,
+    project: String,
+    issue_type: String,
+    summary: String,
+    description: Option<serde_json::Value>,
+    local_key: String,
+) {
+    tokio::spawn(async move {
+        let issue_type_for_result = issue_type.clone();
+        let summary_for_result = summary.clone();
+        let description_for_result = description.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            create_issue_blocking(
+                &project,
+                &issue_type,
+                &summary,
+                description.as_ref(),
+                &local_key,
+            )
+        })
+        .await
+        .unwrap_or_else(|_| Err("internal error: task panicked".into()));
+        let _ = tx.send(AppEvent::IssueCreated {
+            generation,
+            issue_type: issue_type_for_result,
+            summary: summary_for_result,
+            description: description_for_result,
+            result,
+        });
+    });
+}
+
+#[allow(unused_variables)]
+fn create_issue_blocking(
+    project: &str,
+    issue_type: &str,
+    summary: &str,
+    description: Option<&serde_json::Value>,
+    local_key: &str,
+) -> Result<String, String> {
+    #[cfg(feature = "live")]
+    {
+        if let Some(cfg) = crate::jira::Config::load() {
+            return crate::jira::create_issue(&cfg, project, summary, issue_type, description)
+                .map_err(|e| e.to_string());
+        }
+    }
+    Ok(local_key.to_string())
+}
+
 impl App {
     /// Applies `AppEvent::TransitionApplied` — see `dispatch_transition` above.
     pub(super) fn apply_transition_applied(
@@ -421,6 +480,48 @@ impl App {
         self.status = format!("added comment to {key}");
         self.flash("✓ comment added");
         self.trigger_jax_party();
+    }
+
+    /// Applies `AppEvent::IssueCreated` — see `dispatch_create_issue` above.
+    /// On failure, lands back on `Screen::NewIssue` (not `Screen::Home`) so
+    /// the user can fix a bad project/permission error and resubmit without
+    /// retyping the summary — the compose form's own state (`self.new_issue`)
+    /// hasn't been touched yet at this point, so it's still there to retry
+    /// against.
+    pub(super) fn apply_issue_created(
+        &mut self,
+        generation: u64,
+        issue_type: String,
+        summary: String,
+        description: Option<serde_json::Value>,
+        result: Result<String, String>,
+    ) {
+        if generation != self.edit_generation {
+            return;
+        }
+        self.loading = false;
+        self.edit_pending = false;
+        // Safe to reset now regardless of outcome: `edit_pending` just went
+        // false, so `apply_edit`'s re-entrancy guard no longer needs
+        // `edit_target`/`edit_return_screen` to still describe this session
+        // (unlike while the dispatch was in flight — see `apply_new_issue`).
+        // Both branches below set `self.screen` directly rather than reading
+        // `edit_return_screen`, so this can't strand either one.
+        self.reset_edit_target();
+        let key = match result {
+            Ok(k) => k,
+            Err(e) => {
+                self.status = format!("create failed: {e}");
+                self.screen = Screen::NewIssue;
+                return;
+            }
+        };
+        self.land_new_issue(key.clone(), issue_type, summary, description);
+        self.new_issue = super::super::NewIssueState::default();
+        self.status = format!("created {key}");
+        self.flash(format!("✓ created {key}"));
+        self.trigger_jax_party();
+        self.open_by_key(&key);
     }
 
     /// Applies `AppEvent::AssigneeApplied` — see `dispatch_assign` above.
