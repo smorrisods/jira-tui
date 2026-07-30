@@ -319,6 +319,33 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // The new-issue compose form: project / issue-type / summary. Tab/
+    // Shift+Tab cycle which field has focus (leaving Project may trigger a
+    // fresh issue-type fetch — see `App::new_issue_next_field`); Left/Right
+    // (or Up/Down) cycle the issue-type list while that field has focus, no
+    // filtering, mirroring the transition picker; typing/Backspace edit
+    // whichever text field is focused.
+    if app.screen == Screen::NewIssue {
+        match key.code {
+            KeyCode::Esc => app.cancel_new_issue(),
+            KeyCode::Enter => app.confirm_new_issue_form(),
+            KeyCode::Tab => app.new_issue_next_field(),
+            KeyCode::BackTab => app.new_issue_prev_field(),
+            KeyCode::Left | KeyCode::Up if app.new_issue.focus == app::NewIssueField::IssueType => {
+                app.new_issue_cycle_issue_type(-1)
+            }
+            KeyCode::Right | KeyCode::Down
+                if app.new_issue.focus == app::NewIssueField::IssueType =>
+            {
+                app.new_issue_cycle_issue_type(1)
+            }
+            KeyCode::Backspace => app.new_issue_backspace(),
+            KeyCode::Char(c) => app.new_issue_input_char(c),
+            _ => {}
+        }
+        return;
+    }
+
     match key.code {
         KeyCode::Char('?') | KeyCode::F(1) => app.show_help = true,
         // `i` for "Info" — About moved off `a` (freed for the reserved
@@ -326,6 +353,9 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         // used for "add issues" in the Release drill-down) since it isn't
         // a primary action and doesn't deserve the primary lowercase slot.
         KeyCode::Char('i') => app.open_about(),
+        KeyCode::Char('a') if matches!(app.screen, Screen::Home | Screen::List) => {
+            app.open_new_issue()
+        }
         KeyCode::Char('g') => app.screen = Screen::Home,
         // `r` refreshes whatever's actually being looked at: the open
         // issue in Detail, or the quick-view panel once it has keyboard
@@ -577,6 +607,7 @@ fn run_palette_action(app: &mut App, action: &PaletteAction) {
         }
         PaletteAction::OpenAbout => app.open_about(),
         PaletteAction::OpenHelp => app.show_help = true,
+        PaletteAction::NewIssue => app.open_new_issue(),
     }
 }
 
@@ -602,7 +633,8 @@ fn nav(app: &mut App, delta: isize) {
         | Screen::Search
         | Screen::Board
         | Screen::Release
-        | Screen::FieldMapping => {}
+        | Screen::FieldMapping
+        | Screen::NewIssue => {}
     }
 }
 
@@ -616,6 +648,7 @@ fn back_or_quit(app: &mut App) {
             app.screen = Screen::Home
         }
         Screen::About => app.screen = app.about_return_screen,
+        Screen::NewIssue => app.cancel_new_issue(),
     }
 }
 
@@ -964,11 +997,12 @@ mod tests {
     /// palette-only (see `about_from_detail_returns_to_detail_not_home`)
     /// and reserved on Home/List for a future "new issue" entry point.
     #[test]
-    fn lowercase_a_no_longer_opens_about_i_does() {
+    fn lowercase_a_opens_new_issue_i_opens_about() {
         let mut app = demo_app();
         app.screen = Screen::Home;
         handle_key(&mut app, KeyEvent::from(KeyCode::Char('a')));
-        assert_eq!(app.screen, Screen::Home, "'a' is reserved, not About");
+        assert_eq!(app.screen, Screen::NewIssue, "'a' should open the new-issue form");
+        app.screen = Screen::Home;
         handle_key(&mut app, KeyEvent::from(KeyCode::Char('i')));
         assert_eq!(app.screen, Screen::About, "'i' (Info) should open About");
     }

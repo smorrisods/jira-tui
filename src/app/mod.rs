@@ -28,6 +28,7 @@ mod history;
 mod links;
 mod loader;
 mod mouse;
+mod new_issue;
 mod onboarding;
 mod palette;
 mod query;
@@ -50,6 +51,8 @@ pub use board::BoardSelection;
 pub use edit::{EditTarget, EditorState};
 pub use field_mapping::{FieldMappingOutcome, FieldMappingState};
 pub use mouse::{ListFocus, MouseState, SelectionSpan};
+pub use new_issue::{NewIssueField, NewIssueState};
+pub(crate) use new_issue::LocallyCreatedIssue;
 pub use onboarding::{Field, OnboardingState, WelcomePhase};
 pub use palette::{PaletteAction, PaletteState};
 pub(crate) use palette::{PaletteGroup, PaletteRow};
@@ -77,6 +80,7 @@ pub enum Screen {
     Release,
     About,
     FieldMapping,
+    NewIssue,
 }
 
 pub struct App {
@@ -365,6 +369,22 @@ pub struct App {
     /// refresh/switch_view must not invalidate an in-flight search, and vice
     /// versa.
     pub(crate) search_generation: u64,
+
+    // New-issue compose form (`a` on Home/List) — see `app::new_issue`.
+    /// State for the project/issue-type/summary form (`Screen::NewIssue`).
+    /// The description step and confirmation preview reuse `edit_target`/
+    /// `pending_edit`/`Screen::Edit`/`Screen::Preview` above via
+    /// `EditTarget::NewIssue`, rather than a parallel compose flow.
+    pub new_issue: NewIssueState,
+    /// Issues created while offline (demo/cache), kept for the rest of the
+    /// session so a freshly-created issue survives being reopened and a
+    /// later manual refresh — see `App::land_new_issue`/`load_detail`/
+    /// `record_synced`. Always empty for a genuine `Source::Live` session.
+    pub(crate) locally_created: Vec<LocallyCreatedIssue>,
+    /// Next numeric suffix for a locally-synthesized issue key
+    /// (`App::next_local_key`) — seeded well above any baked-in demo
+    /// dataset key so a locally-created issue can never collide with one.
+    pub(crate) locally_created_next_id: u64,
 }
 
 impl App {
@@ -477,6 +497,9 @@ impl App {
             onboarding_pending: false,
             onboarding_generation: 0,
             search_generation: 0,
+            new_issue: NewIssueState::default(),
+            locally_created: Vec::new(),
+            locally_created_next_id: 9001,
         };
         app.recompute_view();
 

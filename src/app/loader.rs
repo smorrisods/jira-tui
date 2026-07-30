@@ -34,6 +34,18 @@ impl App {
     /// directly.
     pub(crate) fn record_synced(&mut self, issues: Vec<IssueSummary>, source: Source) {
         self.all_issues = issues;
+        // Fold back in any issue created locally while offline (demo/cache)
+        // this session — otherwise a manual refresh right after creating one
+        // would make it vanish, since `demo_issues()`/the cache load has no
+        // idea it exists. `locally_created` is only ever populated for
+        // non-live sources (see `App::land_new_issue`), so this is a no-op
+        // for a genuine live session, where the real server copy is already
+        // included in `issues` on its own.
+        for created in &self.locally_created {
+            if !self.all_issues.iter().any(|i| i.key == created.summary.key) {
+                self.all_issues.push(created.summary.clone());
+            }
+        }
         self.source = source;
         self.last_synced = Some(std::time::Instant::now());
     }

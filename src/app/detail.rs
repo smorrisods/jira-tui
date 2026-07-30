@@ -137,6 +137,13 @@ impl App {
                 }
             }
         }
+        // A freshly-created demo/cache issue isn't in `demo_issues()` (which
+        // is regenerated from scratch on every call) — without this lookup,
+        // reopening it would land on `demo_detail_not_found`'s generic
+        // placeholder even though it was just created. See `app::new_issue`.
+        if let Some(found) = self.locally_created.iter().find(|c| c.summary.key == key) {
+            return found.detail.clone();
+        }
         demo_detail(key)
     }
 

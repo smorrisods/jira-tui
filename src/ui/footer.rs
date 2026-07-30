@@ -191,6 +191,7 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
             let apply = match app.edit_target {
                 EditTarget::Description => "apply to Jira",
                 EditTarget::Comment => "post comment",
+                EditTarget::NewIssue => "create issue",
             };
             single(vec![
                 hint("y/⏎", apply),
@@ -206,6 +207,7 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
             let compose = match app.edit_target {
                 EditTarget::Description => "to edit",
                 EditTarget::Comment => "your comment",
+                EditTarget::NewIssue => "a description (optional)",
             };
             single(vec![
                 hint("type", compose),
@@ -231,6 +233,13 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
             hint("type", "to search fields"),
             hint("↑/↓", "move"),
             hint("⏎", "map"),
+            hint("esc", "cancel"),
+        ]),
+        Screen::NewIssue => single(vec![
+            hint("tab", "next field"),
+            hint("type", "project/summary"),
+            hint("←/→", "issue type"),
+            hint("⏎", "continue"),
             hint("esc", "cancel"),
         ]),
         Screen::Board => vec![

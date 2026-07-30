@@ -35,6 +35,7 @@ fn screen_label(screen: Screen) -> Option<&'static str> {
         Screen::Preview => Some("Preview"),
         Screen::Edit => Some("Edit"),
         Screen::About => Some("About"),
+        Screen::NewIssue => Some("New Issue"),
     }
 }
 

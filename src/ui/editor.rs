@@ -12,7 +12,13 @@ use crate::spellcheck;
 use super::{danger, muted, warn};
 
 pub(crate) fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
-    let key = app.detail.as_ref().map(|d| d.key.as_str()).unwrap_or("");
+    // A new issue has no key yet — title on its project instead.
+    let title = if app.edit_target == crate::app::EditTarget::NewIssue {
+        format!("  new issue in {} · Markdown  ", app.new_issue.project)
+    } else {
+        let key = app.detail.as_ref().map(|d| d.key.as_str()).unwrap_or("");
+        format!("  editing {key} · Markdown  ")
+    };
     let border_colour = if app.confirm_discard {
         danger()
     } else {
@@ -28,7 +34,7 @@ pub(crate) fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
         .border_type(BorderType::Double)
         .border_style(Style::default().fg(border_colour))
         .title(Span::styled(
-            format!("  editing {key} · Markdown  "),
+            title,
             Style::default()
                 .fg(border_colour)
                 .add_modifier(Modifier::BOLD),

@@ -36,6 +36,7 @@ mod jax_companion;
 mod keymap;
 mod list;
 mod list_columns;
+mod new_issue;
 mod palette;
 mod preview;
 mod quick_view;
@@ -60,6 +61,7 @@ use help::draw_help_overlay;
 use home::draw_home;
 use jax_companion::{draw_jax_companion, draw_jax_mini, JaxMode, MINI_DOCK_WIDTH};
 use list::draw_list;
+use new_issue::draw_new_issue;
 use palette::draw_palette;
 use preview::draw_preview;
 use quick_view::draw_quick_view;
@@ -242,6 +244,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Screen::Release => draw_release(f, app, body_area),
         Screen::About => draw_about(f, app, body_area),
         Screen::FieldMapping => draw_field_mapping(f, app, body_area),
+        Screen::NewIssue => draw_new_issue(f, app, body_area),
     }
 
     if let Some(qa) = quick_area {

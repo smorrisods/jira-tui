@@ -3,7 +3,7 @@
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::domain::{AssignableUser, IssueDetail, IssueSummary, Source, Version, ViewKind};
+use crate::domain::{AssignableUser, IssueDetail, IssueSummary, IssueType, Source, Version, ViewKind};
 
 use super::super::loader::load_issues_for;
 use super::super::{App, Screen};
@@ -126,6 +126,45 @@ fn project_versions_blocking() -> Vec<Version> {
         if let Some(cfg) = crate::jira::Config::load() {
             if let Ok(versions) = crate::jira::list_versions(&cfg, &cfg.project) {
                 return versions;
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// Spawn a one-shot background fetch of `project`'s creatable issue types,
+/// sending the result back as `AppEvent::ProjectIssueTypesLoaded` — used by
+/// the new-issue compose form (`app::new_issue`), both when it first opens
+/// and again whenever the user edits the project field. Unlike
+/// `dispatch_project_versions`/`dispatch_teammate_discovery` (always for the
+/// single fixed `cfg.project`), `project` here is arbitrary user-typed
+/// text, so the event carries it back too — `apply_project_issue_types_loaded`
+/// needs it to drop a stale in-flight result if the project field has since
+/// changed again.
+pub(crate) fn dispatch_project_issue_types(tx: UnboundedSender<AppEvent>, project: String) {
+    tokio::spawn(async move {
+        let project_for_result = project.clone();
+        let types = tokio::task::spawn_blocking(move || project_issue_types_blocking(&project))
+            .await
+            .unwrap_or_default();
+        let _ = tx.send(AppEvent::ProjectIssueTypesLoaded {
+            project: project_for_result,
+            types,
+        });
+    });
+}
+
+/// Mirrors `project_versions_blocking`'s "no credentials/failure means an
+/// empty list" shape — an empty catalog just means the compose form's
+/// validation blocks advancing until a project with real issue types is
+/// entered.
+#[allow(unused_variables)]
+fn project_issue_types_blocking(project: &str) -> Vec<IssueType> {
+    #[cfg(feature = "live")]
+    {
+        if let Some(cfg) = crate::jira::Config::load() {
+            if let Ok(types) = crate::jira::list_create_issue_types(&cfg, project) {
+                return types;
             }
         }
     }
@@ -369,6 +408,31 @@ impl App {
         if self.screen == Screen::Release && self.release.drilled.is_none() {
             self.rebuild_release_versions();
         }
+    }
+
+    /// Applies `AppEvent::ProjectIssueTypesLoaded` — see
+    /// `dispatch_project_issue_types` above. Dropped if `project` no longer
+    /// matches the form's current project field: the user has since typed a
+    /// different project, and a newer fetch for it is either already in
+    /// flight or about to be. On a genuine match, resets `issue_type_index`
+    /// to `0` so it can't point past the end of a shorter new list, and
+    /// leaves a status hint if the catalog came back empty (nothing valid to
+    /// create with).
+    pub(super) fn apply_project_issue_types_loaded(
+        &mut self,
+        project: String,
+        types: Vec<crate::domain::IssueType>,
+    ) {
+        if project != self.new_issue.project.trim() {
+            return;
+        }
+        self.new_issue.types_loading = false;
+        self.new_issue.issue_type_index = 0;
+        if types.is_empty() {
+            self.status = format!("no issue types found for {project}");
+        }
+        self.new_issue.available_types = types;
+        self.new_issue.project_for_types = project;
     }
 
     /// Applies `AppEvent::ReleaseIssuesLoaded` — see
