@@ -114,29 +114,36 @@ impl App {
         }
     }
 
-    /// Tab — advance focus to the next field, wrapping around. Leaving the
-    /// Project field triggers a fresh issue-type fetch if the typed project
-    /// has changed since the list was last fetched (live sessions only).
+    /// Tab — advance focus to the next field, wrapping around.
     pub fn new_issue_next_field(&mut self) {
-        let leaving_project = self.new_issue.focus == NewIssueField::Project;
-        self.new_issue.focus = match self.new_issue.focus {
+        let next = match self.new_issue.focus {
             NewIssueField::Project => NewIssueField::IssueType,
             NewIssueField::IssueType => NewIssueField::Summary,
             NewIssueField::Summary => NewIssueField::Project,
         };
-        if leaving_project {
-            self.refresh_new_issue_types_if_project_changed();
-        }
+        self.new_issue_focus_field(next);
     }
 
     /// Shift+Tab — retreat focus to the previous field, wrapping around.
     pub fn new_issue_prev_field(&mut self) {
-        let leaving_project = self.new_issue.focus == NewIssueField::Project;
-        self.new_issue.focus = match self.new_issue.focus {
+        let prev = match self.new_issue.focus {
             NewIssueField::Project => NewIssueField::Summary,
             NewIssueField::IssueType => NewIssueField::Project,
             NewIssueField::Summary => NewIssueField::IssueType,
         };
+        self.new_issue_focus_field(prev);
+    }
+
+    /// Move keyboard focus to `field` — shared by `Tab`/`Shift+Tab`
+    /// (`new_issue_next_field`/`new_issue_prev_field`) and by mouse
+    /// click-to-focus (`App::mouse_down`), so a click leaving the Project
+    /// field triggers the same issue-type refetch tabbing away does.
+    pub fn new_issue_focus_field(&mut self, field: NewIssueField) {
+        if self.new_issue.focus == field {
+            return;
+        }
+        let leaving_project = self.new_issue.focus == NewIssueField::Project;
+        self.new_issue.focus = field;
         if leaving_project {
             self.refresh_new_issue_types_if_project_changed();
         }
