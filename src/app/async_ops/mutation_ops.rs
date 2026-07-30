@@ -501,6 +501,13 @@ impl App {
         }
         self.loading = false;
         self.edit_pending = false;
+        // Safe to reset now regardless of outcome: `edit_pending` just went
+        // false, so `apply_edit`'s re-entrancy guard no longer needs
+        // `edit_target`/`edit_return_screen` to still describe this session
+        // (unlike while the dispatch was in flight — see `apply_new_issue`).
+        // Both branches below set `self.screen` directly rather than reading
+        // `edit_return_screen`, so this can't strand either one.
+        self.reset_edit_target();
         let key = match result {
             Ok(k) => k,
             Err(e) => {

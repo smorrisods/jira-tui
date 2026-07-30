@@ -63,15 +63,34 @@ impl App {
         self.facts_folded = false;
         if !matches!(self.source, Source::Live { .. }) {
             let detail = self.load_detail(key);
-            self.detail_cache.insert(key.to_string(), detail.clone());
-            self.detail = Some(detail);
-            self.screen = Screen::Detail;
-            if let Some(pos) = self.issues.iter().position(|i| i.key == key) {
-                self.selected = pos;
-            }
+            self.resolve_detail_sync(key, detail);
+            return;
+        }
+        // A locally-fabricated key (created while offline, before the
+        // session reconnected to a genuine live source) can never exist
+        // server-side — dispatching a live fetch for it would just 404 and
+        // fall back to `demo_detail`'s generic "not found" placeholder,
+        // regressing the exact bug the non-live branch above is fixed for.
+        // Resolve it the same way, synchronously.
+        if let Some(found) = self.locally_created.iter().find(|c| c.summary.key == key) {
+            let detail = found.detail.clone();
+            self.resolve_detail_sync(key, detail);
             return;
         }
         self.dispatch_detail_fetch(key.to_string(), true);
+    }
+
+    /// Land an already-resolved detail synchronously: cache it, show it, and
+    /// sync `selected` if the key is in the current view. Shared by
+    /// `show_issue`'s non-live branch and its `locally_created` shortcut for
+    /// a live session above.
+    fn resolve_detail_sync(&mut self, key: &str, detail: IssueDetail) {
+        self.detail_cache.insert(key.to_string(), detail.clone());
+        self.detail = Some(detail);
+        self.screen = Screen::Detail;
+        if let Some(pos) = self.issues.iter().position(|i| i.key == key) {
+            self.selected = pos;
+        }
     }
 
     /// Re-fetch the currently viewed (Detail screen) or quick-viewed issue's

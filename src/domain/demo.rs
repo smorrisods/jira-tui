@@ -174,12 +174,6 @@ pub fn demo_assignable_users() -> Vec<AssignableUser> {
     ]
 }
 
-/// Offline stand-in for `jira::live::versions::list_versions`, so the
-/// release review screen (`app::release`) and the per-issue version picker
-/// (`R`) are fully explorable in demo mode. `v3.4.0` is released with issues
-/// in a mix of statuses (including one still open, as a real project would
-/// have); `v3.5.0` is the upcoming release most demo issues target; `v3.6.0`
-/// has no issues at all, so an empty release is explorable too.
 /// A stand-in issue-type catalog for demo/cache sessions — offline mode has
 /// no real per-project scheme to reflect, unlike a live session's
 /// `jira::live::list_create_issue_types`, so this is just a fixed sample of
@@ -209,6 +203,12 @@ pub fn demo_issue_types() -> Vec<IssueType> {
     ]
 }
 
+/// Offline stand-in for `jira::live::versions::list_versions`, so the
+/// release review screen (`app::release`) and the per-issue version picker
+/// (`R`) are fully explorable in demo mode. `v3.4.0` is released with issues
+/// in a mix of statuses (including one still open, as a real project would
+/// have); `v3.5.0` is the upcoming release most demo issues target; `v3.6.0`
+/// has no issues at all, so an empty release is explorable too.
 pub fn demo_versions() -> Vec<Version> {
     vec![
         Version {

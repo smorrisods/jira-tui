@@ -139,17 +139,24 @@ fn project_versions_blocking() -> Vec<Version> {
 /// the new-issue compose form (`app::new_issue`), both when it first opens
 /// and again whenever the user edits the project field. Unlike
 /// `dispatch_project_versions`/`dispatch_teammate_discovery` (always for the
-/// single fixed `cfg.project`), `project` here is arbitrary user-typed
-/// text, so the event carries it back too — `apply_project_issue_types_loaded`
-/// needs it to drop a stale in-flight result if the project field has since
-/// changed again.
-pub(crate) fn dispatch_project_issue_types(tx: UnboundedSender<AppEvent>, project: String) {
+/// single fixed `cfg.project`), `project` here is arbitrary user-typed text
+/// that can change again before this resolves — `generation` (bumped on
+/// every dispatch, mirroring every other async op in this codebase) is what
+/// lets `apply_project_issue_types_loaded` drop a superseded result, rather
+/// than a project-string comparison (which can't tell "stale" apart from
+/// "resolved in order, but the user has since typed something else").
+pub(crate) fn dispatch_project_issue_types(
+    tx: UnboundedSender<AppEvent>,
+    generation: u64,
+    project: String,
+) {
     tokio::spawn(async move {
         let project_for_result = project.clone();
         let types = tokio::task::spawn_blocking(move || project_issue_types_blocking(&project))
             .await
             .unwrap_or_default();
         let _ = tx.send(AppEvent::ProjectIssueTypesLoaded {
+            generation,
             project: project_for_result,
             types,
         });
@@ -413,21 +420,29 @@ impl App {
     }
 
     /// Applies `AppEvent::ProjectIssueTypesLoaded` — see
-    /// `dispatch_project_issue_types` above. Dropped if `project` no longer
-    /// matches the form's current project field: the user has since typed a
-    /// different project, and a newer fetch for it is either already in
-    /// flight or about to be. On a genuine match, resets `issue_type_index`
-    /// to `0` so it can't point past the end of a shorter new list, and
-    /// leaves a status hint if the catalog came back empty (nothing valid to
-    /// create with).
+    /// `dispatch_project_issue_types` above. Dropped if `generation` has been
+    /// superseded by a newer dispatch (mirrors every other async op's
+    /// staleness guard), or if the compose form isn't showing any more — the
+    /// user has moved on to composing the description/preview, and applying
+    /// a late result there would silently swap `issue_type_index`/
+    /// `available_types` out from under an already-made selection that
+    /// `apply_new_issue` reads lazily at submit time. Subtask-type entries
+    /// are filtered out: this form collects no parent-issue field, so a
+    /// subtask is guaranteed to fail regardless of what else is filled in.
+    /// On a genuine apply, resets `issue_type_index` to `0` so it can't
+    /// point past the end of a shorter new list, and leaves a status hint if
+    /// the (filtered) catalog came back empty (nothing valid to create
+    /// with).
     pub(super) fn apply_project_issue_types_loaded(
         &mut self,
+        generation: u64,
         project: String,
         types: Vec<crate::domain::IssueType>,
     ) {
-        if project != self.new_issue.project.trim() {
+        if self.screen != Screen::NewIssue || generation != self.new_issue_types_generation {
             return;
         }
+        let types: Vec<_> = types.into_iter().filter(|t| !t.subtask).collect();
         self.new_issue.types_loading = false;
         self.new_issue.issue_type_index = 0;
         if types.is_empty() {

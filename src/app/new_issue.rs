@@ -73,9 +73,11 @@ impl App {
             ..NewIssueState::default()
         };
         if matches!(self.source, Source::Live { .. }) {
+            self.new_issue_types_generation += 1;
+            let generation = self.new_issue_types_generation;
             self.new_issue.types_loading = true;
             let project = self.new_issue.project.clone();
-            async_ops::dispatch_project_issue_types(self.events_tx.clone(), project);
+            async_ops::dispatch_project_issue_types(self.events_tx.clone(), generation, project);
         } else {
             self.new_issue.available_types = crate::domain::demo_issue_types();
             self.new_issue.project_for_types = self.new_issue.project.clone();
@@ -140,15 +142,35 @@ impl App {
         }
     }
 
+    /// Keeps `available_types` in sync with the (trimmed) project field —
+    /// called both when the user tabs off the Project field and, defensively,
+    /// right before `confirm_new_issue_form` validates, so pressing Enter
+    /// right after editing the project (without ever tabbing away) can't
+    /// slip a stale-project catalog past validation. A no-op once already in
+    /// sync — cheap to call unconditionally.
     fn refresh_new_issue_types_if_project_changed(&mut self) {
         let project = self.new_issue.project.trim().to_string();
-        if project.is_empty() || project == self.new_issue.project_for_types {
+        if project == self.new_issue.project_for_types {
             return;
         }
-        if matches!(self.source, Source::Live { .. }) {
-            self.new_issue.types_loading = true;
-            async_ops::dispatch_project_issue_types(self.events_tx.clone(), project);
+        if !matches!(self.source, Source::Live { .. }) {
+            // Demo/cache's catalog doesn't vary by project — just keep the
+            // bookkeeping field in sync so this comparison doesn't keep
+            // re-triggering (and so it doesn't spuriously look "stale" to
+            // `confirm_new_issue_form`, which would otherwise block
+            // submission in demo mode after any project-field edit).
+            self.new_issue.available_types = crate::domain::demo_issue_types();
+            self.new_issue.project_for_types = project;
+            self.new_issue.issue_type_index = 0;
+            return;
         }
+        if project.is_empty() {
+            return;
+        }
+        self.new_issue_types_generation += 1;
+        let generation = self.new_issue_types_generation;
+        self.new_issue.types_loading = true;
+        async_ops::dispatch_project_issue_types(self.events_tx.clone(), generation, project);
     }
 
     /// Left/Right (or Up/Down) while the IssueType field has focus — cycles
@@ -177,6 +199,11 @@ impl App {
             self.status = "enter a summary".into();
             return;
         }
+        // Guards against submitting with a catalog fetched for a project
+        // the user has since typed over without ever tabbing off the field
+        // (the only other place this resync runs) — a no-op if already
+        // in sync.
+        self.refresh_new_issue_types_if_project_changed();
         if self.new_issue.types_loading {
             self.status = "still loading issue types…".into();
             return;
@@ -224,6 +251,17 @@ impl App {
         if !matches!(self.source, Source::Live { .. }) {
             let key = self.next_local_key(&project);
             self.land_new_issue(key.clone(), issue_type, summary, description);
+            // Unlike the live branch below, this whole operation completes
+            // atomically — there's no in-flight window where `back_out_of_preview`
+            // needs `edit_target` to still read `NewIssue`, so resetting here
+            // (rather than leaving it stale until the next `begin_*` call)
+            // is safe. Deliberately NOT done at the top of this function: a
+            // live dispatch stays in flight for a while, and clearing
+            // `edit_target`/`edit_return_screen` before it resolves would
+            // break that special-casing (see `back_out_of_preview`) for
+            // exactly the ordinary Esc-then-resubmit navigation
+            // `App::apply_edit`'s re-entrancy guard also has to account for.
+            self.reset_edit_target();
             self.new_issue = NewIssueState::default();
             self.status = format!("created {key}");
             self.flash(format!("✓ created {key}"));
@@ -260,6 +298,19 @@ impl App {
         self.locally_created_next_id += 1;
         let prefix = if project.is_empty() { "DEMO" } else { project };
         format!("{prefix}-{id}")
+    }
+
+    /// A demo/cache issue's current fix versions, for computing a release
+    /// bulk add/remove's baseline — checks `locally_created` first, falling
+    /// back to `crate::domain::demo_detail(key)`. A locally-created key isn't
+    /// in the baked-in demo dataset, so `demo_detail` alone would silently
+    /// resolve to its generic "not found" placeholder (empty fix versions)
+    /// instead of the issue's real (if minimal) starting state.
+    pub(crate) fn demo_or_local_fix_versions(&self, key: &str) -> Vec<String> {
+        if let Some(found) = self.locally_created.iter().find(|c| c.summary.key == key) {
+            return found.detail.fix_versions.clone();
+        }
+        crate::domain::demo_detail(key).fix_versions
     }
 
     /// Construct and insert a brand-new issue's summary/detail — shared by

@@ -165,10 +165,16 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
     // typed buffer, `pending_edit`) that only `commit_tui_edit`/`apply_edit`/
     // `cancel_edit` know how to resolve — a palette action changing the
     // screen out from under either would silently orphan that state instead
-    // of going through one of those.
+    // of going through one of those. `NewIssue` is excluded for the same
+    // reason: its typed project/type/summary has no restore path if a
+    // palette action changes the screen out from under it (unlike `About`,
+    // which stashes `about_return_screen`).
     if key.modifiers.contains(KeyModifiers::CONTROL)
         && key.code == KeyCode::Char('k')
-        && !matches!(app.screen, Screen::Edit | Screen::Preview)
+        && !matches!(
+            app.screen,
+            Screen::Edit | Screen::Preview | Screen::NewIssue
+        )
     {
         app.open_palette();
         return;
@@ -895,6 +901,22 @@ mod tests {
         assert!(
             !app.palette_open,
             "ctrl-k must not open the palette on the preview/confirm screen either"
+        );
+    }
+
+    #[test]
+    fn ctrl_k_does_not_open_the_palette_on_the_new_issue_form() {
+        let mut app = demo_app();
+        app.open_new_issue();
+        assert_eq!(app.screen, Screen::NewIssue);
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL),
+        );
+        assert!(
+            !app.palette_open,
+            "ctrl-k must not open the palette while composing a new issue, which has no \
+             restore path if the screen changes out from under it"
         );
     }
 

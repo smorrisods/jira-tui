@@ -371,7 +371,7 @@ impl App {
     /// importantly the external `$EDITOR` round-trip, which doesn't call
     /// `begin_tui_edit`/`begin_comment` and so can't re-prime a fresh target
     /// itself.
-    fn reset_edit_target(&mut self) {
+    pub(crate) fn reset_edit_target(&mut self) {
         self.edit_target = EditTarget::default();
         self.edit_key = None;
         self.edit_return_screen = Screen::Detail;
@@ -380,6 +380,20 @@ impl App {
     /// Apply the previewed edit — either the description update or a new
     /// comment — live if possible, always locally.
     pub fn apply_edit(&mut self) {
+        // Guards against a duplicate live write: none of the three targets'
+        // apply methods can tell "genuinely nothing pending" apart from
+        // "already submitted, waiting on the network" on their own (a new
+        // issue's description is legitimately optional, so `pending_edit`
+        // being `None` can't double as that signal the way it does for
+        // Description/Comment). Re-entry is reachable in the ordinary UI,
+        // not just via key-repeat: `back_out_of_preview`'s `NewIssue` branch
+        // (see above) returns to `Screen::Edit` without discarding anything,
+        // so pressing Esc then re-confirming while the first submission is
+        // still in flight would otherwise dispatch a second one.
+        if self.edit_pending {
+            self.status = "an update is still in progress".into();
+            return;
+        }
         match self.edit_target {
             EditTarget::Description => self.apply_description_edit(),
             EditTarget::Comment => self.apply_comment(),

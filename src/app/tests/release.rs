@@ -288,6 +288,35 @@ fn release_add_to_release_adds_issues_and_refreshes_the_drill_in_demo_mode() {
     );
 }
 
+/// Regression test: a locally-created issue (`app::new_issue`) isn't in the
+/// baked-in demo dataset, so `crate::domain::demo_detail(key)` alone would
+/// resolve to the generic "not found" placeholder (empty fix versions)
+/// instead of the issue's real starting state — silently discarding
+/// whatever versions it actually has whenever it's release-bulk-added.
+#[test]
+fn release_add_to_release_uses_the_real_baseline_for_a_locally_created_issue() {
+    let mut app = demo_app();
+    app.open_new_issue();
+    app.new_issue.project = "DS".into();
+    app.new_issue.summary = "Fix the flaky login test".into();
+    app.confirm_new_issue_form();
+    app.commit_tui_edit();
+    app.apply_edit();
+    let key = app.detail.as_ref().unwrap().key.clone();
+
+    app.release_add_to_release("v3.6.0".into(), vec![key.clone()]);
+
+    let detail = app
+        .detail_cache
+        .get(&key)
+        .expect("detail must still be cached");
+    assert_eq!(
+        detail.fix_versions,
+        vec!["v3.6.0".to_string()],
+        "must start from the issue's real (empty) fix versions, not a not-found placeholder"
+    );
+}
+
 #[tokio::test]
 async fn release_bulk_remove_against_a_live_source_dispatches_and_applies() {
     let _guard = crate::test_support::lock_env_async().await;

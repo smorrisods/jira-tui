@@ -31,6 +31,7 @@ fn confirm_new_issue_form_rejects_an_empty_issue_type_catalog() {
     let mut app = demo_app();
     app.open_new_issue();
     app.new_issue.project = "DS".into();
+    app.new_issue.project_for_types = "DS".into(); // already "in sync" — no resync side effect
     app.new_issue.summary = "Something to do".into();
     app.new_issue.available_types.clear();
     app.confirm_new_issue_form();
@@ -56,6 +57,7 @@ fn esc_from_the_description_editor_returns_to_the_form_with_state_intact() {
     let mut app = demo_app();
     app.open_new_issue();
     app.new_issue.project = "DS".into();
+    app.new_issue.project_for_types = "DS".into(); // already "in sync" — no resync side effect
     app.new_issue.summary = "Something to do".into();
     app.new_issue.issue_type_index = 1;
     app.confirm_new_issue_form();
@@ -117,6 +119,7 @@ fn demo_create_end_to_end_lands_in_all_issues_and_opens_detail() {
     let before = app.all_issues.len();
     app.open_new_issue();
     app.new_issue.project = "DS".into();
+    app.new_issue.project_for_types = "DS".into(); // already "in sync" — no resync side effect
     app.new_issue.summary = "Fix the flaky login test".into();
     app.new_issue.issue_type_index = 1; // "Bug"
     app.confirm_new_issue_form();
@@ -227,22 +230,79 @@ async fn changing_the_project_field_and_leaving_it_dispatches_a_fresh_issue_type
 }
 
 #[tokio::test]
-async fn a_stale_issue_type_fetch_is_dropped_if_the_project_changed_again() {
+async fn a_stale_generation_issue_type_fetch_is_dropped() {
     let _guard = crate::test_support::lock_env_async().await;
     let mut app = live_app();
     app.open_new_issue();
-    let first_fetch = next_event(&mut app).await;
-    app.apply_event(first_fetch);
+    let generation = app.new_issue_types_generation;
 
-    // Simulate a fetch landing for a project the user has since typed over.
-    app.new_issue.project = "CURRENT".into();
+    // A newer fetch (e.g. from tabbing off the Project field again) bumps
+    // the generation before the original one resolves.
+    app.new_issue_types_generation += 1;
     app.apply_event(AppEvent::ProjectIssueTypesLoaded {
-        project: "STALE".into(),
-        types: vec![],
+        generation,
+        project: "DS".into(),
+        types: crate::domain::demo_issue_types(),
     });
-    assert_ne!(
-        app.new_issue.project_for_types, "STALE",
-        "a fetch result for an abandoned project must be dropped"
+    assert!(
+        app.new_issue.types_loading,
+        "a stale-generation result must be dropped, leaving types_loading as the newer \
+         dispatch set it"
+    );
+    assert!(app.new_issue.available_types.is_empty());
+}
+
+#[tokio::test]
+async fn an_issue_type_fetch_resolving_after_the_form_closed_is_dropped() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.open_new_issue();
+    let generation = app.new_issue_types_generation;
+
+    // The user backed out of the form entirely before the fetch resolved.
+    app.cancel_new_issue();
+    app.apply_event(AppEvent::ProjectIssueTypesLoaded {
+        generation,
+        project: "DS".into(),
+        types: crate::domain::demo_issue_types(),
+    });
+    assert_eq!(
+        app.new_issue,
+        NewIssueState::default(),
+        "a result landing after the form closed must not repopulate its state"
+    );
+}
+
+#[tokio::test]
+async fn subtask_issue_types_are_filtered_out_of_the_picker() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.open_new_issue();
+    let generation = app.new_issue_types_generation;
+
+    app.apply_event(AppEvent::ProjectIssueTypesLoaded {
+        generation,
+        project: "".into(),
+        types: vec![
+            crate::domain::IssueType {
+                id: "1".into(),
+                name: "Task".into(),
+                subtask: false,
+            },
+            crate::domain::IssueType {
+                id: "2".into(),
+                name: "Sub-task".into(),
+                subtask: true,
+            },
+        ],
+    });
+    assert!(
+        app.new_issue
+            .available_types
+            .iter()
+            .all(|t| t.name != "Sub-task"),
+        "a subtask type can never succeed here (no parent-key field is collected), so it \
+         must not be offered"
     );
 }
 
@@ -259,8 +319,8 @@ async fn live_create_dispatches_and_applies_via_the_no_credentials_fallback() {
     // block advancing, which is orthogonal to what this test is exercising
     // (the create dispatch/apply plumbing).
     app.new_issue.available_types = crate::domain::demo_issue_types();
-
     app.new_issue.project = "DS".into();
+    app.new_issue.project_for_types = "DS".into(); // already "in sync" — no resync side effect
     app.new_issue.summary = "Fix the flaky login test".into();
     app.confirm_new_issue_form();
     assert_eq!(app.screen, Screen::Edit);
@@ -303,6 +363,103 @@ async fn live_create_dispatches_and_applies_via_the_no_credentials_fallback() {
 }
 
 #[tokio::test]
+async fn apply_edit_refuses_to_dispatch_a_second_create_while_the_first_is_in_flight() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.open_new_issue();
+    let fetch = next_event(&mut app).await;
+    app.apply_event(fetch);
+    app.new_issue.available_types = crate::domain::demo_issue_types();
+    app.new_issue.project = "DS".into();
+    app.new_issue.project_for_types = "DS".into();
+    app.new_issue.summary = "Fix the flaky login test".into();
+    app.confirm_new_issue_form();
+    app.commit_tui_edit();
+    app.apply_edit();
+    assert!(app.edit_pending);
+    let generation = app.edit_generation;
+
+    // Reachable via ordinary navigation, not just key-repeat: Esc on
+    // Preview (`back_out_of_preview`) returns to `Screen::Edit` without
+    // discarding anything for a new issue's (optional) description, so the
+    // user can re-confirm while the first submission is still resolving.
+    app.back_out_of_preview();
+    assert_eq!(app.screen, Screen::Edit);
+    app.commit_tui_edit();
+    app.apply_edit();
+
+    assert_eq!(
+        app.edit_generation, generation,
+        "a second confirm while a create is still in flight must not dispatch another one"
+    );
+    assert!(app.status.contains("in progress"));
+
+    // Draining the original (only) dispatch's result must still work.
+    let event = next_event(&mut app).await;
+    app.apply_event(event);
+    assert!(!app.edit_pending);
+}
+
+#[tokio::test]
+async fn a_locally_created_issue_reopens_synchronously_after_the_session_becomes_live() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = non_demo_app(); // Source::Cache
+    app.open_new_issue();
+    app.new_issue.project = "DS".into();
+    app.new_issue.summary = "Fix the flaky login test".into();
+    app.confirm_new_issue_form();
+    app.commit_tui_edit();
+    app.apply_edit();
+    let key = app.detail.as_ref().unwrap().key.clone();
+
+    // The session reconnects to a genuine live source (e.g. the network
+    // recovered) without the locally-created issue going anywhere.
+    app.source = crate::domain::Source::Live {
+        site: "demo.atlassian.net".into(),
+        user: "me".into(),
+    };
+    app.screen = Screen::Home;
+    app.detail = None;
+    app.open_by_key(&key);
+
+    // Resolved synchronously — a locally-fabricated key can never exist
+    // server-side, so no live fetch should have been dispatched at all.
+    assert_eq!(app.screen, Screen::Detail);
+    let detail = app.detail.as_ref().unwrap();
+    assert_eq!(detail.summary, "Fix the flaky login test");
+}
+
+#[tokio::test]
+async fn a_locally_created_issue_does_not_survive_a_refresh_that_resolves_to_a_genuine_live_source()
+{
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = non_demo_app(); // Source::Cache
+    app.open_new_issue();
+    app.new_issue.project = "DS".into();
+    app.new_issue.summary = "Fix the flaky login test".into();
+    app.confirm_new_issue_form();
+    app.commit_tui_edit();
+    app.apply_edit();
+    let key = app.detail.as_ref().unwrap().key.clone();
+    assert!(app.all_issues.iter().any(|i| i.key == key));
+
+    // A refresh resolves to a genuine live source (e.g. the network
+    // recovered) — the fabricated local entry must not be folded into what
+    // is now a real live issue list.
+    app.record_synced(
+        Vec::new(),
+        crate::domain::Source::Live {
+            site: "demo.atlassian.net".into(),
+            user: "me".into(),
+        },
+    );
+    assert!(
+        !app.all_issues.iter().any(|i| i.key == key),
+        "a locally-created issue must not keep reappearing once the session is genuinely live"
+    );
+}
+
+#[tokio::test]
 async fn a_stale_generation_issue_created_event_is_dropped() {
     let _guard = crate::test_support::lock_env_async().await;
     let mut app = live_app();
@@ -310,8 +467,8 @@ async fn a_stale_generation_issue_created_event_is_dropped() {
     let fetch = next_event(&mut app).await;
     app.apply_event(fetch);
     app.new_issue.available_types = crate::domain::demo_issue_types();
-
     app.new_issue.project = "DS".into();
+    app.new_issue.project_for_types = "DS".into(); // already "in sync" — no resync side effect
     app.new_issue.summary = "First issue".into();
     app.confirm_new_issue_form();
     app.commit_tui_edit();

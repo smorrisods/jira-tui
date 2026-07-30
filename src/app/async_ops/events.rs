@@ -171,12 +171,14 @@ pub enum AppEvent {
         results: Vec<(String, Result<(), String>)>,
     },
     /// The new-issue compose form's issue-type fetch resolved — see
-    /// `dispatch_project_issue_types`. Carries the project it was fetched
-    /// for (unlike `ProjectVersionsLoaded`, which is always for the single
-    /// fixed `cfg.project`) since `project` here is arbitrary user-typed
-    /// text: `apply_project_issue_types_loaded` drops this if the form's
-    /// project field has since changed again.
+    /// `dispatch_project_issue_types`. Carries its own `generation` (unlike
+    /// `ProjectVersionsLoaded`, which is always for the single fixed
+    /// `cfg.project` and so can never go stale) since `project` here is
+    /// arbitrary user-typed text that can change again before this
+    /// resolves — `apply_project_issue_types_loaded` drops a superseded
+    /// generation.
     ProjectIssueTypesLoaded {
+        generation: u64,
         project: String,
         types: Vec<IssueType>,
     },
@@ -302,9 +304,11 @@ impl App {
                 kind,
                 results,
             } => self.apply_release_bulk_applied(generation, version_name, kind, results),
-            AppEvent::ProjectIssueTypesLoaded { project, types } => {
-                self.apply_project_issue_types_loaded(project, types)
-            }
+            AppEvent::ProjectIssueTypesLoaded {
+                generation,
+                project,
+                types,
+            } => self.apply_project_issue_types_loaded(generation, project, types),
             AppEvent::IssueCreated {
                 generation,
                 issue_type,

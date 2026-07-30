@@ -385,6 +385,12 @@ pub struct App {
     /// (`App::next_local_key`) — seeded well above any baked-in demo
     /// dataset key so a locally-created issue can never collide with one.
     pub(crate) locally_created_next_id: u64,
+    /// Bumped on every dispatched issue-type fetch for the compose form
+    /// (`App::open_new_issue`/`refresh_new_issue_types_if_project_changed`);
+    /// a completed `ProjectIssueTypesLoaded` whose generation no longer
+    /// matches has been superseded by a newer fetch and is dropped, mirroring
+    /// every other async op's staleness guard.
+    pub(crate) new_issue_types_generation: u64,
 }
 
 impl App {
@@ -500,6 +506,7 @@ impl App {
             new_issue: NewIssueState::default(),
             locally_created: Vec::new(),
             locally_created_next_id: 9001,
+            new_issue_types_generation: 0,
         };
         app.recompute_view();
 
