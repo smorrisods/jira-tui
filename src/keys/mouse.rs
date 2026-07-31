@@ -27,6 +27,9 @@ pub(crate) fn handle_mouse(app: &mut App, me: MouseEvent) {
         || app.picker_open
         || app.view_picker_open
         || app.assignee_picker_open
+        || app.version_picker_open
+        || app.spell_suggest_open
+        || app.palette_open
         || app.confirm_discard
     {
         return;
@@ -271,16 +274,65 @@ mod tests {
     /// checks these flags before anything else) — mouse input must be
     /// swallowed the same way, or a click could navigate away while the
     /// modal's own flag stays set, orphaning it over whatever's now shown.
+    /// Table-driven over every flag the guard checks, so adding a new modal
+    /// flag to the guard without a matching case here is an obvious gap.
     #[test]
     fn mouse_input_is_swallowed_while_a_modal_is_open() {
+        let cases: &[(&str, fn(&mut App))] = &[
+            ("show_help", |app| app.show_help = true),
+            ("picker_open", |app| app.picker_open = true),
+            ("view_picker_open", |app| app.view_picker_open = true),
+            ("assignee_picker_open", |app| {
+                app.assignee_picker_open = true
+            }),
+            ("version_picker_open", |app| app.version_picker_open = true),
+            ("spell_suggest_open", |app| app.spell_suggest_open = true),
+            ("palette_open", |app| app.palette_open = true),
+            ("confirm_discard", |app| app.confirm_discard = true),
+        ];
+
+        for (name, set_flag) in cases {
+            let mut app = demo_app();
+            app.screen = Screen::Detail;
+            set_flag(&mut app);
+
+            handle_mouse(&mut app, right_click(5));
+
+            assert_eq!(
+                app.screen,
+                Screen::Detail,
+                "{name} must stay in front of a right-click"
+            );
+        }
+    }
+
+    /// Pins the exact bug reported in #102: with the command palette open
+    /// over Home, a left-click must not move `selected` or start a drag —
+    /// proving `handle_mouse` returned before touching any app state, not
+    /// merely that the click happened to be a no-op.
+    #[test]
+    fn left_click_is_swallowed_while_the_palette_is_open() {
         let mut app = demo_app();
-        app.screen = Screen::Detail;
-        app.picker_open = true;
+        app.list_area.set(Rect::new(0, 0, 100, 20));
+        app.selected = 0;
+        app.palette_open = true;
 
-        handle_mouse(&mut app, right_click(5));
+        let down = MouseEvent {
+            kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: 10,
+            row: 5,
+            modifiers: KeyModifiers::empty(),
+        };
+        handle_mouse(&mut app, down);
 
-        assert_eq!(app.screen, Screen::Detail, "picker must stay in front");
-        assert!(app.picker_open, "picker must not be silently dismissed");
+        assert_eq!(
+            app.selected, 0,
+            "click behind the palette must not move selection"
+        );
+        assert!(
+            !app.mouse.selecting,
+            "click behind the palette must not start a drag"
+        );
     }
 
     /// A stale in-flight drag (e.g. right-click navigating away mid-drag,
