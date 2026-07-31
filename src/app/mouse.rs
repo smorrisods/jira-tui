@@ -6,7 +6,7 @@ use ratatui::layout::Rect;
 use crate::render::DetailPane;
 use crate::ui::quick_view_columns::{meta_width_for, quick_view_layout_for_width, QuickViewLayout};
 
-use super::{App, NewIssueField, Screen};
+use super::{App, Field as OnboardingField, NewIssueField, Screen, WelcomePhase};
 
 /// Which panel arrow keys/PageUp/PageDown affect when the quick-view panel is
 /// open; toggled with `Tab`.
@@ -233,6 +233,26 @@ impl App {
         .map(|(field, _)| field)
     }
 
+    /// Which onboarding credential-form field's recorded row contains the
+    /// point, if any. Gated on both screen *and* welcome phase, since the
+    /// Welcome screen has two phases and only Setup renders these fields —
+    /// `draw_welcome`'s Intro arm clears the recorded areas each frame it
+    /// renders, but the phase check here is a second, cheap line of
+    /// defence against a stale `Rect` misfiring.
+    pub fn onboarding_field_at(&self, x: u16, y: u16) -> Option<OnboardingField> {
+        if self.screen != Screen::Welcome || self.onboarding.welcome_phase != WelcomePhase::Setup {
+            return None;
+        }
+        [
+            (OnboardingField::Site, self.onboarding_site_area.get()),
+            (OnboardingField::Email, self.onboarding_email_area.get()),
+            (OnboardingField::Token, self.onboarding_token_area.get()),
+        ]
+        .into_iter()
+        .find(|(_, area)| Self::point_in(*area, x, y))
+        .map(|(field, _)| field)
+    }
+
     pub fn mouse_down(&mut self, x: u16, y: u16) {
         match self.screen {
             Screen::Home | Screen::List => {
@@ -246,6 +266,13 @@ impl App {
             Screen::NewIssue => {
                 if let Some(field) = self.new_issue_field_at(x, y) {
                     self.new_issue_focus_field(field);
+                }
+            }
+            // Same click-to-focus pattern as `NewIssue` above, for the
+            // onboarding credential-setup form.
+            Screen::Welcome => {
+                if let Some(field) = self.onboarding_field_at(x, y) {
+                    self.onboarding_focus_field(field);
                 }
             }
             _ => {}

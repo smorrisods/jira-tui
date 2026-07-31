@@ -186,7 +186,7 @@ Both the full `Detail` screen and the quick-view panel render an issue's comment
 
 ## Mouse & clipboard
 
-Press **`m`** to toggle mouse mode:
+Press **`F9`** to toggle mouse mode:
 
 - **Click** a row to open that issue.
 - **Wheel** scrolls whatever panel is **under the pointer** — the list, the quick-view panel, the issue detail, or the board — regardless of which panel currently has keyboard focus (`Tab`). Mouse always follows the cursor; keyboard follows focus — they're independent.
@@ -218,7 +218,7 @@ You can also yank without the mouse: **`y`** copies the selected issue key, **`Y
 | `n / p` | next / previous comment |
 | `a` | create a new issue (Home/List) |
 | `i` | about panel ("Info") |
-| `m` | toggle mouse mode |
+| `F9` | toggle mouse mode |
 | `J` | toggle the Jax companion 🦦 |
 | `y` / `Y` | copy issue key / URL to clipboard |
 | `r` | refresh from source |

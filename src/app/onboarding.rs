@@ -69,19 +69,30 @@ impl App {
     }
 
     pub fn focus_next(&mut self) {
-        self.onboarding.focus = match self.onboarding.focus {
+        let next = match self.onboarding.focus {
             Field::Site => Field::Email,
             Field::Email => Field::Token,
             Field::Token => Field::Site,
         };
+        self.onboarding_focus_field(next);
     }
 
     pub fn focus_prev(&mut self) {
-        self.onboarding.focus = match self.onboarding.focus {
+        let prev = match self.onboarding.focus {
             Field::Site => Field::Token,
             Field::Email => Field::Site,
             Field::Token => Field::Email,
         };
+        self.onboarding_focus_field(prev);
+    }
+
+    /// Move focus to a specific field. Shared by `focus_next`/`focus_prev`
+    /// (Tab/Shift+Tab) and click-to-focus (`App::mouse_down` on
+    /// `Screen::Welcome`) so both paths funnel through one place — unlike
+    /// the new-issue form's equivalent, there's no side effect (e.g. a
+    /// refetch) to trigger on leaving a field here, just the assignment.
+    pub fn onboarding_focus_field(&mut self, field: Field) {
+        self.onboarding.focus = field;
     }
 
     /// Validate, verify against Jira, and persist the entered credentials.

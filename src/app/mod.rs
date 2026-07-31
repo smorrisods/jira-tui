@@ -229,6 +229,19 @@ pub struct App {
 
     // Onboarding welcome + credential setup.
     pub onboarding: OnboardingState,
+    /// The credential-setup form's three field rows, recorded during render
+    /// for click-to-focus hit-testing (`App::onboarding_field_at`) — same
+    /// pattern as `new_issue_*_area` above, just synthesized from a captured
+    /// line index rather than a per-field layout `Rect`, since
+    /// `draw_welcome_setup` blits all three fields as one `Paragraph`. Only
+    /// meaningful while `screen == Screen::Welcome` and
+    /// `onboarding.welcome_phase == WelcomePhase::Setup` — both re-checked
+    /// by the hit-test, and also cleared back to `Rect::default()` whenever
+    /// `draw_welcome_intro` renders instead, so a stale `Rect` from a
+    /// previous visit can't misfire (mirrors `jax_mini_area`'s clearing).
+    pub onboarding_site_area: Cell<Rect>,
+    pub onboarding_email_area: Cell<Rect>,
+    pub onboarding_token_area: Cell<Rect>,
 
     // Transition picker + round-trip edit.
     pub picker_open: bool,
@@ -469,6 +482,9 @@ impl App {
             new_issue_type_area: Cell::new(Rect::default()),
             new_issue_summary_area: Cell::new(Rect::default()),
             onboarding: OnboardingState::default(),
+            onboarding_site_area: Cell::new(Rect::default()),
+            onboarding_email_area: Cell::new(Rect::default()),
+            onboarding_token_area: Cell::new(Rect::default()),
             picker_open: false,
             picker_index: 0,
             pending_edit: None,

@@ -50,7 +50,16 @@ pub(crate) fn draw_welcome(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(block, area);
 
     match app.onboarding.welcome_phase {
-        WelcomePhase::Intro => draw_welcome_intro(f, app, inner),
+        WelcomePhase::Intro => {
+            // The setup form isn't showing this frame — clear its recorded
+            // field areas so a stale `Rect` from a previous visit can't
+            // misfire in `App::onboarding_field_at` (mirrors the mini-Jax
+            // dock's own clear-when-not-shown in `ui::mod`).
+            app.onboarding_site_area.set(Rect::default());
+            app.onboarding_email_area.set(Rect::default());
+            app.onboarding_token_area.set(Rect::default());
+            draw_welcome_intro(f, app, inner);
+        }
         WelcomePhase::Setup => draw_welcome_setup(f, app, inner),
     }
 }
@@ -115,7 +124,7 @@ fn draw_welcome_intro(f: &mut Frame, app: &App, area: Rect) {
     lines.push(Line::from(""));
     lines.push(
         Line::from(Span::styled(
-            "Tip: press 'm' any time for mouse mode; hold Shift-drag for native copy.",
+            "Tip: press F9 any time for mouse mode; hold Shift-drag for native copy.",
             Style::default().fg(muted()).add_modifier(Modifier::ITALIC),
         ))
         .alignment(Alignment::Center),
@@ -177,6 +186,7 @@ fn draw_welcome_setup(f: &mut Frame, app: &App, area: Rect) {
         app.onboarding.focus == Field::Site,
         false,
     ));
+    let site_idx = lines.len() - 1;
     lines.push(Line::from(""));
     lines.push(field(
         "email",
@@ -184,6 +194,7 @@ fn draw_welcome_setup(f: &mut Frame, app: &App, area: Rect) {
         app.onboarding.focus == Field::Email,
         false,
     ));
+    let email_idx = lines.len() - 1;
     lines.push(Line::from(""));
     lines.push(field(
         "token",
@@ -191,6 +202,7 @@ fn draw_welcome_setup(f: &mut Frame, app: &App, area: Rect) {
         app.onboarding.focus == Field::Token,
         true,
     ));
+    let token_idx = lines.len() - 1;
     lines.push(Line::from(""));
 
     if !app.onboarding.setup_msg.is_empty() {
@@ -202,6 +214,22 @@ fn draw_welcome_setup(f: &mut Frame, app: &App, area: Rect) {
             .alignment(Alignment::Center),
         );
     }
+
+    // `lines` is blitted as one un-wrapped, un-scrolled `Paragraph` below,
+    // so each pushed `Line` maps 1:1 to a screen row at `area.y + idx` — no
+    // wrap/scroll offset to account for. If a line at `idx` would fall
+    // outside `area`'s visible rows (a short terminal), record no hit
+    // target rather than a `Rect` for a row that isn't actually rendered.
+    let row_area = |idx: usize| -> Rect {
+        if (idx as u16) < area.height {
+            Rect::new(area.x, area.y + idx as u16, area.width, 1)
+        } else {
+            Rect::default()
+        }
+    };
+    app.onboarding_site_area.set(row_area(site_idx));
+    app.onboarding_email_area.set(row_area(email_idx));
+    app.onboarding_token_area.set(row_area(token_idx));
 
     f.render_widget(Paragraph::new(Text::from(lines)), area);
 }

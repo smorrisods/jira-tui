@@ -166,7 +166,7 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
         desc: "about panel (\"Info\")",
     },
     KeyHint {
-        key: "m",
+        key: "F9",
         desc: "toggle mouse mode",
     },
     KeyHint {

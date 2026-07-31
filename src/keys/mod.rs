@@ -30,6 +30,34 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Global: `F9` toggles mouse mode from anywhere — every screen, every
+    // modal, mid-edit, mid-search, and both onboarding phases — with no
+    // per-screen carve-out needed, unlike the bare `m` this replaces. `m`
+    // used to only toggle mouse mode on the handful of screens whose key
+    // map fell through to the shared match at the bottom of this function
+    // (Home/List/Detail/About); every screen with its own key-handling
+    // block (Welcome, Search, Edit, FieldMapping, Board, Release, NewIssue)
+    // — plus every type-to-filter modal (palette, assignee picker) — had no
+    // binding for it at all, so the app's own onboarding tip ("press 'm'
+    // any time for mouse mode") was simply false everywhere else. A literal
+    // `m` can't be made global without breaking typing: several of those
+    // same screens use `m` as an ordinary character in free-text fields
+    // (New Issue's project/summary, Search's query, the in-TUI editor,
+    // field-mapping's filter, the palette/assignee-picker filters, and
+    // Welcome's Setup form) — a function key sidesteps that entirely, since
+    // no text field can ever produce one. `Ctrl-M` was considered and
+    // rejected: at the terminal level it's byte-identical to Enter/CR
+    // (0x0D), so binding it would make Enter unreliably double as the
+    // mouse toggle in many terminal/tmux configurations. `Alt-M` was also
+    // considered and rejected: stock macOS Terminal.app doesn't send the
+    // Meta/ESC-prefixed sequence for Option+letter by default (Option+M
+    // types "µ" instead) without a manual preference change, and this
+    // project ships macOS release artifacts.
+    if key.code == KeyCode::F(9) {
+        mouse::toggle_mouse(app);
+        return;
+    }
+
     // Recover from a stuck mouse drag: some terminals keep tagging pointer
     // *movement* with the last-pressed button's SGR code even after it's
     // actually released, instead of reporting a proper release — crossterm
@@ -376,7 +404,6 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             app.refresh_detail();
         }
         KeyCode::Char('r') => app.refresh(),
-        KeyCode::Char('m') => mouse::toggle_mouse(app),
         KeyCode::Char('b') if matches!(app.screen, Screen::Home | Screen::List) => app.open_board(),
         KeyCode::Char('/')
             if matches!(app.screen, Screen::Home | Screen::List | Screen::Detail) =>
@@ -1292,5 +1319,86 @@ mod tests {
         assert_eq!(app.editor.lines[0], "a mispeled word");
         // Esc should close the picker, not also cancel the whole edit.
         assert_eq!(app.screen, Screen::Edit);
+    }
+
+    /// `F9` (not the old bare `m`, which conflicts with typing on several
+    /// screens — see `handle_key`'s own doc comment above the check) must
+    /// toggle mouse mode identically from literally every screen and every
+    /// modal, since it can never collide with typed text. Table-driven so
+    /// a screen/modal added later without adding it here is an obvious gap.
+    #[test]
+    fn f9_toggles_mouse_mode_from_every_screen_and_modal() {
+        type Setup = fn(&mut App);
+        let cases: &[(&str, Setup)] = &[
+            ("Home", |app| app.screen = Screen::Home),
+            ("List", |app| app.screen = Screen::List),
+            ("Board", |app| app.open_board()),
+            ("Detail", |app| {
+                app.selected = 0;
+                app.open_detail();
+            }),
+            ("Welcome intro", |app| {
+                app.screen = Screen::Welcome;
+                app.onboarding.welcome_phase = app::WelcomePhase::Intro;
+            }),
+            ("Welcome setup", |app| {
+                app.screen = Screen::Welcome;
+                app.onboarding.welcome_phase = app::WelcomePhase::Setup;
+            }),
+            ("Search", |app| app.open_search()),
+            ("NewIssue", |app| app.open_new_issue()),
+            ("FieldMapping", |app| {
+                app.open_field_mapping();
+            }),
+            ("Release", |app| app.open_release_screen()),
+            ("show_help overlay", |app| app.show_help = true),
+            ("palette_open", |app| app.open_palette()),
+            ("assignee_picker_open", |app| {
+                app.selected = 0;
+                app.open_detail();
+                app.open_assignee_picker();
+            }),
+        ];
+
+        for (name, setup) in cases {
+            let mut app = demo_app();
+            setup(&mut app);
+            assert!(!app.mouse.enabled, "{name}: expected to start disabled");
+
+            handle_key(&mut app, KeyEvent::from(KeyCode::F(9)));
+            assert!(app.mouse.enabled, "{name}: F9 should enable mouse mode");
+
+            handle_key(&mut app, KeyEvent::from(KeyCode::F(9)));
+            assert!(!app.mouse.enabled, "{name}: F9 should toggle it back off");
+        }
+    }
+
+    /// `m` must keep working as an ordinary typed character everywhere it
+    /// used to (New Issue's summary field here) now that the global toggle
+    /// has moved to `F9` — this is the whole reason `F9` was chosen over a
+    /// literal `m` in the first place.
+    #[test]
+    fn m_still_types_a_literal_character_on_text_entry_screens() {
+        let mut app = demo_app();
+        app.open_new_issue();
+        app.new_issue.focus = app::NewIssueField::Summary;
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('m')));
+
+        assert_eq!(app.new_issue.summary, "m");
+        assert!(
+            !app.mouse.enabled,
+            "'m' must not be hijacked as a mouse-mode toggle while typing"
+        );
+    }
+
+    /// `m` is no longer bound to anything on the screens that used to
+    /// fall through to the shared match's old `Char('m')` case either —
+    /// pinning that the old binding was fully removed, not just shadowed.
+    #[test]
+    fn m_no_longer_toggles_mouse_mode_on_home() {
+        let mut app = demo_app();
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('m')));
+        assert!(!app.mouse.enabled, "'m' should no longer toggle mouse mode");
     }
 }

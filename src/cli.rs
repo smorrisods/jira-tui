@@ -16,10 +16,10 @@ use clap::Parser;
     about = "A developer-first, keyboard-driven Jira terminal UI.",
     after_help = "\
 MOUSE:
-    Press 'm' to toggle mouse mode (click to open, wheel to scroll, drag to
-    copy via OSC 52, middle-click to toggle quick view, right-click to go
-    back). Hold Shift while dragging to use your terminal's native selection
-    instead.
+    Press F9 any time to toggle mouse mode (click to open, wheel to scroll,
+    drag to copy via OSC 52, middle-click to toggle quick view, right-click to
+    go back). Hold Shift while dragging to use your terminal's native
+    selection instead.
 
 EDITING:
     In an issue, press 't' to change status and 'e' to edit the description in

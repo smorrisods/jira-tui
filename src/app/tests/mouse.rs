@@ -341,3 +341,75 @@ fn clicking_off_the_project_field_refetches_issue_types_for_demo_sessions() {
         crate::domain::demo_issue_types()
     );
 }
+
+#[test]
+fn clicking_an_onboarding_field_moves_focus() {
+    let mut app = demo_app();
+    app.screen = Screen::Welcome;
+    app.onboarding.welcome_phase = WelcomePhase::Setup;
+    app.onboarding_site_area.set(Rect::new(0, 10, 60, 1));
+    app.onboarding_email_area.set(Rect::new(0, 12, 60, 1));
+    app.onboarding_token_area.set(Rect::new(0, 14, 60, 1));
+
+    app.mouse_down(5, 12);
+    assert_eq!(app.onboarding.focus, Field::Email);
+
+    app.mouse_down(5, 14);
+    assert_eq!(app.onboarding.focus, Field::Token);
+
+    app.mouse_down(5, 10);
+    assert_eq!(app.onboarding.focus, Field::Site);
+}
+
+#[test]
+fn clicking_outside_any_onboarding_field_leaves_focus_alone() {
+    let mut app = demo_app();
+    app.screen = Screen::Welcome;
+    app.onboarding.welcome_phase = WelcomePhase::Setup;
+    app.onboarding_site_area.set(Rect::new(0, 10, 60, 1));
+    app.onboarding_email_area.set(Rect::new(0, 12, 60, 1));
+    app.onboarding_token_area.set(Rect::new(0, 14, 60, 1));
+    app.onboarding.focus = Field::Site;
+
+    app.mouse_down(5, 11);
+    assert_eq!(app.onboarding.focus, Field::Site);
+}
+
+/// The Welcome screen has two phases; the field areas are only meaningful
+/// during Setup. Even if a click lands on coordinates that happen to match
+/// a recorded (but stale-for-this-phase) `Rect`, `onboarding_field_at`'s
+/// phase gate must reject it.
+#[test]
+fn clicking_an_onboarding_field_during_the_intro_phase_is_ignored() {
+    let mut app = demo_app();
+    app.screen = Screen::Welcome;
+    app.onboarding.welcome_phase = WelcomePhase::Intro;
+    app.onboarding_site_area.set(Rect::new(0, 10, 60, 1));
+    app.onboarding.focus = Field::Site;
+
+    app.mouse_down(5, 10);
+    assert_eq!(app.onboarding.focus, Field::Site);
+}
+
+#[test]
+fn a_stale_onboarding_field_rect_does_not_misfire_on_another_screen() {
+    let mut app = demo_app();
+    app.screen = Screen::Welcome;
+    app.onboarding.welcome_phase = WelcomePhase::Setup;
+    app.onboarding_token_area.set(Rect::new(0, 5, 80, 1));
+    app.onboarding.focus = Field::Site;
+
+    // Same coordinates now belong to the list on Home, not the (stale)
+    // token field from an earlier visit to the welcome screen.
+    app.screen = Screen::Home;
+    app.list_area.set(Rect::new(0, 4, 80, 8));
+    app.list_start.set(0);
+    app.mouse_down(5, 5);
+
+    assert_eq!(
+        app.onboarding.focus,
+        Field::Site,
+        "a stale onboarding field rect must not affect focus once the screen has changed"
+    );
+    assert_eq!(app.selected, 0, "the click should hit the list instead");
+}
