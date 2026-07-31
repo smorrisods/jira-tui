@@ -37,6 +37,7 @@ mod keymap;
 mod list;
 mod list_columns;
 mod new_issue;
+mod new_issue_type_picker;
 mod palette;
 mod preview;
 mod project_picker;
@@ -63,6 +64,7 @@ use home::draw_home;
 use jax_companion::{draw_jax_companion, draw_jax_mini, JaxMode, MINI_DOCK_WIDTH};
 use list::draw_list;
 use new_issue::draw_new_issue;
+use new_issue_type_picker::draw_new_issue_type_picker;
 use palette::draw_palette;
 use preview::draw_preview;
 use project_picker::draw_project_picker;
@@ -281,6 +283,10 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     if app.version_picker_open {
         draw_version_picker(f, app, f.area());
+    }
+
+    if app.new_issue_type_picker_open {
+        draw_new_issue_type_picker(f, app, f.area());
     }
 
     if app.spell_suggest_open {

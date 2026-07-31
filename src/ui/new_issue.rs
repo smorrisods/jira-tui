@@ -117,19 +117,20 @@ fn draw_issue_type_field(f: &mut Frame, area: Rect, app: &App) {
             .get(app.new_issue.issue_type_index)
             .map(|t| t.name.as_str())
             .unwrap_or("—");
-        let mut spans = Vec::new();
-        if focused {
-            spans.push(Span::styled("◂ ", Style::default().fg(accent())));
-        }
-        spans.push(Span::styled(
+        let mut spans = vec![Span::styled(
             name.to_string(),
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
+        )];
+        // A dropdown affordance rather than the old left/right scroller's
+        // `◂ ▸` — Enter (or a click) while focused opens the full list
+        // (`new_issue_type_picker_open`) instead of stepping through one
+        // entry at a time.
+        spans.push(Span::styled(
+            "  ▾",
+            Style::default().fg(if focused { accent() } else { muted() }),
         ));
-        if focused {
-            spans.push(Span::styled(" ▸", Style::default().fg(accent())));
-        }
         Line::from(spans)
     };
     f.render_widget(Paragraph::new(line), inner);

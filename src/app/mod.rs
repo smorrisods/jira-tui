@@ -230,6 +230,12 @@ pub struct App {
     pub new_issue_project_area: Cell<Rect>,
     pub new_issue_type_area: Cell<Rect>,
     pub new_issue_summary_area: Cell<Rect>,
+    /// Whether the new-issue form's issue-type dropdown popup is open —
+    /// same shape as `version_picker_open`/`assignee_picker_open`: a
+    /// top-level flag rather than living on `NewIssueState`, so the modal
+    /// key-handling block in `keys::handle_key` can check it before ever
+    /// looking at which screen is active.
+    pub new_issue_type_picker_open: bool,
 
     // Onboarding welcome + credential setup.
     pub onboarding: OnboardingState,
@@ -496,6 +502,7 @@ impl App {
             new_issue_project_area: Cell::new(Rect::default()),
             new_issue_type_area: Cell::new(Rect::default()),
             new_issue_summary_area: Cell::new(Rect::default()),
+            new_issue_type_picker_open: false,
             onboarding: OnboardingState::default(),
             onboarding_site_area: Cell::new(Rect::default()),
             onboarding_email_area: Cell::new(Rect::default()),

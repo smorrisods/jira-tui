@@ -13,7 +13,8 @@ use crate::domain::{IssueDetail, IssueSummary, IssueType, Priority, Source, Tran
 use super::{async_ops, App, EditorState, Screen};
 
 /// Which field of the new-issue form currently has keyboard focus. Cycled
-/// with Tab/Shift+Tab; Left/Right (or Up/Down) only affects `IssueType`.
+/// with Tab/Shift+Tab; Enter on `IssueType` opens the issue-type dropdown
+/// (see `new_issue_type_picker_open`) instead of editing text.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum NewIssueField {
     #[default]
@@ -41,6 +42,11 @@ pub struct NewIssueState {
     pub available_types: Vec<IssueType>,
     pub types_loading: bool,
     pub issue_type_index: usize,
+    /// The highlighted row while `new_issue_type_picker_open` is true —
+    /// separate from `issue_type_index` (the actually-confirmed selection)
+    /// so Esc can back out of browsing without changing it, same as the
+    /// transition/version/assignee pickers' own cursor-vs-applied split.
+    pub type_picker_cursor: usize,
     pub summary: String,
     pub focus: NewIssueField,
 }
@@ -73,6 +79,7 @@ impl App {
             ..NewIssueState::default()
         };
         self.project_picker_open = false;
+        self.new_issue_type_picker_open = false;
         if matches!(self.source, Source::Live { .. }) {
             self.new_issue_types_generation += 1;
             let generation = self.new_issue_types_generation;
@@ -93,6 +100,7 @@ impl App {
     pub fn cancel_new_issue(&mut self) {
         self.new_issue = NewIssueState::default();
         self.project_picker_open = false;
+        self.new_issue_type_picker_open = false;
         self.screen = Screen::Home;
     }
 
@@ -185,17 +193,47 @@ impl App {
         async_ops::dispatch_project_issue_types(self.events_tx.clone(), generation, project);
     }
 
-    /// Left/Right (or Up/Down) while the IssueType field has focus — cycles
-    /// `available_types` with wraparound; a no-op if the catalog is empty
-    /// (nothing to cycle through).
-    pub fn new_issue_cycle_issue_type(&mut self, delta: i32) {
+    /// Enter on the IssueType field — opens the dropdown popup listing
+    /// every entry in `available_types` at once (replacing the old
+    /// left/right scroller), pre-selecting whatever's currently confirmed.
+    /// A no-op while types are still loading or the catalog is empty —
+    /// nothing to open a picker over.
+    pub fn open_new_issue_type_picker(&mut self) {
+        if self.new_issue.types_loading || self.new_issue.available_types.is_empty() {
+            return;
+        }
+        self.new_issue.type_picker_cursor = self.new_issue.issue_type_index;
+        self.new_issue_type_picker_open = true;
+    }
+
+    /// Esc — close the popup without changing `issue_type_index`.
+    pub fn close_new_issue_type_picker(&mut self) {
+        self.new_issue_type_picker_open = false;
+    }
+
+    /// Up/Down (or j/k) while the popup is open — moves the highlighted
+    /// row, clamped at either end (not wraparound), matching the
+    /// transition picker's `picker_move`.
+    pub fn new_issue_type_picker_move(&mut self, delta: isize) {
         let len = self.new_issue.available_types.len();
         if len == 0 {
             return;
         }
-        let current = self.new_issue.issue_type_index as i32;
-        let next = (current + delta).rem_euclid(len as i32);
-        self.new_issue.issue_type_index = next as usize;
+        let mut idx = self.new_issue.type_picker_cursor as isize + delta;
+        if idx < 0 {
+            idx = 0;
+        }
+        if idx >= len as isize {
+            idx = len as isize - 1;
+        }
+        self.new_issue.type_picker_cursor = idx as usize;
+    }
+
+    /// Enter while the popup is open — commits the highlighted row as the
+    /// confirmed selection and closes the popup.
+    pub fn confirm_new_issue_type_picker(&mut self) {
+        self.new_issue.issue_type_index = self.new_issue.type_picker_cursor;
+        self.new_issue_type_picker_open = false;
     }
 
     /// Enter on the form — validate and advance to the description-compose

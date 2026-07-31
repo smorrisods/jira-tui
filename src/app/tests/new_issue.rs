@@ -514,7 +514,21 @@ async fn a_stale_generation_issue_created_event_is_dropped() {
 }
 
 #[test]
-fn new_issue_cycle_issue_type_wraps_around_in_both_directions() {
+fn new_issue_type_picker_opens_with_the_current_selection_highlighted() {
+    let mut app = demo_app();
+    app.open_new_issue();
+    app.new_issue.issue_type_index = 1;
+
+    app.open_new_issue_type_picker();
+    assert!(app.new_issue_type_picker_open);
+    assert_eq!(
+        app.new_issue.type_picker_cursor, 1,
+        "the popup must start on the already-confirmed selection"
+    );
+}
+
+#[test]
+fn new_issue_type_picker_move_clamps_at_either_end() {
     let mut app = demo_app();
     app.open_new_issue();
     let len = app.new_issue.available_types.len();
@@ -522,18 +536,62 @@ fn new_issue_cycle_issue_type_wraps_around_in_both_directions() {
         len > 1,
         "the demo issue-type catalog must have more than one entry"
     );
+    app.open_new_issue_type_picker();
 
-    assert_eq!(app.new_issue.issue_type_index, 0);
-    app.new_issue_cycle_issue_type(-1);
+    app.new_issue_type_picker_move(-1);
     assert_eq!(
-        app.new_issue.issue_type_index,
-        len - 1,
-        "must wrap backwards from 0"
+        app.new_issue.type_picker_cursor, 0,
+        "must clamp at the top, not wrap"
     );
-    app.new_issue_cycle_issue_type(1);
+
+    for _ in 0..len + 2 {
+        app.new_issue_type_picker_move(1);
+    }
+    assert_eq!(
+        app.new_issue.type_picker_cursor,
+        len - 1,
+        "must clamp at the bottom, not wrap"
+    );
+}
+
+#[test]
+fn confirming_the_new_issue_type_picker_commits_the_cursor_and_closes_it() {
+    let mut app = demo_app();
+    app.open_new_issue();
+    app.open_new_issue_type_picker();
+    app.new_issue_type_picker_move(1);
+
+    app.confirm_new_issue_type_picker();
+    assert!(!app.new_issue_type_picker_open);
+    assert_eq!(app.new_issue.issue_type_index, 1);
+}
+
+#[test]
+fn cancelling_the_new_issue_type_picker_leaves_the_confirmed_selection_alone() {
+    let mut app = demo_app();
+    app.open_new_issue();
+    app.new_issue.issue_type_index = 0;
+    app.open_new_issue_type_picker();
+    app.new_issue_type_picker_move(1);
+
+    app.close_new_issue_type_picker();
+    assert!(!app.new_issue_type_picker_open);
     assert_eq!(
         app.new_issue.issue_type_index, 0,
-        "must wrap forwards past the end"
+        "esc must not apply whatever was highlighted while browsing"
+    );
+}
+
+#[test]
+fn opening_the_new_issue_type_picker_is_a_no_op_with_an_empty_catalog() {
+    let mut app = demo_app();
+    app.open_new_issue();
+    app.new_issue.available_types.clear();
+
+    app.open_new_issue_type_picker();
+    assert!(
+        !app.new_issue_type_picker_open,
+        "nothing to pick from — must not open an empty popup"
     );
 }
 
