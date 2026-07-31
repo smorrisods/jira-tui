@@ -275,7 +275,7 @@ impl App {
             },
             PaletteRow {
                 label: "toggle mouse mode".into(),
-                hint: "m",
+                hint: "F9",
                 group: PaletteGroup::App,
                 action: PaletteAction::ToggleMouse,
             },

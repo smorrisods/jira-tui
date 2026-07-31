@@ -124,7 +124,7 @@ fn draw_welcome_intro(f: &mut Frame, app: &App, area: Rect) {
     lines.push(Line::from(""));
     lines.push(
         Line::from(Span::styled(
-            "Tip: press 'm' any time for mouse mode; hold Shift-drag for native copy.",
+            "Tip: press F9 any time for mouse mode; hold Shift-drag for native copy.",
             Style::default().fg(muted()).add_modifier(Modifier::ITALIC),
         ))
         .alignment(Alignment::Center),
