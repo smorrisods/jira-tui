@@ -343,6 +343,78 @@ fn welcome_setup_shows_credential_fields() {
 }
 
 #[test]
+fn welcome_setup_records_each_fields_area() {
+    let mut app = demo_app();
+    app.screen = Screen::Welcome;
+    app.onboarding.welcome_phase = WelcomePhase::Setup;
+    let text = render_at(&app, 120, 40);
+
+    let site = app.onboarding_site_area.get();
+    let email = app.onboarding_email_area.get();
+    let token = app.onboarding_token_area.get();
+
+    for (name, area) in [("site", site), ("email", email), ("token", token)] {
+        assert_ne!(
+            area,
+            ratatui::layout::Rect::default(),
+            "the {name} field's area should be recorded during render"
+        );
+        assert_eq!(area.height, 1, "each onboarding field is a single row");
+    }
+
+    assert!(
+        site.y < email.y && email.y < token.y,
+        "the three fields should be recorded top-to-bottom in form order"
+    );
+
+    // Confirm the synthesized row genuinely lands on the rendered field,
+    // not merely that the three are in the right order.
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(
+        lines[site.y as usize].contains("site"),
+        "the recorded site row should contain the site field's own text"
+    );
+    assert!(
+        lines[email.y as usize].contains("email"),
+        "the recorded email row should contain the email field's own text"
+    );
+    assert!(
+        lines[token.y as usize].contains("token"),
+        "the recorded token row should contain the token field's own text"
+    );
+}
+
+#[test]
+fn welcome_intro_clears_the_setup_field_areas() {
+    let mut app = demo_app();
+    app.screen = Screen::Welcome;
+    app.onboarding.welcome_phase = WelcomePhase::Setup;
+    let _ = render_at(&app, 120, 40);
+    assert_ne!(
+        app.onboarding_site_area.get(),
+        ratatui::layout::Rect::default()
+    );
+
+    // Flipping to Intro and re-rendering must clear the stale Setup areas,
+    // so a leftover Rect from a previous visit can't misfire once we're
+    // back on the intro phase.
+    app.onboarding.welcome_phase = WelcomePhase::Intro;
+    let _ = render_at(&app, 120, 40);
+
+    for (name, area) in [
+        ("site", app.onboarding_site_area.get()),
+        ("email", app.onboarding_email_area.get()),
+        ("token", app.onboarding_token_area.get()),
+    ] {
+        assert_eq!(
+            area,
+            ratatui::layout::Rect::default(),
+            "the {name} field's area should be cleared while the intro phase renders"
+        );
+    }
+}
+
+#[test]
 fn transition_picker_lists_targets() {
     let mut app = demo_app();
     app.selected = 0;

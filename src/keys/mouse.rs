@@ -278,7 +278,8 @@ mod tests {
     /// flag to the guard without a matching case here is an obvious gap.
     #[test]
     fn mouse_input_is_swallowed_while_a_modal_is_open() {
-        let cases: &[(&str, fn(&mut App))] = &[
+        type ModalCase = (&'static str, fn(&mut App));
+        let cases: &[ModalCase] = &[
             ("show_help", |app| app.show_help = true),
             ("picker_open", |app| app.picker_open = true),
             ("view_picker_open", |app| app.view_picker_open = true),
