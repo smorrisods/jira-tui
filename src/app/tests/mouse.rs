@@ -288,6 +288,22 @@ fn clicking_a_new_issue_field_moves_focus() {
 }
 
 #[test]
+fn clicking_the_issue_type_field_opens_its_dropdown() {
+    let mut app = demo_app();
+    app.open_new_issue(); // populates available_types from the demo catalog
+    app.new_issue_project_area.set(Rect::new(0, 0, 40, 3));
+    app.new_issue_type_area.set(Rect::new(0, 3, 40, 3));
+    app.new_issue_summary_area.set(Rect::new(0, 6, 40, 3));
+
+    app.mouse_down(5, 3);
+    assert_eq!(app.new_issue.focus, NewIssueField::IssueType);
+    assert!(
+        app.new_issue_type_picker_open,
+        "a click on the issue-type field is the mouse equivalent of Enter"
+    );
+}
+
+#[test]
 fn clicking_outside_any_new_issue_field_leaves_focus_alone() {
     let mut app = demo_app();
     app.screen = Screen::NewIssue;
