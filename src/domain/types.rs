@@ -180,6 +180,17 @@ pub struct AssignableUser {
     pub display_name: String,
 }
 
+/// A Jira project the authenticated user can access — backs the new-issue
+/// compose form's project picker (`app::project_picker`), letting the user
+/// browse by name instead of having to already know the project `key` by
+/// heart. See `jira::live::list_projects`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Project {
+    pub id: String,
+    pub key: String,
+    pub name: String,
+}
+
 /// Where the data on screen came from, shown in the header's sync pill.
 /// `Live`/`Cache` are only constructed when the `live` feature is enabled.
 #[allow(dead_code)]

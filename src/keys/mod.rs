@@ -136,6 +136,22 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Modal: the new-issue form's project picker (opened by Enter on the
+    // Project field — see the `Screen::NewIssue` block below). Type-to-
+    // filter, same shape as the assignee picker above.
+    if app.project_picker_open {
+        match key.code {
+            KeyCode::Esc => app.close_project_picker(),
+            KeyCode::Enter => app.confirm_project_picker(),
+            KeyCode::Up => app.project_picker_move(-1),
+            KeyCode::Down => app.project_picker_move(1),
+            KeyCode::Backspace => app.project_picker_backspace(),
+            KeyCode::Char(c) => app.project_picker_input_char(c),
+            _ => {}
+        }
+        return;
+    }
+
     // Modal: the Fix/Affects Version picker. Arrow/j/k move the cursor,
     // space toggles the highlighted version, tab switches which field is
     // being edited — unlike the assignee/palette pickers, this isn't
@@ -355,13 +371,22 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
 
     // The new-issue compose form: project / issue-type / summary. Tab/
     // Shift+Tab cycle which field has focus (leaving Project may trigger a
-    // fresh issue-type fetch — see `App::new_issue_next_field`); Left/Right
-    // (or Up/Down) cycle the issue-type list while that field has focus, no
-    // filtering, mirroring the transition picker; typing/Backspace edit
-    // whichever text field is focused.
+    // fresh issue-type fetch — see `App::new_issue_next_field`); Enter on
+    // the Project field opens its search popup (`app::project_picker`)
+    // instead of submitting the form — the same tradeoff transitions/
+    // version pickers already make (a discrete catalog is worth browsing,
+    // and Tab still reaches the other fields without ever pressing Enter
+    // on this one); typing/backspace still work here too, so a project not
+    // in the fetched catalog (or a demo/cache session with no live catalog
+    // at all) can still be entered manually. Left/Right (or Up/Down) cycle
+    // the issue-type list while that field has focus, no filtering,
+    // mirroring the transition picker.
     if app.screen == Screen::NewIssue {
         match key.code {
             KeyCode::Esc => app.cancel_new_issue(),
+            KeyCode::Enter if app.new_issue.focus == app::NewIssueField::Project => {
+                app.open_project_picker()
+            }
             KeyCode::Enter => app.confirm_new_issue_form(),
             KeyCode::Tab => app.new_issue_next_field(),
             KeyCode::BackTab => app.new_issue_prev_field(),
@@ -948,6 +973,86 @@ mod tests {
     }
 
     #[test]
+    fn enter_on_the_project_field_opens_the_project_picker_instead_of_submitting() {
+        let mut app = demo_app();
+        app.open_new_issue();
+        app.new_issue.focus = app::NewIssueField::Project;
+        app.new_issue.summary = "Something to do".into();
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Enter));
+
+        assert!(
+            app.project_picker_open,
+            "Enter on Project must open the picker"
+        );
+        assert_eq!(
+            app.screen,
+            Screen::NewIssue,
+            "the form must not have been submitted"
+        );
+    }
+
+    #[test]
+    fn enter_on_another_new_issue_field_still_submits_the_form() {
+        let mut app = demo_app();
+        app.open_new_issue();
+        app.new_issue.project = "DS".into();
+        app.new_issue.summary = "Something to do".into();
+        app.new_issue.focus = app::NewIssueField::Summary;
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Enter));
+
+        assert!(
+            !app.project_picker_open,
+            "Enter away from the Project field must not open the picker"
+        );
+        assert_eq!(
+            app.screen,
+            Screen::Edit,
+            "Enter on Summary must still submit the form and advance to the editor"
+        );
+    }
+
+    #[test]
+    fn project_picker_modal_keys_filter_move_and_confirm() {
+        let mut app = demo_app();
+        app.open_new_issue();
+        app.open_project_picker();
+
+        for c in "eng".chars() {
+            handle_key(&mut app, KeyEvent::from(KeyCode::Char(c)));
+        }
+        assert_eq!(
+            app.project_picker.rows.len(),
+            1,
+            "typing while the picker is open should filter the rows"
+        );
+        assert_eq!(app.project_picker.rows[0].key, "ENG");
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Enter));
+        assert!(!app.project_picker_open);
+        assert_eq!(app.new_issue.project, "ENG");
+    }
+
+    #[test]
+    fn esc_closes_the_project_picker_without_changing_the_project_field() {
+        let mut app = demo_app();
+        app.open_new_issue();
+        app.new_issue.project = "OPS".into();
+        app.open_project_picker();
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
+
+        assert!(!app.project_picker_open);
+        assert_eq!(app.new_issue.project, "OPS");
+        assert_eq!(
+            app.screen,
+            Screen::NewIssue,
+            "Esc must close only the picker, not the whole form"
+        );
+    }
+
+    #[test]
     fn palette_copy_key_dispatch_copies_whichever_key_the_row_carries() {
         // `PaletteAction::CopyKey(key)` carries its own already-resolved
         // key (see `app::palette`'s doc comment on why — Board's selected
@@ -1357,6 +1462,10 @@ mod tests {
                 app.selected = 0;
                 app.open_detail();
                 app.open_assignee_picker();
+            }),
+            ("project_picker_open", |app| {
+                app.open_new_issue();
+                app.open_project_picker();
             }),
         ];
 

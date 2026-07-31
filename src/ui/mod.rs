@@ -39,6 +39,7 @@ mod list_columns;
 mod new_issue;
 mod palette;
 mod preview;
+mod project_picker;
 mod quick_view;
 pub(crate) mod quick_view_columns;
 mod release;
@@ -64,6 +65,7 @@ use list::draw_list;
 use new_issue::draw_new_issue;
 use palette::draw_palette;
 use preview::draw_preview;
+use project_picker::draw_project_picker;
 use quick_view::draw_quick_view;
 use release::draw_release;
 use search::draw_search;
@@ -271,6 +273,10 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     if app.assignee_picker_open {
         draw_assignee_picker(f, app, f.area());
+    }
+
+    if app.project_picker_open {
+        draw_project_picker(f, app, f.area());
     }
 
     if app.version_picker_open {

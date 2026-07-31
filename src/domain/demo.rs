@@ -6,7 +6,7 @@ use serde_json::json;
 
 use super::types::{
     AssignableUser, ChildIssue, Comment, IssueDetail, IssueLink, IssueSummary, IssueType, Priority,
-    Transition, Version,
+    Project, Transition, Version,
 };
 
 /// The implicit "you" in demo mode — offline `Source::Demo` carries no real
@@ -170,6 +170,31 @@ pub fn demo_assignable_users() -> Vec<AssignableUser> {
         AssignableUser {
             account_id: "demo-jane-reporter".into(),
             display_name: "jane.reporter".into(),
+        },
+    ]
+}
+
+/// Offline stand-in for `jira::live::list_projects` — a small fixed sample
+/// (the `DS` design-system project this demo dataset is flavoured after,
+/// plus a couple of plausible siblings) rather than a real per-instance
+/// project catalog, matching `demo_issue_types()`'s "no real per-project
+/// scheme to reflect" reasoning.
+pub fn demo_projects() -> Vec<Project> {
+    vec![
+        Project {
+            id: "10000".into(),
+            key: "DS".into(),
+            name: "Design System".into(),
+        },
+        Project {
+            id: "10001".into(),
+            key: "ENG".into(),
+            name: "Engineering".into(),
+        },
+        Project {
+            id: "10002".into(),
+            key: "OPS".into(),
+            name: "Operations".into(),
         },
     ]
 }

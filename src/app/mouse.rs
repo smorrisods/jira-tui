@@ -262,10 +262,16 @@ impl App {
             }
             // Click-to-focus: mirrors the list's own "selection moves on
             // press, action fires on release" split — focusing a field is
-            // the press-time half; there's no release-time action.
+            // the press-time half; there's no release-time action. A click
+            // on Project also opens its search popup immediately, the same
+            // Enter-on-focus shortcut just below does — the mouse-driven
+            // equivalent of `App::open_project_picker`.
             Screen::NewIssue => {
                 if let Some(field) = self.new_issue_field_at(x, y) {
                     self.new_issue_focus_field(field);
+                    if field == NewIssueField::Project {
+                        self.open_project_picker();
+                    }
                 }
             }
             // Same click-to-focus pattern as `NewIssue` above, for the

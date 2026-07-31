@@ -18,6 +18,7 @@ mod detail;
 mod fields;
 mod issue_types;
 mod mutations;
+mod projects;
 mod search;
 mod support;
 mod versions;
@@ -30,6 +31,7 @@ pub use mutations::{
     apply_transition, assign_issue, assignable_users, create_issue, fetch_transitions,
     search_users, update_description, update_summary,
 };
+pub use projects::list_projects;
 pub use search::{
     fetch_my_work, jql_for, jql_for_version, search_by_text, search_issues, MY_WORK_JQL,
     SEARCH_RESULTS_CAP,

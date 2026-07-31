@@ -5,7 +5,8 @@
 //! match arm — not a whole logic block — per new `AppEvent` variant.
 
 use crate::domain::{
-    AssignableUser, Comment, IssueDetail, IssueSummary, IssueType, Source, Version, ViewKind,
+    AssignableUser, Comment, IssueDetail, IssueSummary, IssueType, Project, Source, Version,
+    ViewKind,
 };
 
 use super::super::{App, ReleaseBulkKind, Screen};
@@ -133,6 +134,13 @@ pub enum AppEvent {
     /// carries no `generation`, since it only replaces `App::project_versions`
     /// wholesale and can't be made stale by an unrelated refresh/switch_view.
     ProjectVersionsLoaded { versions: Vec<Version> },
+    /// A one-shot background fetch of every project the authenticated user
+    /// can access resolved, dispatched once at startup for a genuine live
+    /// session — see `dispatch_accessible_projects`. Mirrors
+    /// `ProjectVersionsLoaded`/`TeammatesDiscovered`: carries no
+    /// `generation`, since it only replaces `App::accessible_projects`
+    /// wholesale and can't be made stale by an unrelated refresh/switch_view.
+    AccessibleProjectsLoaded { projects: Vec<Project> },
     /// A Fix/Affects Version update resolved (or failed) against live Jira —
     /// see `App::confirm_version_picker`/`dispatch_set_versions`. Each field
     /// is `None` when it wasn't part of this update (unchanged in the
@@ -277,6 +285,9 @@ impl App {
             } => self.apply_text_searched(generation, query, issues, error),
             AppEvent::ProjectVersionsLoaded { versions } => {
                 self.apply_project_versions_loaded(versions)
+            }
+            AppEvent::AccessibleProjectsLoaded { projects } => {
+                self.apply_accessible_projects_loaded(projects)
             }
             AppEvent::VersionsApplied {
                 generation,

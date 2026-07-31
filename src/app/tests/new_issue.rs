@@ -563,3 +563,145 @@ fn new_issue_input_and_backspace_only_affect_the_focused_text_field() {
     app.new_issue_backspace();
     assert_eq!(app.new_issue.summary, "");
 }
+
+#[test]
+fn open_project_picker_starts_with_an_empty_query_and_every_demo_project() {
+    let mut app = demo_app();
+    app.open_new_issue();
+    app.project_picker.query = "stale".into();
+
+    app.open_project_picker();
+    assert!(app.project_picker_open);
+    assert_eq!(app.project_picker.query, "", "must clear a leftover query");
+    assert_eq!(
+        app.project_picker.rows.len(),
+        crate::domain::demo_projects().len(),
+        "an empty query must show every demo project"
+    );
+    assert_eq!(app.project_picker.selected, 0);
+}
+
+#[test]
+fn project_picker_input_filters_by_key_or_name_case_insensitively() {
+    let mut app = demo_app();
+    app.open_new_issue();
+    app.open_project_picker();
+
+    app.project_picker_input_char('e');
+    app.project_picker_input_char('n');
+    app.project_picker_input_char('g');
+    assert_eq!(
+        app.project_picker.rows.len(),
+        1,
+        "\"eng\" must match only the Engineering/ENG project"
+    );
+    assert_eq!(app.project_picker.rows[0].key, "ENG");
+
+    app.project_picker_backspace();
+    app.project_picker_backspace();
+    app.project_picker_backspace();
+    assert_eq!(
+        app.project_picker.rows.len(),
+        crate::domain::demo_projects().len(),
+        "clearing the query back to empty must restore every project"
+    );
+}
+
+#[test]
+fn project_picker_move_clamps_at_the_ends() {
+    let mut app = demo_app();
+    app.open_new_issue();
+    app.open_project_picker();
+    let len = app.project_picker.rows.len();
+    assert!(
+        len > 1,
+        "the demo project catalog must have more than one entry"
+    );
+
+    app.project_picker_move(-1);
+    assert_eq!(
+        app.project_picker.selected, 0,
+        "must clamp at the top, not wrap"
+    );
+
+    app.project_picker_move(1);
+    assert_eq!(app.project_picker.selected, 1);
+
+    for _ in 0..len {
+        app.project_picker_move(1);
+    }
+    assert_eq!(
+        app.project_picker.selected,
+        len - 1,
+        "must clamp at the bottom, not wrap"
+    );
+}
+
+#[test]
+fn confirm_project_picker_sets_the_project_field_and_closes_the_popup() {
+    let mut app = demo_app();
+    app.open_new_issue();
+    app.open_project_picker();
+    app.project_picker_move(1); // ENG is second alphabetically after DS
+
+    app.confirm_project_picker();
+    assert!(!app.project_picker_open);
+    assert_eq!(app.new_issue.project, "ENG");
+}
+
+#[test]
+fn confirm_project_picker_with_no_matches_only_closes_the_popup() {
+    let mut app = demo_app();
+    app.open_new_issue();
+    app.new_issue.project = "DS".into();
+    app.open_project_picker();
+    app.project_picker_input_char('z');
+    app.project_picker_input_char('z');
+    app.project_picker_input_char('z');
+    assert!(
+        app.project_picker.rows.is_empty(),
+        "\"zzz\" must not match any demo project"
+    );
+
+    app.confirm_project_picker();
+    assert!(!app.project_picker_open);
+    assert_eq!(
+        app.new_issue.project, "DS",
+        "an empty match must not clobber the existing Project value"
+    );
+}
+
+#[test]
+fn close_project_picker_leaves_the_project_field_untouched() {
+    let mut app = demo_app();
+    app.open_new_issue();
+    app.new_issue.project = "OPS".into();
+    app.open_project_picker();
+    app.project_picker_input_char('e');
+
+    app.close_project_picker();
+    assert!(!app.project_picker_open);
+    assert_eq!(app.new_issue.project, "OPS");
+}
+
+#[test]
+fn open_new_issue_resets_a_stale_project_picker_open_flag() {
+    let mut app = demo_app();
+    app.project_picker_open = true;
+
+    app.open_new_issue();
+    assert!(
+        !app.project_picker_open,
+        "opening a fresh form must not inherit a stuck-open picker from a prior session"
+    );
+}
+
+#[test]
+fn cancel_new_issue_resets_the_project_picker_open_flag() {
+    let mut app = demo_app();
+    app.open_new_issue();
+    app.open_project_picker();
+
+    app.cancel_new_issue();
+    assert!(!app.project_picker_open);
+}
