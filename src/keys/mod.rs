@@ -45,8 +45,14 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
     // (New Issue's project/summary, Search's query, the in-TUI editor,
     // field-mapping's filter, the palette/assignee-picker filters, and
     // Welcome's Setup form) — a function key sidesteps that entirely, since
-    // no text field can ever produce one. See AGENTS.md for why `F9` over
-    // `Ctrl-M`/`Alt-M`.
+    // no text field can ever produce one. `Ctrl-M` was considered and
+    // rejected: at the terminal level it's byte-identical to Enter/CR
+    // (0x0D), so binding it would make Enter unreliably double as the
+    // mouse toggle in many terminal/tmux configurations. `Alt-M` was also
+    // considered and rejected: stock macOS Terminal.app doesn't send the
+    // Meta/ESC-prefixed sequence for Option+letter by default (Option+M
+    // types "µ" instead) without a manual preference change, and this
+    // project ships macOS release artifacts.
     if key.code == KeyCode::F(9) {
         mouse::toggle_mouse(app);
         return;
