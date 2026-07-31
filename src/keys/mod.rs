@@ -1293,4 +1293,45 @@ mod tests {
         // Esc should close the picker, not also cancel the whole edit.
         assert_eq!(app.screen, Screen::Edit);
     }
+
+    /// The Welcome intro screen's own tip line reads "Tip: press 'm' any
+    /// time for mouse mode" (`ui::welcome::draw_welcome_intro`) — but
+    /// Welcome has an entirely separate key map (`welcome::handle_welcome_key`)
+    /// from `handle_key`'s main dispatch, so that promise needs its own
+    /// binding rather than falling through to the shared `m` case below.
+    #[test]
+    fn m_toggles_mouse_mode_on_the_welcome_intro_screen() {
+        let mut app = demo_app();
+        app.screen = Screen::Welcome;
+        app.onboarding.welcome_phase = app::WelcomePhase::Intro;
+        assert!(!app.mouse.enabled);
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('m')));
+        assert!(
+            app.mouse.enabled,
+            "'m' should enable mouse mode from the intro screen"
+        );
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('m')));
+        assert!(!app.mouse.enabled, "'m' should toggle mouse mode back off");
+    }
+
+    /// Unlike the intro screen, the Setup form's `KeyCode::Char(c)` arm is
+    /// genuine text entry — 'm' must keep typing into the focused field
+    /// there, not get hijacked as a mouse-mode toggle.
+    #[test]
+    fn m_types_into_the_focused_field_on_the_welcome_setup_screen() {
+        let mut app = demo_app();
+        app.screen = Screen::Welcome;
+        app.onboarding.welcome_phase = app::WelcomePhase::Setup;
+        app.onboarding.focus = app::Field::Site;
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('m')));
+
+        assert_eq!(app.onboarding.field_site, "m");
+        assert!(
+            !app.mouse.enabled,
+            "'m' must not be hijacked as a mouse-mode toggle while typing"
+        );
+    }
 }
