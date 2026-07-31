@@ -78,6 +78,7 @@ impl App {
             project,
             ..NewIssueState::default()
         };
+        self.project_picker_open = false;
         self.new_issue_type_picker_open = false;
         if matches!(self.source, Source::Live { .. }) {
             self.new_issue_types_generation += 1;
@@ -98,6 +99,7 @@ impl App {
     /// the form's state left intact.
     pub fn cancel_new_issue(&mut self) {
         self.new_issue = NewIssueState::default();
+        self.project_picker_open = false;
         self.new_issue_type_picker_open = false;
         self.screen = Screen::Home;
     }
@@ -163,7 +165,10 @@ impl App {
     /// right after editing the project (without ever tabbing away) can't
     /// slip a stale-project catalog past validation. A no-op once already in
     /// sync — cheap to call unconditionally.
-    fn refresh_new_issue_types_if_project_changed(&mut self) {
+    /// `pub(crate)` (not private) so `project_picker.rs`'s
+    /// `confirm_project_picker` can trigger the same resync a manual
+    /// project-field edit would, without duplicating this logic.
+    pub(crate) fn refresh_new_issue_types_if_project_changed(&mut self) {
         let project = self.new_issue.project.trim().to_string();
         if project == self.new_issue.project_for_types {
             return;

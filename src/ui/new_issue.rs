@@ -27,13 +27,7 @@ pub(crate) fn draw_new_issue(f: &mut Frame, app: &App, area: Rect) {
     app.new_issue_project_area.set(rows[0]);
     app.new_issue_summary_area.set(rows[2]);
 
-    draw_text_field(
-        f,
-        rows[0],
-        "  project  ",
-        &app.new_issue.project,
-        app.new_issue.focus == NewIssueField::Project,
-    );
+    draw_project_field(f, rows[0], app);
     draw_issue_type_field(f, rows[1], app);
     draw_text_field(
         f,
@@ -66,6 +60,35 @@ fn draw_text_field(f: &mut Frame, area: Rect, title: &str, value: &str, focused:
     if focused {
         spans.push(Span::styled("▏", Style::default().fg(accent())));
     }
+    f.render_widget(Paragraph::new(Line::from(spans)), inner);
+}
+
+/// The Project field: still free text (typing/backspace keep working, so a
+/// project outside the fetched catalog — or any project at all in demo/
+/// cache mode, which has no live catalog to browse — can still be entered
+/// manually), but Enter (or a click) while focused opens a search popup
+/// over every accessible project instead of submitting the form — see
+/// `App::open_project_picker`. The `▾` affordance hints at that without
+/// otherwise changing how the field looks from `draw_text_field`.
+fn draw_project_field(f: &mut Frame, area: Rect, app: &App) {
+    app.new_issue_project_area.set(area);
+    let focused = app.new_issue.focus == NewIssueField::Project;
+    let colour = if focused { accent() } else { muted() };
+    let block = card_bordered("  project  ", accent2(), colour);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let mut spans = vec![Span::styled(
+        app.new_issue.project.clone(),
+        Style::default().fg(Color::White),
+    )];
+    if focused {
+        spans.push(Span::styled("▏", Style::default().fg(accent())));
+    }
+    spans.push(Span::styled(
+        "  ▾",
+        Style::default().fg(if focused { accent() } else { muted() }),
+    ));
     f.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 

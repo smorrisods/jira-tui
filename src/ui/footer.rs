@@ -238,7 +238,7 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
         Screen::NewIssue => single(vec![
             hint("tab", "next field"),
             hint("type", "project/summary"),
-            hint("⏎", "continue / pick issue type"),
+            hint("⏎", "continue / pick project or issue type"),
             hint("esc", "cancel"),
         ]),
         Screen::Board => vec![

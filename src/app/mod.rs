@@ -14,7 +14,9 @@ use std::collections::HashMap;
 use ratatui::layout::Rect;
 
 use crate::config::{self, Settings};
-use crate::domain::{AssignableUser, IssueDetail, IssueSummary, Source, Version, ViewKind};
+use crate::domain::{
+    AssignableUser, IssueDetail, IssueSummary, Project, Source, Version, ViewKind,
+};
 use crate::git::GitContext;
 
 mod assign;
@@ -31,6 +33,7 @@ mod mouse;
 mod new_issue;
 mod onboarding;
 mod palette;
+mod project_picker;
 mod query;
 mod quick_view;
 mod release;
@@ -56,6 +59,7 @@ pub use new_issue::{NewIssueField, NewIssueState};
 pub use onboarding::{Field, OnboardingState, WelcomePhase};
 pub use palette::{PaletteAction, PaletteState};
 pub(crate) use palette::{PaletteGroup, PaletteRow};
+pub use project_picker::ProjectPickerState;
 pub use release::{ReleaseBulkKind, ReleaseListMode, ReleaseState};
 pub use search::{SearchPurpose, SearchRow, SearchState};
 pub use sort_filter::SortKey;
@@ -375,6 +379,17 @@ pub struct App {
     /// `domain::demo_assignable_users()` instead — see
     /// `App::assignable_users_source`).
     pub(crate) assignable_users: Vec<AssignableUser>,
+    /// Every project the authenticated user can access, as fetched by
+    /// `async_ops::dispatch_accessible_projects` for a live session (empty
+    /// for demo/cache sessions, which fall back to
+    /// `domain::demo_projects()` instead — see
+    /// `App::accessible_projects_source`). Backs the new-issue compose
+    /// form's project picker (`app::project_picker`).
+    pub(crate) accessible_projects: Vec<Project>,
+    /// Whether the new-issue form's project dropdown popup is open — same
+    /// shape as `new_issue_type_picker_open`.
+    pub project_picker_open: bool,
+    pub project_picker: ProjectPickerState,
     /// Whether a description update or comment post is currently in
     /// flight. `begin_tui_edit`/`begin_external_edit`/`begin_comment`
     /// refuse to start a new edit session while this is set, for the same
@@ -531,6 +546,9 @@ impl App {
             palette_open: false,
             palette: PaletteState::default(),
             assignable_users: Vec::new(),
+            accessible_projects: Vec::new(),
+            project_picker_open: false,
+            project_picker: ProjectPickerState::default(),
             edit_pending: false,
             edit_generation: 0,
             field_mapping_pending: false,
@@ -564,6 +582,7 @@ impl App {
         if matches!(app.source, Source::Live { .. }) {
             async_ops::dispatch_teammate_discovery(app.events_tx.clone());
             async_ops::dispatch_project_versions(app.events_tx.clone());
+            async_ops::dispatch_accessible_projects(app.events_tx.clone());
         }
 
         app

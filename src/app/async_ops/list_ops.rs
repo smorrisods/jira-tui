@@ -4,7 +4,7 @@
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::domain::{
-    AssignableUser, IssueDetail, IssueSummary, IssueType, Source, Version, ViewKind,
+    AssignableUser, IssueDetail, IssueSummary, IssueType, Project, Source, Version, ViewKind,
 };
 
 use super::super::loader::load_issues_for;
@@ -128,6 +128,37 @@ fn project_versions_blocking() -> Vec<Version> {
         if let Some(cfg) = crate::jira::Config::load() {
             if let Ok(versions) = crate::jira::list_versions(&cfg, &cfg.project) {
                 return versions;
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// Spawn a one-shot background fetch of every project the authenticated
+/// user can access, sending the result back as
+/// `AppEvent::AccessibleProjectsLoaded`. Dispatched once from `App::new`
+/// for a genuine live session, mirroring `dispatch_project_versions` — so
+/// the new-issue form's project picker (`app::project_picker`) has data the
+/// moment it's opened, without a dedicated fetch-on-open round-trip.
+pub(crate) fn dispatch_accessible_projects(tx: UnboundedSender<AppEvent>) {
+    tokio::spawn(async move {
+        let projects = tokio::task::spawn_blocking(accessible_projects_blocking)
+            .await
+            .unwrap_or_default();
+        let _ = tx.send(AppEvent::AccessibleProjectsLoaded { projects });
+    });
+}
+
+/// Mirrors `project_versions_blocking`'s "no credentials/failure means an
+/// empty list" shape — the project picker falls back to nothing selectable
+/// rather than anything misleading for a broken live session.
+#[allow(unused_variables)]
+fn accessible_projects_blocking() -> Vec<Project> {
+    #[cfg(feature = "live")]
+    {
+        if let Some(cfg) = crate::jira::Config::load() {
+            if let Ok(projects) = crate::jira::list_projects(&cfg) {
+                return projects;
             }
         }
     }
@@ -420,6 +451,18 @@ impl App {
         self.project_versions = versions;
         if self.screen == Screen::Release && self.release.drilled.is_none() {
             self.rebuild_release_versions();
+        }
+    }
+
+    /// Applies `AppEvent::AccessibleProjectsLoaded` — see
+    /// `dispatch_accessible_projects` above. Also rebuilds
+    /// `project_picker.rows` if the popup happens to already be open (it
+    /// starts empty otherwise, since this fetch races the render loop and
+    /// there's no other event that would refresh it later).
+    pub(super) fn apply_accessible_projects_loaded(&mut self, projects: Vec<Project>) {
+        self.accessible_projects = projects;
+        if self.project_picker_open {
+            self.recompute_project_rows();
         }
     }
 

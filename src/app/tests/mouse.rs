@@ -270,6 +270,24 @@ fn link_at_ignores_the_wide_quick_views_meta_column() {
 }
 
 #[test]
+fn clicking_the_project_field_opens_the_project_picker() {
+    let mut app = demo_app();
+    app.screen = Screen::NewIssue;
+    app.new_issue_project_area.set(Rect::new(0, 0, 40, 3));
+    app.new_issue_type_area.set(Rect::new(0, 3, 40, 3));
+    app.new_issue_summary_area.set(Rect::new(0, 6, 40, 3));
+    assert!(!app.project_picker_open);
+
+    app.mouse_down(5, 1);
+
+    assert_eq!(app.new_issue.focus, NewIssueField::Project);
+    assert!(
+        app.project_picker_open,
+        "clicking the Project field must open its picker, not just focus it"
+    );
+}
+
+#[test]
 fn clicking_a_new_issue_field_moves_focus() {
     let mut app = demo_app();
     app.screen = Screen::NewIssue;
