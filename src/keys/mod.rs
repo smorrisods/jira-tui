@@ -153,6 +153,22 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Modal: the new-issue form's issue-type dropdown (opened by Enter on
+    // the IssueType field — see the `Screen::NewIssue` block below). No
+    // filtering, mirroring the transition picker.
+    if app.new_issue_type_picker_open {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => app.new_issue_type_picker_move(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.new_issue_type_picker_move(1),
+            KeyCode::Enter => app.confirm_new_issue_type_picker(),
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => {
+                app.close_new_issue_type_picker()
+            }
+            _ => {}
+        }
+        return;
+    }
+
     // Modal: the spelling-suggestion picker (`F2`, opened from `Screen::Edit`
     // only — see the `KeyCode::F(2)` arm in that screen's own block below).
     if app.spell_suggest_open {
@@ -355,24 +371,19 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
 
     // The new-issue compose form: project / issue-type / summary. Tab/
     // Shift+Tab cycle which field has focus (leaving Project may trigger a
-    // fresh issue-type fetch — see `App::new_issue_next_field`); Left/Right
-    // (or Up/Down) cycle the issue-type list while that field has focus, no
-    // filtering, mirroring the transition picker; typing/Backspace edit
-    // whichever text field is focused.
+    // fresh issue-type fetch — see `App::new_issue_next_field`); Enter on
+    // the IssueType field opens its dropdown popup (handled by the
+    // `new_issue_type_picker_open` modal block above) instead of submitting
+    // the form; typing/Backspace edit whichever text field is focused.
     if app.screen == Screen::NewIssue {
         match key.code {
             KeyCode::Esc => app.cancel_new_issue(),
+            KeyCode::Enter if app.new_issue.focus == app::NewIssueField::IssueType => {
+                app.open_new_issue_type_picker()
+            }
             KeyCode::Enter => app.confirm_new_issue_form(),
             KeyCode::Tab => app.new_issue_next_field(),
             KeyCode::BackTab => app.new_issue_prev_field(),
-            KeyCode::Left | KeyCode::Up if app.new_issue.focus == app::NewIssueField::IssueType => {
-                app.new_issue_cycle_issue_type(-1)
-            }
-            KeyCode::Right | KeyCode::Down
-                if app.new_issue.focus == app::NewIssueField::IssueType =>
-            {
-                app.new_issue_cycle_issue_type(1)
-            }
             KeyCode::Backspace => app.new_issue_backspace(),
             KeyCode::Char(c) => app.new_issue_input_char(c),
             _ => {}
@@ -944,6 +955,57 @@ mod tests {
             !app.palette_open,
             "ctrl-k must not open the palette while composing a new issue, which has no \
              restore path if the screen changes out from under it"
+        );
+    }
+
+    #[test]
+    fn enter_on_the_issue_type_field_opens_the_dropdown_instead_of_submitting() {
+        let mut app = demo_app();
+        app.open_new_issue();
+        app.new_issue.project = "DS".into();
+        app.new_issue.summary = "Something to do".into();
+        app.new_issue.focus = app::NewIssueField::IssueType;
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Enter));
+        assert!(app.new_issue_type_picker_open);
+        assert_eq!(
+            app.screen,
+            Screen::NewIssue,
+            "Enter on IssueType must open the popup, not advance the form"
+        );
+    }
+
+    #[test]
+    fn the_issue_type_picker_captures_navigation_while_open() {
+        let mut app = demo_app();
+        app.open_new_issue();
+        app.new_issue.focus = app::NewIssueField::IssueType;
+        handle_key(&mut app, KeyEvent::from(KeyCode::Enter));
+        assert!(app.new_issue_type_picker_open);
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Down));
+        assert_eq!(app.new_issue.type_picker_cursor, 1);
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Enter));
+        assert!(!app.new_issue_type_picker_open);
+        assert_eq!(app.new_issue.issue_type_index, 1);
+    }
+
+    #[test]
+    fn esc_closes_the_issue_type_picker_without_changing_the_selection() {
+        let mut app = demo_app();
+        app.open_new_issue();
+        app.new_issue.focus = app::NewIssueField::IssueType;
+        handle_key(&mut app, KeyEvent::from(KeyCode::Enter));
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Down));
+        handle_key(&mut app, KeyEvent::from(KeyCode::Esc));
+        assert!(!app.new_issue_type_picker_open);
+        assert_eq!(app.new_issue.issue_type_index, 0);
+        assert_eq!(
+            app.screen,
+            Screen::NewIssue,
+            "esc must only close the popup, not the whole form"
         );
     }
 
