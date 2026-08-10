@@ -181,13 +181,18 @@ pub(crate) fn issue_row(
         selected,
     );
 
+    // Reserves the same 3-column width (a space plus the wide,
+    // emoji-presentation "⛔") whether or not this row is blocked — an empty
+    // `Span::raw("")` here would shrink the row by exactly the columns a
+    // blocked row's flag takes up, throwing every column after it (assignee,
+    // updated) out of alignment with rows that aren't blocked.
     let block_flag = if issue.blocked {
         Span::styled(
             " ⛔",
             selected_style(Style::default().fg(danger()), selected),
         )
     } else {
-        Span::raw("")
+        Span::raw("   ")
     };
 
     let secondary_style = selected_style(
@@ -230,8 +235,14 @@ pub(crate) fn issue_row(
         " ",
         selected_style(Style::default(), selected),
     ));
+    // `truncate` only ever shortens — a summary under `SUMMARY_WIDTH` needs
+    // padding of its own, or the assignee/updated columns behind it drift
+    // left by however short this row's summary happens to be.
     spans.push(Span::styled(
-        truncate(&issue.summary, SUMMARY_WIDTH),
+        format!(
+            "{:<SUMMARY_WIDTH$}",
+            truncate(&issue.summary, SUMMARY_WIDTH)
+        ),
         summary_style,
     ));
     spans.push(block_flag);
