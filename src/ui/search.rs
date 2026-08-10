@@ -98,6 +98,12 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
     let columns = column_set_for_width(inner.width);
     let guide = flat_guide();
     let mut lines: Vec<Line> = Vec::new();
+    // Line index the selected row starts at — a row can span more than one
+    // line (`SearchRow::Live`'s "found via live search" annotation, or a
+    // narrow-terminal two-line `issue_row`), so this has to be tracked
+    // alongside `lines` rather than derived from `app.search.selected`
+    // after the fact.
+    let mut selected_line = 0usize;
     for (i, row) in app.search.rows.iter().enumerate() {
         let selected = i == app.search.selected;
         let cursor = if selected { "▌" } else { " " };
@@ -110,6 +116,9 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
             selected,
         );
         let row_start = lines.len();
+        if selected {
+            selected_line = row_start;
+        }
         match row {
             SearchRow::Goto(key) => {
                 lines.push(Line::from(vec![
@@ -171,5 +180,18 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
             }
         }
     }
-    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+    // Keep the selected row in view — mirrors `ui::list`'s scroll window,
+    // but by line offset (not row index) since a row here can span more
+    // than one line. Centred around the selection rather than clamped to
+    // "just barely visible" so paging past it doesn't leave it pinned to
+    // an edge.
+    let height = inner.height as usize;
+    let max_scroll = lines.len().saturating_sub(height);
+    let scroll = selected_line
+        .saturating_sub(height.saturating_sub(2).max(1) / 2)
+        .min(max_scroll);
+    f.render_widget(
+        Paragraph::new(Text::from(lines)).scroll((scroll as u16, 0)),
+        inner,
+    );
 }

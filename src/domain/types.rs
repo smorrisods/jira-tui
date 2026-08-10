@@ -16,13 +16,18 @@ pub enum Priority {
 }
 
 impl Priority {
+    /// All five glyphs render as a single terminal column — deliberately
+    /// avoiding emoji-presentation codepoints (e.g. the previous High/Low
+    /// glyphs, 🔺/🔻) whose 2-column width dragged every later column in
+    /// `ui::list`'s fixed-width row out of line with rows using a
+    /// text-presentation glyph like Medium's `▪`.
     pub fn glyph(&self) -> &'static str {
         match self {
-            Priority::Highest => "⏫",
-            Priority::High => "🔺",
+            Priority::Highest => "⬆",
+            Priority::High => "▲",
             Priority::Medium => "▪",
-            Priority::Low => "🔻",
-            Priority::Lowest => "⏬",
+            Priority::Low => "▼",
+            Priority::Lowest => "⬇",
         }
     }
     pub fn label(&self) -> &'static str {
