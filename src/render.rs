@@ -744,8 +744,9 @@ pub fn highlight_target(lines: &mut [Line<'static>], target: &LinkTarget) {
 /// preserving each character's original span style. The building block
 /// `wrap_with_bar` uses to turn one logical (pre-wrap) `Line` into several
 /// physical rows that each still carry their own copy of a persistent
-/// left-margin bar.
-fn slice_line(line: &Line<'static>, range: std::ops::Range<usize>) -> Line<'static> {
+/// left-margin bar; `adf::render_table` uses it the same way to wrap a
+/// table cell's content into per-column sub-rows.
+pub(crate) fn slice_line(line: &Line<'static>, range: std::ops::Range<usize>) -> Line<'static> {
     let mut chars: Vec<char> = Vec::new();
     let mut owner: Vec<usize> = Vec::new();
     for (si, span) in line.spans.iter().enumerate() {
