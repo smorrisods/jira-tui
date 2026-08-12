@@ -19,6 +19,21 @@ const HEADING: Color = Color::Cyan;
 const CODE_FG: Color = Color::LightGreen;
 const MUTED: Color = Color::DarkGray;
 
+/// A table column's natural width is capped here so one huge cell (a long
+/// URL, a paragraph dumped into a single cell) can't blow out every other
+/// column — content past this just wraps across more sub-rows instead, the
+/// same way an overlong word already hard-wraps in
+/// `render::wrapped_row_ranges`.
+const TABLE_MAX_COL_WIDTH: usize = 28;
+
+/// A table column is never shrunk narrower than this even when the pane is
+/// too small to fit every column's natural width — below this, wrapped
+/// cell text turns into an unreadable one-or-two-char-per-row ladder. If
+/// the pane itself is narrower than `n_cols * TABLE_MIN_COL_WIDTH`, the
+/// table simply renders wider than the pane; there is no layout that
+/// avoids that.
+const TABLE_MIN_COL_WIDTH: usize = 6;
+
 /// Render an ADF document into styled lines. `width` is the column width
 /// the caller is about to hand these lines to a `Paragraph::wrap(Wrap {
 /// trim: false })` at — needed so blockquote/code-block content can be
@@ -151,7 +166,7 @@ fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize, width:
                 out.extend(crate::render::wrap_with_bar(&line, width, "┃ ", MUTED));
             }
         }
-        "table" => render_table(node, out),
+        "table" => render_table(node, out, width),
         _ => {
             // generic container: descend if possible
             if let Some(content) = node.get("content").and_then(|c| c.as_array()) {
@@ -198,30 +213,175 @@ fn render_list_item(
     }
 }
 
-fn render_table(node: &Value, out: &mut Vec<Line<'static>>) {
+/// Largest-remainder (Hamilton) apportionment: distribute `available`
+/// columns across `natural.len()` columns proportionally to `natural`,
+/// clamped so no column ends up narrower than `min_col`. If the natural
+/// widths already fit in `available`, they're used as-is — a table never
+/// stretches to fill the pane, the same way a blockquote/code block
+/// doesn't either. If `available` is too small to give every column even
+/// `min_col`, every column is set to `min_col` regardless (the table then
+/// renders wider than the pane — a degenerate but non-panicking outcome).
+fn table_col_widths(natural: &[usize], available: usize, min_col: usize) -> Vec<usize> {
+    let n = natural.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let total: usize = natural.iter().sum();
+    if total == 0 || total <= available {
+        return natural.to_vec();
+    }
+    let mut widths = vec![0usize; n];
+    let mut remainders: Vec<(usize, usize)> = Vec::with_capacity(n);
+    let mut assigned = 0usize;
+    for (i, &w) in natural.iter().enumerate() {
+        let scaled = w * available;
+        widths[i] = scaled / total;
+        remainders.push((i, scaled % total));
+        assigned += widths[i];
+    }
+    let leftover = available.saturating_sub(assigned);
+    remainders.sort_by_key(|&(_, rem)| std::cmp::Reverse(rem));
+    for &(i, _) in remainders.iter().take(leftover) {
+        widths[i] += 1;
+    }
+    for w in widths.iter_mut() {
+        *w = (*w).max(min_col);
+    }
+    widths
+}
+
+/// Convert one table cell's content into styled spans. A cell whose
+/// content is a single `paragraph` (the overwhelming common case for a
+/// real-world table) keeps its inline marks via `inline_spans`. Anything
+/// more structurally complex (multiple blocks, a list, a nested code
+/// block) falls back to `collect_text`'s flat-string behaviour — a
+/// superset of the old fidelity, never a regression. Never panics: an
+/// absent/malformed `content` array yields an empty cell.
+fn cell_content_spans(cell: &Value) -> Vec<Span<'static>> {
+    let content = match cell.get("content").and_then(|c| c.as_array()) {
+        Some(c) => c,
+        None => return Vec::new(),
+    };
+    if content.len() == 1 && content[0].get("type").and_then(|t| t.as_str()) == Some("paragraph") {
+        return inline_spans(content[0].get("content"));
+    }
+    let text = collect_text(cell.get("content"));
+    if text.is_empty() {
+        Vec::new()
+    } else {
+        vec![Span::raw(text)]
+    }
+}
+
+/// Terminal display width (not char count) of a cell's spans — matches
+/// what `Line::width()`/`Span::width()` already use for word-wrap
+/// decisions in `render::wrapped_row_ranges`, so a fullwidth/CJK cell
+/// measures the same number of columns here as it wraps to there.
+fn span_width(spans: &[Span<'static>]) -> usize {
+    spans.iter().map(Span::width).sum()
+}
+
+/// A border row (top/header-divider/bottom) built from per-column `─`
+/// segments sized to `col_widths[j] + 2` (the `+2` accounts for the
+/// 1-space pad on each side of a cell's content in the content rows), so
+/// every junction glyph lines up exactly with the `│` separators below it.
+fn table_border_line(left: &str, mid: &str, right: &str, col_widths: &[usize]) -> Line<'static> {
+    let segments: Vec<String> = col_widths.iter().map(|w| "─".repeat(w + 2)).collect();
+    let text = format!("{left}{}{right}", segments.join(mid));
+    Line::from(Span::styled(text, Style::default().fg(MUTED)))
+}
+
+fn render_table(node: &Value, out: &mut Vec<Line<'static>>, width: usize) {
     let rows = match node.get("content").and_then(|c| c.as_array()) {
         Some(r) => r,
         None => return,
     };
+
+    let mut grid: Vec<Vec<(bool, Vec<Span<'static>>)>> = Vec::new();
     for row in rows {
         let cells = match row.get("content").and_then(|c| c.as_array()) {
             Some(c) => c,
             None => continue,
         };
-        let mut spans: Vec<Span<'static>> = vec![Span::styled("│ ", Style::default().fg(MUTED))];
+        let mut grid_row = Vec::with_capacity(cells.len());
         for cell in cells {
             let is_header = cell.get("type").and_then(|t| t.as_str()) == Some("tableHeader");
-            let txt = collect_text(cell.get("content"));
-            let style = if is_header {
-                Style::default().add_modifier(Modifier::BOLD).fg(HEADING)
-            } else {
-                Style::default()
-            };
-            spans.push(Span::styled(format!("{:<16}", txt), style));
-            spans.push(Span::styled("│ ", Style::default().fg(MUTED)));
+            let mut spans = cell_content_spans(cell);
+            if is_header {
+                for s in spans.iter_mut() {
+                    s.style = s.style.fg(HEADING).add_modifier(Modifier::BOLD);
+                }
+            }
+            grid_row.push((is_header, spans));
         }
-        out.push(Line::from(spans));
+        grid.push(grid_row);
     }
+
+    let n_cols = grid.iter().map(|r| r.len()).max().unwrap_or(0);
+    if n_cols == 0 {
+        return;
+    }
+
+    let natural: Vec<usize> = (0..n_cols)
+        .map(|j| {
+            grid.iter()
+                .filter_map(|row| row.get(j))
+                .map(|(_, spans)| span_width(spans))
+                .max()
+                .unwrap_or(0)
+                .clamp(1, TABLE_MAX_COL_WIDTH)
+        })
+        .collect();
+
+    // Border budget: a leading "│ " (2 cols) plus a trailing " │ " (3
+    // cols) per column — every rendered row costs exactly this many
+    // non-content columns (see the content-row assembly below), so
+    // undercounting here would let column widths add up to a row wider
+    // than `width`, re-triggering the outer `Paragraph::wrap` re-flow this
+    // whole rewrite exists to avoid.
+    let available = width.saturating_sub(2 + 3 * n_cols);
+    let col_widths = table_col_widths(&natural, available, TABLE_MIN_COL_WIDTH);
+
+    out.push(table_border_line("┌", "┬", "┐", &col_widths));
+    for (row_idx, row) in grid.iter().enumerate() {
+        let mut per_col_sub_rows: Vec<Vec<(Line<'static>, usize)>> = Vec::with_capacity(n_cols);
+        for (j, &col_w) in col_widths.iter().enumerate() {
+            let empty = (false, Vec::new());
+            let (_, spans) = row.get(j).unwrap_or(&empty);
+            let cell_line = Line::from(spans.clone());
+            let ranges = crate::render::wrapped_row_ranges(&cell_line, col_w);
+            let sub_rows = ranges
+                .into_iter()
+                .map(|r| {
+                    let sliced = crate::render::slice_line(&cell_line, r);
+                    let pad = col_w.saturating_sub(sliced.width());
+                    (sliced, pad)
+                })
+                .collect();
+            per_col_sub_rows.push(sub_rows);
+        }
+        let row_height = per_col_sub_rows.iter().map(|c| c.len()).max().unwrap_or(1);
+
+        for sub_idx in 0..row_height {
+            let mut spans: Vec<Span<'static>> =
+                vec![Span::styled("│ ", Style::default().fg(MUTED))];
+            for (j, col_sub_rows) in per_col_sub_rows.iter().enumerate() {
+                if let Some((line, pad)) = col_sub_rows.get(sub_idx) {
+                    spans.extend(line.spans.iter().cloned());
+                    spans.push(Span::raw(" ".repeat(*pad)));
+                } else {
+                    spans.push(Span::raw(" ".repeat(col_widths[j])));
+                }
+                spans.push(Span::styled(" │ ", Style::default().fg(MUTED)));
+            }
+            out.push(Line::from(spans));
+        }
+
+        if row_idx == 0 && !row.is_empty() && row.iter().all(|(is_header, _)| *is_header) {
+            out.push(table_border_line("├", "┼", "┤", &col_widths));
+        }
+    }
+    out.push(table_border_line("└", "┴", "┘", &col_widths));
 }
 
 /// Convert an array of inline nodes into styled spans (applying marks).
@@ -424,6 +584,191 @@ mod robustness_tests {
         let s = flat(&doc);
         assert!(s.contains("Name"));
         assert!(s.contains("Ada"));
+    }
+
+    fn one_col_table(header: &str, body: &str) -> serde_json::Value {
+        json!({
+            "type": "doc",
+            "content": [
+                { "type": "table", "content": [
+                    { "type": "tableRow", "content": [
+                        { "type": "tableHeader", "content": [ { "type": "paragraph", "content": [ { "type": "text", "text": header } ] } ] }
+                    ] },
+                    { "type": "tableRow", "content": [
+                        { "type": "tableCell", "content": [ { "type": "paragraph", "content": [ { "type": "text", "text": body } ] } ] }
+                    ] }
+                ] }
+            ]
+        })
+    }
+
+    /// Regression test for the reported bug: a table row's `"│ "`
+    /// separators used to only line up on the first on-screen row once a
+    /// cell's content overflowed the fixed 16-char column width and
+    /// `Paragraph::wrap` re-flowed the whole row as one long logical line.
+    /// `render_table` now wraps each cell to its own column width and
+    /// repeats the border on every resulting sub-row, the same fix already
+    /// applied to blockquotes/code blocks via `wrap_with_bar`.
+    #[test]
+    fn table_borders_stay_aligned_on_wrapped_rows() {
+        let long_text = "word ".repeat(20);
+        let doc = one_col_table("Col", &long_text);
+        let text = render(&doc, 20);
+        let mut content_rows = 0;
+        for line in &text.lines {
+            let first = line.spans[0].content.as_ref();
+            let is_border = first.starts_with(['┌', '├', '└']);
+            let is_content = first == "│ ";
+            assert!(
+                is_border || is_content,
+                "row didn't start with a table border or a content bar: {first:?}"
+            );
+            if is_content {
+                content_rows += 1;
+            }
+        }
+        assert!(
+            content_rows > 3,
+            "expected multiple wrapped body sub-rows, got {content_rows}"
+        );
+    }
+
+    /// A real box, not a markdown-pipe-table lookalike: corners and
+    /// junctions must appear, not just flat `─` rules. Needs at least two
+    /// columns — a single-column table has no interior junction to draw.
+    #[test]
+    fn table_draws_a_boxed_border_with_junctions() {
+        let doc = json!({
+            "type": "doc",
+            "content": [
+                { "type": "table", "content": [
+                    { "type": "tableRow", "content": [
+                        { "type": "tableHeader", "content": [ { "type": "paragraph", "content": [ { "type": "text", "text": "A" } ] } ] },
+                        { "type": "tableHeader", "content": [ { "type": "paragraph", "content": [ { "type": "text", "text": "B" } ] } ] }
+                    ] },
+                    { "type": "tableRow", "content": [
+                        { "type": "tableCell", "content": [ { "type": "paragraph", "content": [ { "type": "text", "text": "x" } ] } ] },
+                        { "type": "tableCell", "content": [ { "type": "paragraph", "content": [ { "type": "text", "text": "y" } ] } ] }
+                    ] }
+                ] }
+            ]
+        });
+        let s = flat(&doc);
+        assert!(s.contains('┌') && s.contains('┐'), "missing top corners");
+        assert!(
+            s.contains('├') && s.contains('┼') && s.contains('┤'),
+            "missing header divider"
+        );
+        assert!(s.contains('└') && s.contains('┘'), "missing bottom corners");
+    }
+
+    /// A `tableRow` with fewer cells than the table's max column count
+    /// must not panic (indexing past a short row's cell array), and its
+    /// missing trailing cells just render blank.
+    #[test]
+    fn ragged_table_row_does_not_panic() {
+        let doc = json!({
+            "type": "doc",
+            "content": [
+                { "type": "table", "content": [
+                    { "type": "tableRow", "content": [
+                        { "type": "tableHeader", "content": [ { "type": "paragraph", "content": [ { "type": "text", "text": "A" } ] } ] },
+                        { "type": "tableHeader", "content": [ { "type": "paragraph", "content": [ { "type": "text", "text": "B" } ] } ] }
+                    ] },
+                    { "type": "tableRow", "content": [
+                        { "type": "tableCell", "content": [ { "type": "paragraph", "content": [ { "type": "text", "text": "only" } ] } ] }
+                    ] }
+                ] }
+            ]
+        });
+        let s = flat(&doc);
+        assert!(s.contains("only"));
+    }
+
+    #[test]
+    fn table_col_widths_does_not_crush_columns_below_the_floor() {
+        let widths = table_col_widths(&[40, 40, 40], 15, TABLE_MIN_COL_WIDTH);
+        assert!(widths.iter().all(|&w| w >= TABLE_MIN_COL_WIDTH));
+    }
+
+    #[test]
+    fn table_col_widths_uses_natural_widths_when_they_fit() {
+        let widths = table_col_widths(&[4, 10, 6], 100, TABLE_MIN_COL_WIDTH);
+        assert_eq!(widths, vec![4, 10, 6]);
+    }
+
+    /// Regression test: the `available` width budget must reserve the
+    /// *full* per-row border overhead (a leading "│ " plus a trailing
+    /// " │ " per column), not just 2 chars/column — undercounting it lets
+    /// a row render wider than `width`, handing the outer `Paragraph::wrap`
+    /// a line to re-flow and reintroducing the misaligned-border bug this
+    /// rewrite exists to fix.
+    #[test]
+    fn table_rows_never_exceed_the_requested_width() {
+        let doc = json!({
+            "type": "doc",
+            "content": [
+                { "type": "table", "content": [
+                    { "type": "tableRow", "content": [
+                        { "type": "tableHeader", "content": [ { "type": "paragraph", "content": [ { "type": "text", "text": "AAAA" } ] } ] },
+                        { "type": "tableHeader", "content": [ { "type": "paragraph", "content": [ { "type": "text", "text": "BBBB" } ] } ] },
+                        { "type": "tableHeader", "content": [ { "type": "paragraph", "content": [ { "type": "text", "text": "CCCC" } ] } ] }
+                    ] }
+                ] }
+            ]
+        });
+        // Widths below `2 + 3*n_cols + n_cols*TABLE_MIN_COL_WIDTH` (here,
+        // 2 + 9 + 18 = 29 for 3 columns) hit the documented degenerate
+        // floor case, where the table is allowed to render wider than the
+        // pane because there's no layout that avoids it — this test is
+        // about the budget math above that floor, so it stays clear of it.
+        for width in [30usize, 45, 70, 110] {
+            let text = render(&doc, width);
+            for line in &text.lines {
+                assert!(
+                    line.width() <= width,
+                    "row of width {} exceeded pane width {width}: {line:?}",
+                    line.width()
+                );
+            }
+        }
+    }
+
+    /// Regression test: a real ADF cell whose content includes fullwidth
+    /// (CJK) characters must not misalign the table — column widths and
+    /// wrap padding must be measured in terminal display width, not char
+    /// count. A border row is always exactly 1 column narrower than a
+    /// content row (the content row's trailing " │ " separator carries one
+    /// more space than a border row's plain corner glyph) — that offset
+    /// must hold uniformly whether or not a cell contains fullwidth text;
+    /// under the old char-count measurement a fullwidth cell would measure
+    /// half its true display width and blow that pattern up.
+    #[test]
+    fn table_measures_fullwidth_characters_by_display_width() {
+        let doc = json!({
+            "type": "doc",
+            "content": [
+                { "type": "table", "content": [
+                    { "type": "tableRow", "content": [
+                        { "type": "tableHeader", "content": [ { "type": "paragraph", "content": [ { "type": "text", "text": "col" } ] } ] }
+                    ] },
+                    { "type": "tableRow", "content": [
+                        { "type": "tableCell", "content": [ { "type": "paragraph", "content": [ { "type": "text", "text": "日本語テスト" } ] } ] }
+                    ] }
+                ] }
+            ]
+        });
+        let text = render(&doc, 80);
+        for line in &text.lines {
+            let first = line.spans[0].content.as_ref();
+            let is_border = first.starts_with(['┌', '├', '└']);
+            let expected = if is_border { 16 } else { 17 };
+            assert_eq!(
+                line.width(),
+                expected,
+                "row {line:?} (border={is_border}) didn't match the expected border/content width pattern"
+            );
+        }
     }
 
     /// Regression test: a blockquote's `"┃ "` bar used to be added once per
