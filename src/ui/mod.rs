@@ -30,12 +30,13 @@ mod field_mapping;
 mod footer;
 mod header;
 mod help;
-mod home;
+pub(crate) mod home;
 pub(crate) mod home_columns;
 mod jax_companion;
 mod keymap;
 mod list;
 mod list_columns;
+pub(crate) mod nav_strip;
 mod new_issue;
 mod new_issue_type_picker;
 mod palette;
@@ -63,6 +64,7 @@ use help::draw_help_overlay;
 use home::draw_home;
 use jax_companion::{draw_jax_companion, draw_jax_mini, JaxMode, MINI_DOCK_WIDTH};
 use list::draw_list;
+use nav_strip::{draw_nav_strip, nav_strip_visible};
 use new_issue::draw_new_issue;
 use new_issue_type_picker::draw_new_issue_type_picker;
 use palette::draw_palette;
@@ -198,14 +200,25 @@ pub(crate) fn selected_style(style: Style, selected: bool) -> Style {
 }
 
 pub fn draw(f: &mut Frame, app: &App) {
+    let frame_area = f.area();
+    // The persistent recent-issues strip (`nav_strip`) is a conditional
+    // fourth band between the body and the footer — the footer itself
+    // (hints, mini-Jax dock, status) stays exactly `Length(3)` regardless,
+    // per its own module's "never restructure this" invariant.
+    let show_nav_strip = nav_strip_visible(app, frame_area.height);
+    let mut constraints = vec![
+        Constraint::Length(3), // header
+        Constraint::Min(5),    // body
+    ];
+    if show_nav_strip {
+        constraints.push(Constraint::Length(1)); // recent-issues strip
+    }
+    constraints.push(Constraint::Length(3)); // footer
     let root = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3), // header
-            Constraint::Min(5),    // body
-            Constraint::Length(3), // footer
-        ])
-        .split(f.area());
+        .constraints(constraints)
+        .split(frame_area);
+    let footer_idx = root.len() - 1;
 
     draw_header(f, app, root[0]);
 
@@ -235,6 +248,14 @@ pub fn draw(f: &mut Frame, app: &App) {
         (root[1], None)
     };
 
+    // Every frame either records a fresh area below (`draw_home`'s wide
+    // rail card, when shown) or leaves this cleared — same "clear by
+    // default, overwrite when drawn" hygiene as `jax_mini_area`/
+    // `nav_strip_area` — so a stale `Rect` from a previous wide-Home frame
+    // can't misfire against a click on narrow Home or a completely
+    // different screen once the layout's moved on.
+    app.home_recent_area.set(Rect::default());
+
     use crate::app::Screen;
     match app.screen {
         Screen::Welcome => draw_welcome(f, app, body_area),
@@ -255,7 +276,16 @@ pub fn draw(f: &mut Frame, app: &App) {
         draw_quick_view(f, app, qa);
     }
 
-    draw_footer(f, app, root[2]);
+    if show_nav_strip {
+        draw_nav_strip(f, app, root[footer_idx - 1]);
+    } else {
+        // Every frame either records a fresh area above or clears it here —
+        // mirrors `jax_mini_area`'s same stale-rect hygiene just below —
+        // so a click can't misfire against a leftover `Rect` from a
+        // previous frame where the strip was showing.
+        app.nav_strip_area.set(Rect::default());
+    }
+    draw_footer(f, app, root[footer_idx]);
 
     // The ambient Jax companion floats above the quick-view panel when it's
     // open (so it never covers it), or at the bottom of the body otherwise.

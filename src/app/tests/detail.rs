@@ -48,7 +48,7 @@ fn refresh_detail_reloads_the_open_issue_without_touching_history() {
     let mut app = demo_app();
     app.selected = 0;
     app.open_detail();
-    app.open_by_key("DS-9001"); // build up some link-navigation history
+    app.follow_link("DS-9001"); // build up some link-navigation history
     assert!(app.can_go_back());
     assert!(!app.can_go_forward());
 

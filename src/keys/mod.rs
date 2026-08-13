@@ -338,6 +338,12 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('/') => app.open_search(),
             KeyCode::Char('V') => app.open_view_picker(),
             KeyCode::Char('r') => app.refresh(),
+            // Step back/forward through the recent-issues navigation
+            // history (`app::history`) — `←`/`→` are already taken here by
+            // column navigation, so the same global `,`/`.` binding used
+            // elsewhere covers Board too.
+            KeyCode::Char(',') if app.can_go_back() => app.go_back(),
+            KeyCode::Char('.') if app.can_go_forward() => app.go_forward(),
             KeyCode::Char('?') | KeyCode::F(1) => app.show_help = true,
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => back_or_quit(app),
             _ => {}
@@ -374,6 +380,10 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             // vs. one flat list) — no-op in drill mode, mirroring the work
             // list's own `s` sort-cycle key.
             KeyCode::Char('s') if app.release.drilled.is_none() => app.release_cycle_list_mode(),
+            // Step back/forward through the recent-issues navigation
+            // history (`app::history`) — see the same binding on Board.
+            KeyCode::Char(',') if app.can_go_back() => app.go_back(),
+            KeyCode::Char('.') if app.can_go_forward() => app.go_forward(),
             KeyCode::Char('?') | KeyCode::F(1) => app.show_help = true,
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left | KeyCode::Backspace
                 if !app.release_back() =>
@@ -454,12 +464,20 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('Y') => app.copy_url(),
         KeyCode::Char('q') => back_or_quit(app),
 
-        // Detail issue-navigation history: `←` steps back through issues
-        // followed via in-body links (see `app::history`), falling through
-        // to its prior meaning — exit Detail — once there's nothing left to
-        // step through; see `go_back_or_out` (shared with right-click).
+        // Detail issue-navigation history: `←` steps back through the
+        // recent-issues tree (see `app::history`), falling through to its
+        // prior meaning — exit Detail — once there's nothing left to step
+        // through; see `go_back_or_out` (shared with right-click).
         KeyCode::Left => go_back_or_out(app),
         KeyCode::Right if app.screen == Screen::Detail && app.can_go_forward() => app.go_forward(),
+
+        // The same history, steppable from any screen this shared match
+        // reaches (Home/List/Detail/About) — unlike `←`/`→` above, `,`/`.`
+        // have no prior meaning to fall back to here, so they're plain
+        // no-ops (via the `can_go_*` guards) when there's nothing to step
+        // through, rather than needing a screen-specific fallback.
+        KeyCode::Char(',') if app.can_go_back() => app.go_back(),
+        KeyCode::Char('.') if app.can_go_forward() => app.go_forward(),
 
         KeyCode::Esc | KeyCode::Char('h') | KeyCode::Backspace => back_or_quit(app),
 

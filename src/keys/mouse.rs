@@ -224,7 +224,7 @@ mod tests {
         app.selected = 0;
         app.open_detail();
         let first = app.detail.as_ref().unwrap().key.clone();
-        app.open_by_key("DS-9001");
+        app.follow_link("DS-9001");
         assert!(app.can_go_back());
 
         handle_mouse(&mut app, right_click(5));

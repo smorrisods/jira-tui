@@ -11,7 +11,11 @@ use ratatui::Frame;
 use crate::app::App;
 
 use super::home_columns::{bar_fill, home_layout_for_width, HomeLayout};
-use super::{accent, accent2, card, chip, danger, list::draw_list, muted, ok, status_colour, warn};
+use super::nav_strip::lineage_colour;
+use super::{
+    accent, accent2, card, chip, danger, list::draw_list, muted, ok, selected_style, status_colour,
+    warn,
+};
 
 /// Cells per glance-tile proportion bar.
 const BAR_CELLS: u16 = 4;
@@ -57,23 +61,27 @@ fn draw_rail_wide(f: &mut Frame, app: &App, area: Rect) {
     draw_context_card(f, app, rows[0]);
     draw_glance_card(f, app, rows[1], short);
     if show_recent {
-        draw_recent_card(f, &recent, rows[2]);
+        draw_recent_card(f, app, &recent, rows[2]);
     }
+    // Else: `ui::draw()` already cleared `home_recent_area` for this frame
+    // before dispatching here, so there's nothing further to do.
 }
 
 fn draw_narrow(f: &mut Frame, app: &App, area: Rect) {
     let short = area.height < SHORT_HEIGHT;
-    let recent = home_recent(app);
-    let show_recent = !short && !recent.is_empty();
 
     // Context and glance each get a bordered "short panel"/"tile" per
     // SPEC.md §5, so +2 rows apiece over their one/three lines of content
-    // for the top/bottom border.
-    let mut constraints = vec![Constraint::Length(3), Constraint::Length(5)];
-    if show_recent {
-        constraints.push(Constraint::Length(1));
-    }
-    constraints.push(Constraint::Min(3));
+    // for the top/bottom border. The old plain-text "recent" line used to
+    // live here too, but the persistent recent-issues strip
+    // (`ui::nav_strip`, shared by every browsing screen — see
+    // `ui::draw()`) now covers narrow Home as well, so there's no separate
+    // slot for it in this layout any more.
+    let constraints = vec![
+        Constraint::Length(3),
+        Constraint::Length(5),
+        Constraint::Min(3),
+    ];
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints(constraints)
@@ -84,13 +92,7 @@ fn draw_narrow(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(context_block, rows[0]);
     f.render_widget(Paragraph::new(home_context_strip_line(app)), context_inner);
     draw_glance_tiles(f, app, rows[1], short);
-    let list_area = if show_recent {
-        f.render_widget(Paragraph::new(home_recent_strip_line(&recent)), rows[2]);
-        rows[3]
-    } else {
-        rows[2]
-    };
-    draw_list(f, app, list_area, false);
+    draw_list(f, app, rows[2], false);
 }
 
 // ── Shared data helpers ─────────────────────────────────────────────────────
@@ -120,17 +122,45 @@ fn glance_stats(app: &App, short: bool) -> Vec<(&'static str, usize, Color)> {
     stats
 }
 
-/// Up to 3 recently-opened issues, newest first, with their summary looked
-/// up from the currently loaded list (dropped if not found rather than
-/// showing a bare key with no context).
-fn home_recent(app: &App) -> Vec<(&str, &str)> {
-    app.recent
-        .iter()
-        .filter_map(|key| {
-            app.all_issues
+/// One row of the wide layout's interactive "recent" rail card.
+struct RecentRow {
+    key: String,
+    summary: String,
+    lineage: u64,
+    current: bool,
+}
+
+/// The rail card shows richer detail than the persistent strip (`ui::nav_strip`)
+/// that also covers Home, so it caps at a smaller count than the full
+/// navigation history (`app::history::NAV_CAP`) to stay a compact sidebar
+/// card rather than growing unbounded.
+pub(crate) const HOME_CARD_MAX: usize = 6;
+
+/// Up to `HOME_CARD_MAX` entries from the navigation history
+/// (`app.nav.entries()`, already most-recent-lineage-first / MRU within a
+/// lineage), with a summary looked up from the currently loaded list or,
+/// failing that, the detail cache — link-discovered issues are often not
+/// in the loaded list view, so unlike the old Home-only `recent` list,
+/// entries are no longer silently dropped when they're not in `all_issues`.
+fn home_recent(app: &App) -> Vec<RecentRow> {
+    app.nav
+        .entries()
+        .into_iter()
+        .take(HOME_CARD_MAX)
+        .map(|entry| {
+            let summary = app
+                .all_issues
                 .iter()
-                .find(|i| &i.key == key)
-                .map(|i| (i.key.as_str(), i.summary.as_str()))
+                .find(|i| i.key == entry.key)
+                .map(|i| i.summary.clone())
+                .or_else(|| app.detail_cache.get(&entry.key).map(|d| d.summary.clone()))
+                .unwrap_or_else(|| "(not loaded)".to_string());
+            RecentRow {
+                key: entry.key,
+                summary,
+                lineage: entry.lineage,
+                current: entry.current,
+            }
         })
         .collect()
 }
@@ -206,23 +236,47 @@ fn glance_stat_line(label: &str, n: usize, max: usize, colour: Color) -> Line<'s
     ])
 }
 
-fn draw_recent_card(f: &mut Frame, recent: &[(&str, &str)], area: Rect) {
+/// The interactive wide-layout rail card (kept alongside the persistent
+/// strip per design feedback — the strip is the always-there muscle-memory
+/// location on every screen, this card is the richer wide-Home-only
+/// summary view): each row gets a lineage-tinted `▎` bar (the same
+/// tree-guide glyph family used elsewhere), a lineage-coloured key chip,
+/// and the muted summary; the current entry additionally gets
+/// `selection_bg()` on its bar and summary (the key chip already signals
+/// "current" on its own, via the same solid-lineage-colour-plus-bold
+/// treatment the persistent strip uses, so it isn't doubled up here).
+/// Records `home_recent_area` for `app::mouse`'s click hit-testing.
+fn draw_recent_card(f: &mut Frame, app: &App, recent: &[RecentRow], area: Rect) {
+    let block = card("  recent  ", muted());
+    let inner = block.inner(area);
+    app.home_recent_area.set(inner);
+    f.render_widget(block, area);
+
     let lines: Vec<Line> = recent
         .iter()
-        .map(|(key, summary)| {
-            Line::from(vec![
+        .map(|row| {
+            let colour = lineage_colour(row.lineage);
+            let row_style = selected_style(Style::default(), row.current);
+            let key_chip = if row.current {
                 Span::styled(
-                    format!("{key} "),
-                    Style::default().fg(accent()).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(summary.to_string(), Style::default().fg(muted())),
+                    format!(" {} ", row.key),
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(colour)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                chip(&row.key, colour)
+            };
+            Line::from(vec![
+                Span::styled("▎", row_style.fg(colour)),
+                key_chip,
+                Span::raw(" "),
+                Span::styled(row.summary.clone(), row_style.fg(muted())),
             ])
         })
         .collect();
-    f.render_widget(
-        Paragraph::new(Text::from(lines)).block(card("  recent  ", muted())),
-        area,
-    );
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
 
 // ── Narrow layout ────────────────────────────────────────────────────────────
@@ -304,20 +358,6 @@ fn draw_glance_tiles(f: &mut Frame, app: &App, area: Rect, short: bool) {
         ]);
         f.render_widget(Paragraph::new(tile), inner);
     }
-}
-
-fn home_recent_strip_line(recent: &[(&str, &str)]) -> Line<'static> {
-    let mut spans = vec![Span::styled("recent: ", Style::default().fg(muted()))];
-    for (i, (key, _)) in recent.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::styled(" · ", Style::default().fg(muted())));
-        }
-        spans.push(Span::styled(
-            (*key).to_string(),
-            Style::default().fg(accent()),
-        ));
-    }
-    Line::from(spans)
 }
 
 // ── Shared rendering ─────────────────────────────────────────────────────────

@@ -62,7 +62,7 @@ fn breadcrumb(app: &App, budget: usize) -> Vec<Span<'static>> {
                 key,
                 Style::default().fg(accent2()).add_modifier(Modifier::BOLD),
             ));
-            let back = app.detail_back.len();
+            let back = app.back_count();
             if back > 0 {
                 spans.push(Span::styled(
                     format!(" · ← {back} back"),

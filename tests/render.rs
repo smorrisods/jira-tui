@@ -982,8 +982,11 @@ fn home_screen_narrow_shows_tiles_and_recent_strip() {
 
     let text = render_at(&app, 80, 40);
     assert!(
-        text.contains("recent:"),
-        "narrow home should show the collapsed recent strip"
+        // The strip's own padded label — a bare "recent" would also match
+        // this branch's own name ("feature/recent-issues-nav-strip") in
+        // the header's git-context strip.
+        text.contains(" recent  "),
+        "narrow home should show the persistent recent-issues strip"
     );
     assert!(
         text.contains("assigned"),
@@ -1004,18 +1007,22 @@ fn home_screen_narrow_shows_tiles_and_recent_strip() {
 }
 
 #[test]
-fn home_screen_short_height_hides_recent_and_trims_glance_to_two() {
+fn home_screen_short_height_trims_glance_to_two_but_keeps_the_recent_strip() {
     let mut app = demo_app();
     app.screen = Screen::Home;
     let key = app.issues[0].key.clone();
     app.open_by_key(&key);
     app.screen = Screen::Home;
 
-    // Body height (~24) falls below the 30-row short-terminal threshold.
+    // Body height (~24) falls below Home's own 30-row short-terminal
+    // threshold, so its glance tiles still trim to assigned/blocked only —
+    // but the persistent recent-issues strip (`ui::nav_strip`) has a much
+    // lower, single-row-justified threshold of its own (20) and keeps
+    // showing here, unlike the old Home-only "recent" card it replaced.
     let text = render_at(&app, 120, 30);
     assert!(
-        !text.contains("recent"),
-        "a short terminal should hide the recent card entirely"
+        text.contains(" recent  "),
+        "the persistent recent-issues strip should still show at height 30"
     );
     assert!(
         !text.contains("in review") && !text.contains("done this week"),
@@ -1023,6 +1030,153 @@ fn home_screen_short_height_hides_recent_and_trims_glance_to_two() {
     );
     assert!(text.contains("assigned"));
     assert!(text.contains("blocked"));
+}
+
+#[test]
+fn home_screen_very_short_height_hides_the_recent_strip() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    let key = app.issues[0].key.clone();
+    app.open_by_key(&key);
+    app.screen = Screen::Home;
+
+    // Below the strip's own 20-row threshold, it disappears entirely.
+    let text = render_at(&app, 120, 15);
+    assert!(
+        !text.contains(" recent  "),
+        "a very short terminal should hide the recent-issues strip entirely"
+    );
+}
+
+/// End-to-end coverage of the branching scenario worked through during
+/// design: A → link to B → back to A → link to C. The strip must show
+/// both A and B tinted the same lineage colour as the current entry C
+/// (proving the "abandoned branch isn't lost" property renders visibly,
+/// not just in `NavHistory`'s own data), and the Detail screen must show
+/// the strip too, not just Home/List.
+#[test]
+fn detail_screen_shows_the_recent_strip_with_the_full_branch_lineage() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.selected = 0;
+    app.open_detail();
+
+    app.follow_link("DS-9001"); // A -> B
+    app.go_back(); // back to A
+    app.follow_link("DS-9002"); // A -> C (new branch)
+
+    let text = render(&app);
+    assert!(
+        text.contains(" recent  "),
+        "detail should show the persistent strip too"
+    );
+    assert!(
+        text.contains("DS-9001"),
+        "the abandoned branch B should still be visible"
+    );
+    assert!(
+        text.contains("DS-9002"),
+        "the current entry C should be visible"
+    );
+}
+
+#[test]
+fn home_wide_rail_card_shows_recent_issues_with_lineage_bars() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.selected = 0;
+    app.open_detail();
+    app.follow_link("DS-9001");
+    app.screen = Screen::Home;
+
+    // Wide enough for Home's 3-card rail — see `home_screen_shows_work_and_context`.
+    let text = render_at(&app, 160, 40);
+    assert!(
+        text.contains("recent"),
+        "the wide rail should show its own recent card"
+    );
+    assert!(
+        text.contains("DS-9001"),
+        "the rail card should list the most recent entry"
+    );
+    assert!(
+        text.contains('▎'),
+        "each rail-card row should carry a lineage-tinted bar glyph"
+    );
+}
+
+/// Regression test: a click landing at the wide rail card's old
+/// coordinates must not misfire once the terminal narrows and the card no
+/// longer shows — `ui::draw()` must clear `home_recent_area` on every
+/// frame it doesn't draw the card, not just leave a stale `Rect` behind
+/// (the same stale-hitbox class already guarded against for
+/// `jax_mini_area`, see `resizing_wide_after_a_narrow_render_clears_the_stale_mini_jax_hitbox`).
+/// Locate a rail-card row by its `▎` lineage-bar glyph on the line
+/// containing `key` — a point guaranteed inside `home_recent_area` without
+/// reading its private `Cell` directly (mirrors how the mini-Jax
+/// regression test below locates its target by scanning rendered text
+/// rather than reading `jax_mini_area`).
+fn find_rail_card_row(text: &str, key: &str) -> Option<(u16, u16)> {
+    text.lines().enumerate().find_map(|(y, line)| {
+        if !line.contains(key) {
+            return None;
+        }
+        line.find('▎').map(|x| (x as u16, y as u16))
+    })
+}
+
+/// Regression test: a click landing at the wide rail card's old
+/// coordinates must not misfire once the terminal narrows and the card no
+/// longer shows — `ui::draw()` must clear `home_recent_area` on every
+/// frame it doesn't draw the card, not just leave a stale `Rect` behind
+/// (the same stale-hitbox class already guarded against for
+/// `jax_mini_area`, see `resizing_wide_after_a_narrow_render_clears_the_stale_mini_jax_hitbox`).
+#[test]
+fn resizing_narrow_after_a_wide_render_clears_the_stale_recent_card_hitbox() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.selected = 0;
+    app.open_detail();
+    app.follow_link("DS-9001");
+    app.screen = Screen::Home;
+
+    let text = render_at(&app, 160, 40);
+    let (x, y) = find_rail_card_row(&text, "DS-9001").expect("the rail card should list DS-9001");
+    assert_eq!(app.recent_card_entry_at(x, y), Some("DS-9001".to_string()));
+
+    // Below Home's own wide-rail threshold (154) — narrow enough that the
+    // card no longer renders at all.
+    let _ = render_at(&app, 90, 40);
+    assert_eq!(
+        app.recent_card_entry_at(x, y),
+        None,
+        "a click at the rail card's old coordinates must not resolve after narrowing"
+    );
+}
+
+/// Same stale-hitbox class, but leaving Home for a different screen
+/// entirely (where `draw_home` isn't called at all, so nothing would
+/// otherwise touch `home_recent_area`).
+#[test]
+fn navigating_away_from_home_clears_the_stale_recent_card_hitbox() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.selected = 0;
+    app.open_detail();
+    app.follow_link("DS-9001");
+    app.screen = Screen::Home;
+
+    let text = render_at(&app, 160, 40);
+    let (x, y) = find_rail_card_row(&text, "DS-9001").expect("the rail card should list DS-9001");
+    assert_eq!(app.recent_card_entry_at(x, y), Some("DS-9001".to_string()));
+
+    app.screen = Screen::List;
+    let _ = render_at(&app, 160, 40);
+    assert_eq!(
+        app.recent_card_entry_at(x, y),
+        None,
+        "a click at the old rail-card coordinates must not resolve on a different screen"
+    );
 }
 
 #[test]
