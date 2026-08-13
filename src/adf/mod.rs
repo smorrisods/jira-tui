@@ -281,7 +281,7 @@ fn span_width(spans: &[Span<'static>]) -> usize {
     spans.iter().map(Span::width).sum()
 }
 
-/// A border row (top/header-divider/bottom) built from per-column `─`
+/// A border row (top/row-divider/bottom) built from per-column `─`
 /// segments sized to `col_widths[j] + 2` (the `+2` accounts for the
 /// 1-space pad on each side of a cell's content in the content rows), so
 /// every junction glyph lines up exactly with the `│` separators below it.
@@ -377,7 +377,7 @@ fn render_table(node: &Value, out: &mut Vec<Line<'static>>, width: usize) {
             out.push(Line::from(spans));
         }
 
-        if row_idx == 0 && !row.is_empty() && row.iter().all(|(is_header, _)| *is_header) {
+        if row_idx + 1 < grid.len() {
             out.push(table_border_line("├", "┼", "┤", &col_widths));
         }
     }
@@ -660,6 +660,37 @@ mod robustness_tests {
             "missing header divider"
         );
         assert!(s.contains('└') && s.contains('┘'), "missing bottom corners");
+    }
+
+    /// A full grid: every row (not just the header) is followed by a
+    /// `├┼┤` divider, so a multi-row body table reads as a bordered grid
+    /// rather than only ruling under the header.
+    #[test]
+    fn table_draws_a_divider_between_every_row() {
+        let doc = json!({
+            "type": "doc",
+            "content": [
+                { "type": "table", "content": [
+                    { "type": "tableRow", "content": [
+                        { "type": "tableHeader", "content": [ { "type": "paragraph", "content": [ { "type": "text", "text": "A" } ] } ] }
+                    ] },
+                    { "type": "tableRow", "content": [
+                        { "type": "tableCell", "content": [ { "type": "paragraph", "content": [ { "type": "text", "text": "one" } ] } ] }
+                    ] },
+                    { "type": "tableRow", "content": [
+                        { "type": "tableCell", "content": [ { "type": "paragraph", "content": [ { "type": "text", "text": "two" } ] } ] }
+                    ] }
+                ] }
+            ]
+        });
+        let text = render(&doc, 40);
+        let divider_rows = text
+            .lines
+            .iter()
+            .filter(|l| l.spans[0].content.starts_with('├'))
+            .count();
+        // 3 rows -> 2 interior boundaries (header/one, one/two).
+        assert_eq!(divider_rows, 2, "expected a divider between every row");
     }
 
     /// A `tableRow` with fewer cells than the table's max column count
