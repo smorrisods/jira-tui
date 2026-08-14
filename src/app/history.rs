@@ -170,50 +170,67 @@ impl NavHistory {
             .find_by_key(parent_key)
             .unwrap_or_else(|| self.insert_root(parent_key));
 
-        let target_id = match self.find_by_key(target_key) {
+        match self.find_by_key(target_key) {
             // Linking to an issue that's an ancestor of the page you're
             // reading (or to the page itself) would cycle the tree if
-            // re-parented — degrade to a plain jump instead.
-            Some(id) if self.is_ancestor(id, parent_id) => id,
+            // re-parented — degrade to a genuinely plain jump instead, the
+            // same as `jump()`: reposition only, no `touch` (which would
+            // otherwise reorder `entries()`'s display order for no reason,
+            // contradicting "plain jump").
+            Some(id) if self.is_ancestor(id, parent_id) => {
+                self.current = Some(id);
+            }
             Some(id) => {
                 self.reparent(id, parent_id);
                 self.node_mut(parent_id).last_child = Some(id);
-                id
+                self.touch(id);
+                self.current = Some(id);
             }
             None => {
                 let id = self.insert_child(target_key, parent_id);
                 self.node_mut(parent_id).last_child = Some(id);
-                id
+                self.touch(id);
+                self.current = Some(id);
             }
-        };
+        }
 
-        self.touch(target_id);
-        self.current = Some(target_id);
         self.evict_over_cap();
     }
 
     /// A direct jump — clicking an entry in the recent strip or Home's
-    /// rail card. Repositions the cursor without touching any parent/
-    /// `last_child` edges: a jump isn't a navigation edge, it's teleporting
-    /// within the existing structure, so `,`/`←` from here still walks to
-    /// the clicked node's real origin. Returns `false` (no-op) if `key`
-    /// isn't a known node.
+    /// rail card, or a Shift+`←`/`→` flat display-order step
+    /// (`App::step_display`). Repositions the cursor without touching any
+    /// parent/`last_child` edges (so `,`/`←` from here still walks to the
+    /// clicked node's real origin) *and* without touching `last_visited`
+    /// — a jump isn't a real navigation event, so it must not reorder
+    /// `entries()`'s display order either. This matters beyond just
+    /// tidiness: `step_display` walks that same order by index while
+    /// repeatedly jumping, so if a jump bumped recency, every step would
+    /// reshuffle the list out from under the walk and it would never
+    /// reach the end (confirmed by an infinite-loop test failure before
+    /// this was fixed). Returns `false` (no-op) if `key` isn't a known
+    /// node.
     pub fn jump(&mut self, key: &str) -> bool {
         let Some(id) = self.find_by_key(key) else {
             return false;
         };
-        self.clock += 1;
-        self.touch(id);
         self.current = Some(id);
         true
     }
 
-    /// Steps to the current node's real parent, retracing `last_child`
-    /// back onto the node being left so `step_forward` resumes it.
+    /// Steps to the current node's real parent. Deliberately does *not*
+    /// touch `parent.last_child` — when `current` was reached via a real
+    /// edge (`visit_link`/`step_forward`), `last_child` already points at
+    /// it by construction, so there's nothing to do; when `current` was
+    /// instead reached via `jump` (e.g. clicking an abandoned branch in
+    /// the strip), overwriting `last_child` here would silently demote
+    /// the tree's real most-recently-taken branch just because the user
+    /// glanced at an old one and pressed back — `jump`'s own contract is
+    /// that it never touches structure, and stepping away from a jump
+    /// must not retroactively violate that.
     pub fn step_back(&mut self) -> Option<String> {
         let current_id = self.current?;
         let parent_id = self.node(current_id).parent?;
-        self.node_mut(parent_id).last_child = Some(current_id);
         self.clock += 1;
         self.touch(parent_id);
         self.current = Some(parent_id);
@@ -389,6 +406,53 @@ impl App {
     pub(crate) fn back_count(&self) -> usize {
         self.nav.back_depth()
     }
+
+    /// The current entry's position in `nav.entries()`'s flat display
+    /// order (the same order the recent strip/rail card render — lineage-
+    /// banded, most-recent-lineage-first, MRU within a lineage), or `None`
+    /// if there's no history yet.
+    fn display_index(&self) -> Option<usize> {
+        self.nav.entries().iter().position(|e| e.current)
+    }
+
+    /// Shift+`←`/`→` — step to the previous/next entry in the recent
+    /// strip's flat *display* order, as opposed to `,`/`.`/plain `←`/`→`'s
+    /// tree-based parent/`last_child` walk. A jump, not a navigation edge
+    /// (same as clicking a chip) — it can land on an entry from a
+    /// completely different lineage than the one you're currently in.
+    fn step_display(&mut self, delta: isize) {
+        let entries = self.nav.entries();
+        let Some(idx) = entries.iter().position(|e| e.current) else {
+            return;
+        };
+        let Some(new_idx) = idx.checked_add_signed(delta) else {
+            return;
+        };
+        let Some(entry) = entries.get(new_idx) else {
+            return;
+        };
+        let key = entry.key.clone();
+        self.nav_jump(&key);
+    }
+
+    /// Whether Shift+`←` has an earlier-in-display-order entry to jump to.
+    pub fn can_step_display_back(&self) -> bool {
+        self.display_index().is_some_and(|idx| idx > 0)
+    }
+
+    /// Whether Shift+`→` has a later-in-display-order entry to jump to.
+    pub fn can_step_display_forward(&self) -> bool {
+        self.display_index()
+            .is_some_and(|idx| idx + 1 < self.nav.entries().len())
+    }
+
+    pub fn step_display_back(&mut self) {
+        self.step_display(-1);
+    }
+
+    pub fn step_display_forward(&mut self) {
+        self.step_display(1);
+    }
 }
 
 #[cfg(test)]
@@ -447,6 +511,49 @@ mod tests {
         assert!(
             keys.contains(&"B".to_string()),
             "B must still be present even though it's no longer forward-reachable: {keys:?}"
+        );
+    }
+
+    /// Regression test: `step_back` used to unconditionally overwrite the
+    /// parent's `last_child`, so jumping to an abandoned branch (a strip
+    /// click, or Shift+←/→) and then pressing plain `←` would silently
+    /// demote the tree's real most-recently-taken branch — `jump`'s own
+    /// contract is that it never touches structure, and stepping away
+    /// from a jump must not retroactively violate that.
+    #[test]
+    fn stepping_back_after_a_jump_does_not_corrupt_the_real_last_child() {
+        let mut nav = NavHistory::default();
+        nav.visit_fresh("A");
+        nav.visit_link("A", "B");
+        nav.step_back(); // current = A
+        nav.visit_link("A", "C"); // A.last_child = C (the true most-recent branch)
+
+        assert!(nav.jump("B"), "jump to the abandoned branch B");
+        nav.step_back(); // current = A again, but via a jump-then-back path
+        assert_eq!(
+            nav.step_forward(),
+            Some("C".to_string()),
+            "forward from A must still resume C — the jump to B and back must not have rewritten A's real last_child"
+        );
+    }
+
+    /// Regression test: `visit_link`'s ancestor-cycle-guard branch used to
+    /// still fall through to a shared `touch()` call despite its own
+    /// comment promising "a plain jump" — `jump()` itself never touches
+    /// recency, and this branch must match that exactly, or it reorders
+    /// `entries()`'s display order for no reason.
+    #[test]
+    fn linking_to_an_ancestor_does_not_touch_recency_either() {
+        let mut nav = NavHistory::default();
+        nav.visit_fresh("A");
+        nav.visit_link("A", "B"); // current = B
+
+        let before: Vec<String> = nav.entries().into_iter().map(|e| e.key).collect();
+        nav.visit_link("B", "A"); // degrades to a plain jump back to A
+        let after: Vec<String> = nav.entries().into_iter().map(|e| e.key).collect();
+        assert_eq!(
+            before, after,
+            "a degraded-to-jump link-follow must not reorder the display list"
         );
     }
 

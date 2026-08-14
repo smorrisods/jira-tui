@@ -13,8 +13,8 @@ use crate::app::App;
 use super::home_columns::{bar_fill, home_layout_for_width, HomeLayout};
 use super::nav_strip::lineage_colour;
 use super::{
-    accent, accent2, card, chip, danger, list::draw_list, muted, ok, selected_style, status_colour,
-    warn,
+    accent, accent2, card, chip, current_chip, danger, list::draw_list, muted, ok, selected_style,
+    status_colour, warn,
 };
 
 /// Cells per glance-tile proportion bar.
@@ -258,13 +258,7 @@ fn draw_recent_card(f: &mut Frame, app: &App, recent: &[RecentRow], area: Rect) 
             let colour = lineage_colour(row.lineage);
             let row_style = selected_style(Style::default(), row.current);
             let key_chip = if row.current {
-                Span::styled(
-                    format!(" {} ", row.key),
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(colour)
-                        .add_modifier(Modifier::BOLD),
-                )
+                current_chip(&row.key, colour)
             } else {
                 chip(&row.key, colour)
             };

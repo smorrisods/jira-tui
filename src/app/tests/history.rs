@@ -176,3 +176,58 @@ fn back_count_reflects_true_ancestor_depth() {
     app.follow_link("DS-9002");
     assert_eq!(app.back_count(), 2);
 }
+
+/// Shift+←/→ walk the recent strip's flat *display* order
+/// (`app.nav.entries()` — the same order `ui::nav_strip` renders), not the
+/// tree — a deliberately different axis from `,`/`.`/plain `←`/`→`. Derives
+/// the expected order from `entries()` itself rather than hardcoding an
+/// assumption about it, so this test documents (and would catch a
+/// regression in) whichever order the strip actually renders.
+#[test]
+fn step_display_walks_the_flat_strip_order_not_the_tree() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    let a = app.detail.as_ref().unwrap().key.clone();
+    app.follow_link("DS-9001"); // A -> B
+    app.go_back(); // back to A
+    app.follow_link("DS-9002"); // A -> C (new branch); current = C
+
+    let expected_order: Vec<String> = app.nav.entries().into_iter().map(|e| e.key).collect();
+    assert_eq!(
+        expected_order.len(),
+        3,
+        "all three issues should be in the display order: {expected_order:?}"
+    );
+    assert_eq!(
+        expected_order[0], "DS-9002",
+        "the current entry should be first in display order"
+    );
+
+    // Walk forward through the whole display order from the current
+    // position and confirm it matches `entries()` exactly.
+    let mut walked = vec![app.detail.as_ref().unwrap().key.clone()];
+    while app.can_step_display_forward() {
+        app.step_display_forward();
+        walked.push(app.detail.as_ref().unwrap().key.clone());
+    }
+    assert_eq!(walked, expected_order);
+    assert!(!app.can_step_display_forward());
+
+    // And back to the start.
+    while app.can_step_display_back() {
+        app.step_display_back();
+    }
+    assert_eq!(app.detail.as_ref().unwrap().key, "DS-9002");
+    assert!(!app.can_step_display_back());
+
+    // A display-step is a jump, not a tree edge: after stepping onto A via
+    // display order, `,`/`←` (the true tree walk) must be completely
+    // unaffected by having taken this detour.
+    app.step_display_forward(); // C -> A (display order)
+    assert_eq!(app.detail.as_ref().unwrap().key, a);
+    assert!(
+        !app.can_go_back(),
+        "A is still a root in the tree — a display jump must not have re-parented it"
+    );
+}

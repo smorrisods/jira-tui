@@ -530,16 +530,24 @@ pub(crate) fn chip(text: &str, colour: Color) -> Span<'static> {
 /// back to plain faint text instead).
 pub(crate) fn workflow_chip(text: &str, current: bool) -> Span<'static> {
     if current {
-        Span::styled(
-            format!(" {text} "),
-            Style::default()
-                .fg(Color::Black)
-                .bg(accent2())
-                .add_modifier(Modifier::BOLD),
-        )
+        current_chip(text, accent2())
     } else {
         Span::styled(text.to_string(), Style::default().fg(faint()))
     }
+}
+
+/// A solid-background, bold, black-text chip in `colour` — the "this is
+/// the current one" treatment shared by the Detail workflow strip
+/// (`workflow_chip`, always `accent2()`) and the recent-issues strip's
+/// current entry (`nav_strip`, coloured per lineage).
+pub(crate) fn current_chip(text: &str, colour: Color) -> Span<'static> {
+    Span::styled(
+        format!(" {text} "),
+        Style::default()
+            .fg(Color::Black)
+            .bg(colour)
+            .add_modifier(Modifier::BOLD),
+    )
 }
 
 pub(crate) fn divider() -> Line<'static> {

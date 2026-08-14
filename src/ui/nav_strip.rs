@@ -8,14 +8,14 @@
 //! never disagree about where a chip actually is.
 
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::app::{App, NavEntry, Screen};
 
-use super::{accent, accent2, chip, muted, ok, task_blue, warn};
+use super::{accent, accent2, chip, current_chip, muted, ok, task_blue, warn};
 
 /// Below this frame height the strip hides entirely — lower than Home's own
 /// `home::SHORT_HEIGHT` (30) since the strip costs a single row, not a
@@ -49,20 +49,6 @@ pub(crate) fn nav_strip_visible(app: &App, frame_height: u16) -> bool {
     matches!(
         app.screen,
         Screen::Home | Screen::List | Screen::Detail | Screen::Board | Screen::Release
-    )
-}
-
-/// A solid-background, bold chip in `colour` — the "this is the current
-/// entry" treatment: `workflow_chip`'s look (`super::workflow_chip`),
-/// parameterized by an arbitrary lineage colour instead of its hardcoded
-/// `accent2()`.
-fn current_chip(text: &str, colour: Color) -> Span<'static> {
-    Span::styled(
-        format!(" {text} "),
-        Style::default()
-            .fg(Color::Black)
-            .bg(colour)
-            .add_modifier(Modifier::BOLD),
     )
 }
 
@@ -126,10 +112,15 @@ pub(crate) fn strip_layout(entries: &[NavEntry], width: usize) -> StripLayout {
     }
 
     if shown < entries.len() {
-        spans.push(Span::styled(
-            format!(" ⋯ +{}", entries.len() - shown),
-            Style::default().fg(muted()),
-        ));
+        let marker = format!(" ⋯ +{}", entries.len() - shown);
+        // Only the chips above were checked against the reserved
+        // `OVERFLOW_MARKER_BUDGET` — this is the one place that budget is
+        // actually spent, so it still needs its own fit check: a pane too
+        // narrow even for the label alone (`shown == 0`) would otherwise
+        // push a marker past `width` with nothing to show for it.
+        if col + marker.chars().count() <= width {
+            spans.push(Span::styled(marker, Style::default().fg(muted())));
+        }
     }
 
     StripLayout { spans, hits }

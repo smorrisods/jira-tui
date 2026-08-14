@@ -330,6 +330,18 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => app.board_move_card(-1),
             KeyCode::Down | KeyCode::Char('j') => app.board_move_card(1),
+            // Shift+←/→ jump through the recent strip's flat display
+            // order (`app::history::App::step_display_back`) — must come
+            // before the plain Left/Right arms below, since a match on
+            // `key.code` alone would otherwise let Shift+← fall into
+            // `board_move_col` too (Shift doesn't change `.code`, only
+            // `.modifiers`).
+            KeyCode::Left if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                app.step_display_back();
+            }
+            KeyCode::Right if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                app.step_display_forward();
+            }
             KeyCode::Left | KeyCode::Char('h') => app.board_move_col(-1),
             KeyCode::Right | KeyCode::Char('l') => app.board_move_col(1),
             KeyCode::PageUp => app.board_move_lane(-1),
@@ -361,6 +373,15 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => app.release_move(-1),
             KeyCode::Down | KeyCode::Char('j') => app.release_move(1),
+            // Shift+←/→ jump through the recent strip's flat display
+            // order — see the same binding on Board for why this must
+            // come before the plain Left/Right arms below.
+            KeyCode::Left if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                app.step_display_back();
+            }
+            KeyCode::Right if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                app.step_display_forward();
+            }
             KeyCode::Enter | KeyCode::Right => app.release_confirm(),
             // Bulk membership: `Space` checks/unchecks an issue for
             // removal, `x` removes whatever's checked (or just the
@@ -463,6 +484,26 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('y') => app.copy_key(),
         KeyCode::Char('Y') => app.copy_url(),
         KeyCode::Char('q') => back_or_quit(app),
+
+        // Shift+←/→ jump through the recent strip's flat display order
+        // (`app::history::App::step_display_back`/`_forward`) — a
+        // different axis from the tree-based `←`/`→`/`,`/`.` below, so
+        // this must come first: a match on `key.code` alone can't tell
+        // Shift+← from plain ←, only the guard on `.modifiers` can.
+        // Scoped to the screens that actually show the strip (excludes
+        // About, which this shared match also reaches).
+        KeyCode::Left
+            if key.modifiers.contains(KeyModifiers::SHIFT)
+                && matches!(app.screen, Screen::Home | Screen::List | Screen::Detail) =>
+        {
+            app.step_display_back();
+        }
+        KeyCode::Right
+            if key.modifiers.contains(KeyModifiers::SHIFT)
+                && matches!(app.screen, Screen::Home | Screen::List | Screen::Detail) =>
+        {
+            app.step_display_forward();
+        }
 
         // Detail issue-navigation history: `←` steps back through the
         // recent-issues tree (see `app::history`), falling through to its
@@ -1185,6 +1226,96 @@ mod tests {
         assert_eq!(
             app.current_view, before,
             "view-flipping is scoped to Home/List, not Board"
+        );
+    }
+
+    fn shift_key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::SHIFT)
+    }
+
+    /// Builds a small forest (A -> B, back to A, A -> C) so display-order
+    /// stepping has more than one entry to walk through.
+    fn app_with_branching_history() -> App {
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        app.follow_link("DS-9001");
+        app.go_back();
+        app.follow_link("DS-9002");
+        app
+    }
+
+    #[test]
+    fn shift_arrows_step_display_order_on_detail() {
+        let mut app = app_with_branching_history();
+        let current = app.detail.as_ref().unwrap().key.clone();
+        assert_eq!(current, "DS-9002");
+
+        handle_key(&mut app, shift_key(KeyCode::Right));
+        assert_ne!(
+            app.detail.as_ref().unwrap().key,
+            "DS-9002",
+            "Shift+Right should have stepped to a different entry"
+        );
+        handle_key(&mut app, shift_key(KeyCode::Left));
+        assert_eq!(
+            app.detail.as_ref().unwrap().key,
+            "DS-9002",
+            "Shift+Left should step back to where Shift+Right came from"
+        );
+    }
+
+    #[test]
+    fn plain_arrows_are_unaffected_by_the_shift_guard_on_detail() {
+        let mut app = app_with_branching_history();
+        // Plain ← still walks the true tree back to the real origin, not
+        // wherever Shift+← would have landed.
+        handle_key(&mut app, KeyEvent::from(KeyCode::Left));
+        assert_ne!(
+            app.detail.as_ref().unwrap().key,
+            "DS-9002",
+            "plain ← must still step via the tree, unaffected by the new Shift guard"
+        );
+    }
+
+    #[test]
+    fn shift_arrows_step_display_order_on_board_without_moving_columns() {
+        let mut app = app_with_branching_history();
+        app.open_board();
+        // Move off column 0 first with a plain →, so a subsequent plain ←
+        // has somewhere to go — otherwise a clamped-at-0 column move would
+        // be indistinguishable from Shift+←'s "don't touch the column".
+        handle_key(&mut app, KeyEvent::from(KeyCode::Right));
+        let before_col = app.board_sel.col;
+        assert_ne!(before_col, 0, "plain → should have moved off column 0");
+
+        handle_key(&mut app, shift_key(KeyCode::Left));
+        assert_eq!(
+            app.board_sel.col, before_col,
+            "Shift+← on Board must step display order, not the column"
+        );
+
+        // Plain ← still moves the column, unaffected by the new guard.
+        handle_key(&mut app, KeyEvent::from(KeyCode::Left));
+        assert_ne!(
+            app.board_sel.col, before_col,
+            "plain ← on Board should still move the column"
+        );
+    }
+
+    #[test]
+    fn shift_arrows_step_display_order_on_release_without_confirming() {
+        let mut app = app_with_branching_history();
+        app.open_release_screen();
+        assert!(
+            app.release.drilled.is_none(),
+            "Shift+→ must not drill into a version like plain → does"
+        );
+
+        handle_key(&mut app, shift_key(KeyCode::Right));
+        assert!(
+            app.release.drilled.is_none(),
+            "Shift+→ on Release must step display order, not confirm/drill in"
         );
     }
 
