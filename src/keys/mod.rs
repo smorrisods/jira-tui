@@ -1251,17 +1251,20 @@ mod tests {
         let current = app.detail.as_ref().unwrap().key.clone();
         assert_eq!(current, "DS-9002");
 
-        handle_key(&mut app, shift_key(KeyCode::Right));
+        // Display order is a fixed tree-structural walk, not recency —
+        // C ("DS-9002") sits at the *end* of it (A, B, C), so Shift+Left
+        // (back through display order) is what has somewhere to go here.
+        handle_key(&mut app, shift_key(KeyCode::Left));
         assert_ne!(
             app.detail.as_ref().unwrap().key,
             "DS-9002",
-            "Shift+Right should have stepped to a different entry"
+            "Shift+Left should have stepped to a different entry"
         );
-        handle_key(&mut app, shift_key(KeyCode::Left));
+        handle_key(&mut app, shift_key(KeyCode::Right));
         assert_eq!(
             app.detail.as_ref().unwrap().key,
             "DS-9002",
-            "Shift+Left should step back to where Shift+Right came from"
+            "Shift+Right should step forward to where Shift+Left came from"
         );
     }
 
@@ -1282,9 +1285,8 @@ mod tests {
     fn shift_arrows_step_display_order_on_board_without_moving_columns() {
         let mut app = app_with_branching_history();
         app.open_board();
-        // Move off column 0 first with a plain →, so a subsequent plain ←
-        // has somewhere to go — otherwise a clamped-at-0 column move would
-        // be indistinguishable from Shift+←'s "don't touch the column".
+        // Move off column 0 first, so a column move (if one wrongly
+        // happened) would actually be visible.
         handle_key(&mut app, KeyEvent::from(KeyCode::Right));
         let before_col = app.board_sel.col;
         assert_ne!(before_col, 0, "plain → should have moved off column 0");
@@ -1294,8 +1296,27 @@ mod tests {
             app.board_sel.col, before_col,
             "Shift+← on Board must step display order, not the column"
         );
+        // Stepping display order is a jump to a different issue — the
+        // same as clicking a strip chip, it opens that issue in Detail,
+        // leaving Board behind. That's the point: you were browsing
+        // recent issues from Board, and now you're looking at one.
+        assert_eq!(
+            app.screen,
+            Screen::Detail,
+            "Shift+← should have jumped to a different recent issue"
+        );
+    }
 
-        // Plain ← still moves the column, unaffected by the new guard.
+    #[test]
+    fn plain_arrows_still_move_columns_on_board() {
+        let mut app = app_with_branching_history();
+        app.open_board();
+        handle_key(&mut app, KeyEvent::from(KeyCode::Right));
+        let before_col = app.board_sel.col;
+        assert_ne!(before_col, 0);
+
+        // Plain ← still moves the column, unaffected by the new Shift
+        // guard placed above it in the match.
         handle_key(&mut app, KeyEvent::from(KeyCode::Left));
         assert_ne!(
             app.board_sel.col, before_col,

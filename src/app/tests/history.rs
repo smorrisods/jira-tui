@@ -199,35 +199,48 @@ fn step_display_walks_the_flat_strip_order_not_the_tree() {
         3,
         "all three issues should be in the display order: {expected_order:?}"
     );
+    // Display order is a fixed tree-structural (preorder) walk, not
+    // recency — A is the root, B and C are its children in the order they
+    // were first created, regardless of which one is current. This is
+    // deliberate: an MRU-within-lineage order was tried and reshuffled on
+    // every navigation, making the strip's layout unpredictable.
     assert_eq!(
-        expected_order[0], "DS-9002",
-        "the current entry should be first in display order"
+        expected_order,
+        vec![a.clone(), "DS-9001".to_string(), "DS-9002".to_string()],
+        "display order should be the fixed preorder walk A, B, C"
     );
 
-    // Walk forward through the whole display order from the current
-    // position and confirm it matches `entries()` exactly.
-    let mut walked = vec![app.detail.as_ref().unwrap().key.clone()];
-    while app.can_step_display_forward() {
-        app.step_display_forward();
-        walked.push(app.detail.as_ref().unwrap().key.clone());
-    }
-    assert_eq!(walked, expected_order);
-    assert!(!app.can_step_display_forward());
-
-    // And back to the start.
+    // C (current) sits at the end of display order — walk all the way
+    // back to the start and confirm it retraces `entries()` in reverse.
+    let mut walked_back = vec![app.detail.as_ref().unwrap().key.clone()];
     while app.can_step_display_back() {
         app.step_display_back();
+        walked_back.push(app.detail.as_ref().unwrap().key.clone());
     }
-    assert_eq!(app.detail.as_ref().unwrap().key, "DS-9002");
+    let mut expected_reversed = expected_order.clone();
+    expected_reversed.reverse();
+    assert_eq!(walked_back, expected_reversed);
     assert!(!app.can_step_display_back());
-
-    // A display-step is a jump, not a tree edge: after stepping onto A via
-    // display order, `,`/`←` (the true tree walk) must be completely
-    // unaffected by having taken this detour.
-    app.step_display_forward(); // C -> A (display order)
     assert_eq!(app.detail.as_ref().unwrap().key, a);
+
+    // And forward again, all the way back to C.
+    let mut walked_forward = vec![app.detail.as_ref().unwrap().key.clone()];
+    while app.can_step_display_forward() {
+        app.step_display_forward();
+        walked_forward.push(app.detail.as_ref().unwrap().key.clone());
+    }
+    assert_eq!(walked_forward, expected_order);
+    assert!(!app.can_step_display_forward());
+
+    // A display-step is a jump, not a tree edge: after stepping onto B via
+    // display order, `,`/`←` (the true tree walk) must still reflect B's
+    // real parent (A) — unaffected by having taken this detour.
+    app.step_display_back(); // C -> B (display order)
+    assert_eq!(app.detail.as_ref().unwrap().key, "DS-9001");
     assert!(
-        !app.can_go_back(),
-        "A is still a root in the tree — a display jump must not have re-parented it"
+        app.can_go_back(),
+        "B's real parent (A) must still be intact"
     );
+    app.go_back();
+    assert_eq!(app.detail.as_ref().unwrap().key, a);
 }

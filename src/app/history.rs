@@ -277,11 +277,17 @@ impl NavHistory {
     }
 
     /// The flat display projection backing the recent strip and Home's
-    /// rail card: lineages ordered by their most-recently-visited node
-    /// first, nodes ordered most-recently-visited-first within a lineage —
-    /// this keeps same-coloured entries banded together (the whole point
-    /// of the lineage-colour feature) rather than interleaved by pure
-    /// recency, which would scatter them.
+    /// rail card: lineages (bands) ordered by their most-recently-visited
+    /// node first — switching to a different root jumps its whole band to
+    /// the front, so your active lineage is always easiest to find — but
+    /// a node's position *within* its own band is fixed by tree structure
+    /// (a stable preorder walk: a node, then its children in the order
+    /// they were first created), not by recency. Only the `current` flag
+    /// moves as you navigate; nothing else in the layout does. This is
+    /// deliberate: an MRU-within-band order was tried first and reshuffled
+    /// on every navigation, making the strip impossible to build a mental
+    /// map of — you couldn't tell whether it had updated at all, or
+    /// predict where `→` would land before pressing it.
     pub fn entries(&self) -> Vec<NavEntry> {
         let mut lineage_recency: HashMap<u64, u64> = HashMap::new();
         for node in &self.nodes {
@@ -290,24 +296,52 @@ impl NavHistory {
             *slot = (*slot).max(node.last_visited);
         }
 
-        let mut nodes: Vec<&NavNode> = self.nodes.iter().collect();
-        nodes.sort_by(|a, b| {
-            let ra = self.root_of(a.id).0;
-            let rb = self.root_of(b.id).0;
-            lineage_recency[&rb]
-                .cmp(&lineage_recency[&ra])
-                .then_with(|| ra.cmp(&rb))
-                .then_with(|| b.last_visited.cmp(&a.last_visited))
+        let mut roots: Vec<NavId> = self
+            .nodes
+            .iter()
+            .filter(|n| n.parent.is_none())
+            .map(|n| n.id)
+            .collect();
+        roots.sort_by(|a, b| {
+            lineage_recency[&b.0]
+                .cmp(&lineage_recency[&a.0])
+                .then_with(|| a.0.cmp(&b.0))
         });
 
-        nodes
+        let mut ordered: Vec<NavId> = Vec::with_capacity(self.nodes.len());
+        for root in roots {
+            self.preorder_from(root, &mut ordered);
+        }
+
+        ordered
             .into_iter()
-            .map(|n| NavEntry {
-                key: n.key.clone(),
-                lineage: self.root_of(n.id).0,
-                current: self.current == Some(n.id),
+            .map(|id| {
+                let n = self.node(id);
+                NavEntry {
+                    key: n.key.clone(),
+                    lineage: self.root_of(id).0,
+                    current: self.current == Some(id),
+                }
             })
             .collect()
+    }
+
+    /// Appends `id` then its children (found by scanning for `parent ==
+    /// Some(id)`, ordered by `NavId` — monotonically assigned, so this is
+    /// creation order) to `out`, recursively — a stable preorder walk of
+    /// one lineage. Bounded by `NAV_CAP`, so plain recursion is fine.
+    fn preorder_from(&self, id: NavId, out: &mut Vec<NavId>) {
+        out.push(id);
+        let mut children: Vec<NavId> = self
+            .nodes
+            .iter()
+            .filter(|n| n.parent == Some(id))
+            .map(|n| n.id)
+            .collect();
+        children.sort_by_key(|c| c.0);
+        for child in children {
+            self.preorder_from(child, out);
+        }
     }
 
     /// While over `NAV_CAP`, evict the least-recently-visited unprotected

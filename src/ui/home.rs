@@ -137,8 +137,9 @@ struct RecentRow {
 pub(crate) const HOME_CARD_MAX: usize = 6;
 
 /// Up to `HOME_CARD_MAX` entries from the navigation history
-/// (`app.nav.entries()`, already most-recent-lineage-first / MRU within a
-/// lineage), with a summary looked up from the currently loaded list or,
+/// (`app.nav.entries()`, already most-recent-lineage-first, with a fixed
+/// tree-structural order within each lineage), with a summary looked up
+/// from the currently loaded list or,
 /// failing that, the detail cache — link-discovered issues are often not
 /// in the loaded list view, so unlike the old Home-only `recent` list,
 /// entries are no longer silently dropped when they're not in `all_issues`.

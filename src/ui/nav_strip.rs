@@ -61,12 +61,13 @@ pub(crate) struct StripLayout {
 
 /// Build the strip's layout for `entries` at `width` columns: lineage bands
 /// stay contiguous (a plain space between same-lineage chips, a muted `·`
-/// between different lineages — `entries()` already orders lineages
-/// most-recently-visited-first and nodes MRU within a lineage), and whole
-/// trailing chips drop behind a muted `⋯ +N` marker once the line would
-/// overflow `width` — the least-recently-visited lineages first, since
-/// `entries()`'s ordering puts them last. Pure and reused by both the
-/// renderer and `app::mouse`'s hit-testing, so the two can never disagree
+/// between different lineages — `entries()` already orders lineage bands
+/// most-recently-visited-first, with each band's own nodes in a fixed
+/// tree-structural order rather than by recency), and whole trailing chips
+/// drop behind a muted `⋯ +N` marker once the line would overflow `width`
+/// — the least-recently-visited lineages first, since `entries()`'s
+/// ordering puts them last. Pure and reused by both the renderer and
+/// `app::mouse`'s hit-testing, so the two can never disagree
 /// about where a chip landed.
 pub(crate) fn strip_layout(entries: &[NavEntry], width: usize) -> StripLayout {
     let mut spans = vec![Span::styled(LABEL, Style::default().fg(muted()))];
