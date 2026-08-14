@@ -11,7 +11,10 @@ use crate::domain::Source;
 
 use super::list::{flat_guide, issue_row};
 use super::list_columns::column_set_for_width;
-use super::{accent, accent2, card, card_bordered, maple, muted, ok, selected_style, warn};
+use super::{
+    accent, accent2, card, card_bordered, maple, muted, ok, scroll_center_offset, selected_style,
+    warn,
+};
 
 pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
     let rows = Layout::default()
@@ -182,16 +185,17 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
     }
     // Keep the selected row in view — mirrors `ui::list`'s scroll window,
     // but by line offset (not row index) since a row here can span more
-    // than one line. Centred around the selection rather than clamped to
-    // "just barely visible" so paging past it doesn't leave it pinned to
-    // an edge.
+    // than one line.
     let height = inner.height as usize;
     let max_scroll = lines.len().saturating_sub(height);
-    let scroll = selected_line
-        .saturating_sub(height.saturating_sub(2).max(1) / 2)
-        .min(max_scroll);
+    let scroll = scroll_center_offset(selected_line, height).min(max_scroll);
     f.render_widget(
-        Paragraph::new(Text::from(lines)).scroll((scroll as u16, 0)),
+        // `Paragraph::scroll` takes a `u16`; a result set large enough to
+        // overflow it would otherwise wrap the offset to somewhere
+        // arbitrary instead of just clamping, so this clamps explicitly
+        // rather than relying on the (already-bounded-by-`max_scroll`)
+        // value happening to fit.
+        Paragraph::new(Text::from(lines)).scroll((scroll.min(u16::MAX as usize) as u16, 0)),
         inner,
     );
 }

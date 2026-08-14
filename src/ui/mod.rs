@@ -197,6 +197,17 @@ pub(crate) fn selected_style(style: Style, selected: bool) -> Style {
     }
 }
 
+/// A scroll-window start offset centred on `pos` within `height` visible
+/// rows: `pos - (height-2).max(1)/2`, clamped to zero. Shared by
+/// `ui::list` (`pos`/`height` in row units) and `ui::search` (`pos`/
+/// `height` in line units, since a search result row can span more than
+/// one line) — centring the selection rather than clamping to "just
+/// barely visible" means paging past it doesn't leave it pinned to an
+/// edge.
+pub(crate) fn scroll_center_offset(pos: usize, height: usize) -> usize {
+    pos.saturating_sub(height.saturating_sub(2).max(1) / 2)
+}
+
 pub fn draw(f: &mut Frame, app: &App) {
     let root = Layout::default()
         .direction(Direction::Vertical)

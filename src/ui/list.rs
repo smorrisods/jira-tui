@@ -19,7 +19,8 @@ use crate::domain::IssueSummary;
 use super::list_columns::{column_set_for_width, ColumnSet};
 use super::{
     accent, card_bordered, chip, danger, faint, initials, maple, muted, priority_glyph,
-    priority_style, selected_style, status_colour, status_short, truncate, type_colour,
+    priority_style, scroll_center_offset, selected_style, status_colour, status_short, truncate,
+    type_colour,
 };
 
 const KEY_WIDTH: usize = 8;
@@ -70,7 +71,7 @@ pub(crate) fn draw_list(f: &mut Frame, app: &App, area: Rect, full: bool) {
     }
     let cur_pos = rows.iter().position(|r| r.idx == app.selected).unwrap_or(0);
     // simple scroll window around the selection
-    let start = cur_pos.saturating_sub(height.saturating_sub(2).max(1) / 2);
+    let start = scroll_center_offset(cur_pos, height);
     for row in rows.iter().skip(start).take(height) {
         let is_selected = row.idx == app.selected;
         lines.extend(issue_row(&app.issues[row.idx], is_selected, row, &columns));
