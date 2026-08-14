@@ -33,6 +33,14 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
         desc: "back",
     },
     KeyHint {
+        key: ", / .",
+        desc: "step back / forward through recently viewed issues",
+    },
+    KeyHint {
+        key: "⇧← / ⇧→",
+        desc: "jump to the previous/next entry shown in the recent-issues strip",
+    },
+    KeyHint {
         key: "g",
         desc: "go to Home",
     },

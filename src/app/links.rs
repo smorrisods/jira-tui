@@ -153,7 +153,7 @@ impl App {
             return;
         };
         match target.kind {
-            render::LinkKind::Issue(key) => self.open_by_key(&key),
+            render::LinkKind::Issue(key) => self.follow_link(&key),
             render::LinkKind::Url(url) => {
                 if infra::open_url(&url).is_ok() {
                     self.flash(format!("↗ opened {url}"));
@@ -162,6 +162,22 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Follow an in-body link from whichever issue's content is actually on
+    /// screen (`active_comment_detail` — Detail's issue, or else the
+    /// quick-viewed one), parenting `key` under it in the navigation
+    /// history (`app::history`) so `←`/`,` returns to the exact issue the
+    /// link was found on, regardless of whether it was read via the Detail
+    /// screen or the quick-view panel — the two are equivalent here, since
+    /// a history node is just "the issue," not "the issue as viewed
+    /// through a particular screen."
+    pub fn follow_link(&mut self, key: &str) {
+        match self.active_comment_detail().map(|d| d.key.clone()) {
+            Some(parent) => self.nav.visit_link(&parent, key),
+            None => self.nav.visit_fresh(key),
+        }
+        self.show_issue(key);
     }
 
     /// Whether there's currently at least one navigable link (used to guard

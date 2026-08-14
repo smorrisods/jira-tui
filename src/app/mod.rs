@@ -53,6 +53,7 @@ pub use async_ops::AppEvent;
 pub use board::BoardSelection;
 pub use edit::{EditTarget, EditorState};
 pub use field_mapping::{FieldMappingOutcome, FieldMappingState};
+pub(crate) use history::{NavEntry, NavHistory};
 pub use mouse::{ListFocus, MouseState, SelectionSpan};
 pub(crate) use new_issue::LocallyCreatedIssue;
 pub use new_issue::{NewIssueField, NewIssueState};
@@ -135,22 +136,17 @@ pub struct App {
     // than cached, so it can never go stale.
     pub link_index: usize,
 
-    // Detail navigation history (browser-style back/forward), built as the
-    // user follows in-body issue links from one Detail view to another —
-    // see `app::history`. Opening an issue fresh from the list/search
-    // starts a new history; `←`/`→` only step through it while it's
-    // non-empty, otherwise falling back to their prior meaning (exit
-    // Detail / open the selected issue).
-    pub(crate) detail_back: Vec<String>,
-    pub(crate) detail_forward: Vec<String>,
-
-    /// Last-3 distinct issue keys opened into Detail, most-recent-first —
-    /// backs Home's "recent" card/strip (SPEC.md §5). Independent of
-    /// `detail_back`/`detail_forward` above (which track in-body-link
-    /// navigation within one Detail-viewing session and get cleared on
-    /// fresh opens): this list is durable across screens and views, and is
-    /// only ever capped, never cleared.
-    pub(crate) recent: Vec<String>,
+    /// Cross-screen issue navigation history — a forest of visited issues
+    /// backing `←`/`→`/`,`/`.` back/forward stepping, the persistent
+    /// recent-issues strip, and Home's rail card. See `app::history`.
+    pub(crate) nav: NavHistory,
+    /// The persistent recent-issues strip's inner rendering area, recorded
+    /// during render so click hit-testing can recompute chip offsets from
+    /// the same layout the renderer used.
+    pub(crate) nav_strip_area: Cell<Rect>,
+    /// Home wide layout's "recent" rail card inner area, same purpose as
+    /// `nav_strip_area` above.
+    pub(crate) home_recent_area: Cell<Rect>,
 
     // Search / go-to-issue.
     pub search: SearchState,
@@ -471,9 +467,9 @@ impl App {
             list_focus: ListFocus::List,
             detail_cache: HashMap::new(),
             link_index: 0,
-            detail_back: Vec::new(),
-            detail_forward: Vec::new(),
-            recent: Vec::new(),
+            nav: NavHistory::default(),
+            nav_strip_area: Cell::new(Rect::default()),
+            home_recent_area: Cell::new(Rect::default()),
             search: SearchState::default(),
             board_sel: BoardSelection::default(),
             board_scroll: 0,

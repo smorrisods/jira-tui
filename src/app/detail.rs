@@ -25,31 +25,18 @@ impl App {
     }
 
     /// Load and open an issue by key directly, regardless of whether it's in
-    /// the current filtered/sorted view. Used by search results and "go to
-    /// issue". If the key is present in the current view, `selected` is
-    /// synced so back-navigation lands somewhere sensible.
-    ///
-    /// If already viewing another issue's Detail, the outgoing issue is
-    /// pushed onto the back-navigation history (see `app::history`) so
-    /// `←`/`→` can step through issues followed via in-body links; opening
-    /// fresh from the list/search starts a new history instead.
+    /// the current filtered/sorted view. Used by search results, board/
+    /// release cards, and "go to issue" — every genuinely fresh navigation,
+    /// as opposed to following an in-body link (see `App::follow_link`,
+    /// which is what `←`/`→`/`,`/`.` end up stepping back through). If the
+    /// key is present in the current view, `selected` is synced so
+    /// back-navigation lands somewhere sensible.
     ///
     /// Demo/cache sessions resolve inline (no network call to speak of); a
     /// genuine live session dispatches the fetch off the render thread and
     /// navigates to `Screen::Detail` once it lands — see `dispatch_detail_fetch`.
     pub fn open_by_key(&mut self, key: &str) {
-        self.note_recent(key);
-        if self.screen == Screen::Detail {
-            if let Some(current) = self.detail.as_ref().map(|d| d.key.clone()) {
-                if current != key {
-                    self.detail_back.push(current);
-                    self.detail_forward.clear();
-                }
-            }
-        } else {
-            self.detail_back.clear();
-            self.detail_forward.clear();
-        }
+        self.nav.visit_fresh(key);
         self.show_issue(key);
     }
 

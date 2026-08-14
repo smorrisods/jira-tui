@@ -129,6 +129,44 @@ impl App {
         self.tree_rows().get(pos).map(|(idx, _)| *idx)
     }
 
+    /// Resolve a click on the persistent recent-issues strip
+    /// (`ui::nav_strip`) to the issue key under the cursor. Recomputes the
+    /// same `strip_layout` the renderer used from `nav_strip_area`'s
+    /// recorded width rather than caching offsets, so render and hit-test
+    /// can't disagree.
+    pub fn nav_entry_at(&self, x: u16, y: u16) -> Option<String> {
+        let area = self.nav_strip_area.get();
+        if !Self::point_in(area, x, y) {
+            return None;
+        }
+        let col = (x - area.x) as usize;
+        let entries = self.nav.entries();
+        let layout = crate::ui::nav_strip::strip_layout(&entries, area.width as usize);
+        layout
+            .hits
+            .into_iter()
+            .find(|(start, end, _)| col >= *start && col < *end)
+            .map(|(_, _, key)| key)
+    }
+
+    /// Resolve a click on Home wide layout's interactive "recent" rail
+    /// card to the issue key of the row under the cursor — same source
+    /// list and cap (`ui::home::HOME_CARD_MAX`) the card actually rendered
+    /// (`ui::home::draw_recent_card`), one issue per row.
+    pub fn recent_card_entry_at(&self, x: u16, y: u16) -> Option<String> {
+        let area = self.home_recent_area.get();
+        if !Self::point_in(area, x, y) {
+            return None;
+        }
+        let row = (y - area.y) as usize;
+        self.nav
+            .entries()
+            .into_iter()
+            .take(crate::ui::home::HOME_CARD_MAX)
+            .nth(row)
+            .map(|entry| entry.key)
+    }
+
     /// Resolve a screen coordinate to the index of a navigable link (issue
     /// key/URL) under the cursor, in the full Detail screen or the
     /// quick-view panel. Wrap-aware: `render::line_col_at_row` maps the
@@ -342,9 +380,19 @@ impl App {
         if self.mouse.sel_start_x == self.mouse.sel_end_x
             && self.mouse.sel_start_y == self.mouse.sel_end_y
         {
-            // A click, not a drag: open the issue under the cursor, or —
-            // in the Detail screen/quick-view panel — the link under it.
-            if matches!(self.screen, Screen::Home | Screen::List) && self.list_index_at(y).is_some()
+            // A click, not a drag: jump to a recent-issues entry (strip or,
+            // on wide Home, the rail card), open the issue under the
+            // cursor, or — in the Detail screen/quick-view panel — the
+            // link under it. The recent-issues checks come first since
+            // `list_index_at`'s check is y-only and would otherwise treat
+            // a rail-card click as a click on whatever list row shares its
+            // row.
+            if let Some(key) = self.nav_entry_at(x, y) {
+                self.nav_jump(&key);
+            } else if let Some(key) = self.recent_card_entry_at(x, y) {
+                self.nav_jump(&key);
+            } else if matches!(self.screen, Screen::Home | Screen::List)
+                && self.list_index_at(y).is_some()
             {
                 self.open_detail();
             } else if let Some(idx) = self.link_at(x, y) {
