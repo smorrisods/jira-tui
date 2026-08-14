@@ -11,7 +11,10 @@ use crate::domain::Source;
 
 use super::list::{flat_guide, issue_row};
 use super::list_columns::column_set_for_width;
-use super::{accent, accent2, card, card_bordered, maple, muted, ok, selected_style, warn};
+use super::{
+    accent, accent2, card, card_bordered, maple, muted, ok, scroll_center_offset, selected_style,
+    warn,
+};
 
 pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
     let rows = Layout::default()
@@ -98,6 +101,12 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
     let columns = column_set_for_width(inner.width);
     let guide = flat_guide();
     let mut lines: Vec<Line> = Vec::new();
+    // Line index the selected row starts at — a row can span more than one
+    // line (`SearchRow::Live`'s "found via live search" annotation, or a
+    // narrow-terminal two-line `issue_row`), so this has to be tracked
+    // alongside `lines` rather than derived from `app.search.selected`
+    // after the fact.
+    let mut selected_line = 0usize;
     for (i, row) in app.search.rows.iter().enumerate() {
         let selected = i == app.search.selected;
         let cursor = if selected { "▌" } else { " " };
@@ -110,6 +119,9 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
             selected,
         );
         let row_start = lines.len();
+        if selected {
+            selected_line = row_start;
+        }
         match row {
             SearchRow::Goto(key) => {
                 lines.push(Line::from(vec![
@@ -171,5 +183,19 @@ pub(crate) fn draw_search(f: &mut Frame, app: &App, area: Rect) {
             }
         }
     }
-    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+    // Keep the selected row in view — mirrors `ui::list`'s scroll window,
+    // but by line offset (not row index) since a row here can span more
+    // than one line.
+    let height = inner.height as usize;
+    let max_scroll = lines.len().saturating_sub(height);
+    let scroll = scroll_center_offset(selected_line, height).min(max_scroll);
+    f.render_widget(
+        // `Paragraph::scroll` takes a `u16`; a result set large enough to
+        // overflow it would otherwise wrap the offset to somewhere
+        // arbitrary instead of just clamping, so this clamps explicitly
+        // rather than relying on the (already-bounded-by-`max_scroll`)
+        // value happening to fit.
+        Paragraph::new(Text::from(lines)).scroll((scroll.min(u16::MAX as usize) as u16, 0)),
+        inner,
+    );
 }
