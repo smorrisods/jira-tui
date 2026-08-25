@@ -305,3 +305,44 @@ fn search_users_tool_exists_and_requires_query() {
         "search_users should require a `query` field, got: {required:?}"
     );
 }
+
+/// `list_attachments` should exist and require the issue `key`, matching
+/// the `GetIssueParams` shape it shares with `get_issue`/`list_comments`.
+#[test]
+fn list_attachments_tool_exists_and_requires_key() {
+    let mut mcp = McpProcess::spawn();
+    let tools = mcp.list_tools();
+
+    let tool = find_tool(&tools, "list_attachments");
+    let required = required_params(tool);
+    assert!(
+        required.contains(&"key".to_string()),
+        "list_attachments should require a `key` field, got: {required:?}"
+    );
+}
+
+/// The server's top-level instructions should also name `list_attachments`
+/// alongside the other read tools, so an agent reading only the
+/// instructions still lands on the right name.
+#[test]
+fn server_instructions_name_list_attachments() {
+    let mut mcp = McpProcess::spawn();
+    let init = mcp
+        .send(
+            "initialize",
+            serde_json::json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "0.0.0"},
+            }),
+        )
+        .unwrap();
+    let instructions = init["result"]["instructions"]
+        .as_str()
+        .expect("server should advertise instructions");
+
+    assert!(
+        instructions.contains("list_attachments"),
+        "instructions should name `list_attachments` explicitly: {instructions}"
+    );
+}

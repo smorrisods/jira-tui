@@ -208,6 +208,7 @@ impl JiraMcpServer {
                     "children": detail.children,
                     "description_markdown": description_markdown,
                     "transitions": detail.transitions,
+                    "attachments": detail.attachments,
                 }))
             }
             Err(_) => {
@@ -227,6 +228,7 @@ impl JiraMcpServer {
                     "children": detail.children,
                     "description_markdown": description_markdown,
                     "transitions": detail.transitions,
+                    "attachments": detail.attachments,
                     "note": "demo data — no Jira credentials configured",
                 }))
             }
@@ -328,6 +330,29 @@ impl JiraMcpServer {
                 let comments = demo_detail(&key).comments;
                 to_json(&serde_json::json!({
                     "comments": comments_json(&comments),
+                    "note": "demo data — no Jira credentials configured",
+                }))
+            }
+        }
+    }
+
+    #[tool(
+        description = "List an issue's file attachments (id, filename, mime type, size, created, download URL). Falls back to demo data if no Jira credentials are configured."
+    )]
+    fn list_attachments(
+        &self,
+        Parameters(GetIssueParams { key }): Parameters<GetIssueParams>,
+    ) -> Result<String, McpError> {
+        match live_cfg() {
+            Ok(cfg) => {
+                let attachments = crate::jira::fetch_attachments(&cfg, &key)
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                to_json(&attachments)
+            }
+            Err(_) => {
+                let attachments = demo_detail(&key).attachments;
+                to_json(&serde_json::json!({
+                    "attachments": attachments,
                     "note": "demo data — no Jira credentials configured",
                 }))
             }
@@ -507,7 +532,9 @@ impl ServerHandler for JiraMcpServer {
                  comments as Markdown via add_comment_markdown, list_comments, \
                  update_comment_markdown, delete_comment, get_description_markdown, \
                  and update_description_markdown (and create_issue's description_markdown \
-                 field) — never construct raw ADF JSON yourself. Use list_assignable_users \
+                 field) — never construct raw ADF JSON yourself. Use list_attachments (or \
+                 get_issue's attachments field) to see an issue's file attachments. Use \
+                 list_assignable_users \
                  and assign_issue to reassign or unassign issues by display name (or \"me\"). \
                  To @mention a teammate so they're actually notified, call search_users to \
                  resolve their accountId, then embed [~accountid:ACCOUNT_ID] directly in any \
