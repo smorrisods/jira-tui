@@ -136,6 +136,18 @@ struct SearchUsersParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct AddAttachmentParams {
+    /// Issue key, e.g. "DS-123".
+    key: String,
+    /// Local filesystem path to the file to upload. This is resolved on the
+    /// machine running the `jira-mcp` server process, not on the calling
+    /// agent's own machine — if those differ (e.g. the server runs on a
+    /// remote host), the file must already exist there, not on wherever the
+    /// agent itself is running.
+    file_path: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct AssignIssueParams {
     /// Issue key, e.g. "DS-123".
     key: String,
@@ -360,6 +372,33 @@ impl JiraMcpServer {
     }
 
     #[tool(
+        description = "Upload a local file as an attachment on an issue. `file_path` is resolved on the machine running the jira-mcp server, not the agent's own machine. Requires live Jira credentials."
+    )]
+    fn add_attachment(
+        &self,
+        Parameters(AddAttachmentParams { key, file_path }): Parameters<AddAttachmentParams>,
+    ) -> Result<String, McpError> {
+        let cfg = live_cfg()?;
+        let bytes = std::fs::read(&file_path).map_err(|e| {
+            McpError::invalid_params(format!("failed to read '{file_path}': {e}"), None)
+        })?;
+        let filename = std::path::Path::new(&file_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| {
+                McpError::invalid_params(
+                    format!("could not extract a filename from '{file_path}'"),
+                    None,
+                )
+            })?
+            .to_string();
+        let mime = crate::mime::guess_mime(&filename);
+        let attachments = crate::jira::upload_attachment(&cfg, &key, &filename, mime, &bytes)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        to_json(&serde_json::json!({ "attachments": attachments }))
+    }
+
+    #[tool(
         description = "Overwrite an existing comment's body, from Markdown (converted to ADF automatically — never send raw ADF JSON here). Requires live Jira credentials."
     )]
     fn update_comment_markdown(
@@ -533,7 +572,9 @@ impl ServerHandler for JiraMcpServer {
                  update_comment_markdown, delete_comment, get_description_markdown, \
                  and update_description_markdown (and create_issue's description_markdown \
                  field) — never construct raw ADF JSON yourself. Use list_attachments (or \
-                 get_issue's attachments field) to see an issue's file attachments. Use \
+                 get_issue's attachments field) to see an issue's file attachments, and \
+                 add_attachment to upload a new one from a local file path on the machine \
+                 running this server. Use \
                  list_assignable_users \
                  and assign_issue to reassign or unassign issues by display name (or \"me\"). \
                  To @mention a teammate so they're actually notified, call search_users to \

@@ -346,3 +346,47 @@ fn server_instructions_name_list_attachments() {
         "instructions should name `list_attachments` explicitly: {instructions}"
     );
 }
+
+/// `add_attachment` should exist and require both `key` and `file_path`.
+#[test]
+fn add_attachment_tool_exists_and_requires_key_and_file_path() {
+    let mut mcp = McpProcess::spawn();
+    let tools = mcp.list_tools();
+
+    let tool = find_tool(&tools, "add_attachment");
+    let required = required_params(tool);
+    assert!(
+        required.contains(&"key".to_string()),
+        "add_attachment should require a `key` field, got: {required:?}"
+    );
+    assert!(
+        required.contains(&"file_path".to_string()),
+        "add_attachment should require a `file_path` field, got: {required:?}"
+    );
+}
+
+/// The server's top-level instructions should also name `add_attachment`
+/// alongside the other write tools, so an agent reading only the
+/// instructions still lands on the right name.
+#[test]
+fn server_instructions_name_add_attachment() {
+    let mut mcp = McpProcess::spawn();
+    let init = mcp
+        .send(
+            "initialize",
+            serde_json::json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "0.0.0"},
+            }),
+        )
+        .unwrap();
+    let instructions = init["result"]["instructions"]
+        .as_str()
+        .expect("server should advertise instructions");
+
+    assert!(
+        instructions.contains("add_attachment"),
+        "instructions should name `add_attachment` explicitly: {instructions}"
+    );
+}
