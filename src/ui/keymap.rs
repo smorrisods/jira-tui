@@ -89,6 +89,10 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
         desc: "change status (in an issue)",
     },
     KeyHint {
+        key: "a (Detail)",
+        desc: "browse attachments — ⏎/o open in browser, d download",
+    },
+    KeyHint {
         key: "A",
         desc: "assign/unassign (in an issue or quick view) — type to filter, ↑/↓ move",
     },

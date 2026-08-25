@@ -84,7 +84,10 @@ fn detail_screen_wide_layout_shows_side_rail_panels() {
     let mut app = demo_app();
     app.screen = Screen::Home;
     app.open_by_key("DS-2722");
-    let text = render_at(&app, 120, 34);
+    // A taller viewport than the other wide-layout tests: the rail now has
+    // 5 panels (workflow/meta/links/children/attachments) rather than 4, so
+    // showing every one of them in full needs a bit more room.
+    let text = render_at(&app, 120, 40);
     assert!(
         text.contains("workflow"),
         "wide Detail should show a workflow rail panel"
@@ -124,6 +127,22 @@ fn detail_screen_wide_layout_shows_side_rail_panels() {
     assert!(
         text.matches('╭').count() >= 5,
         "the outer Detail card plus all 4 rail panels should each have their own border"
+    );
+}
+
+#[test]
+fn detail_screen_wide_layout_shows_the_attachments_rail_panel() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.open_by_key("DS-2722");
+    let text = render_at(&app, 120, 34);
+    assert!(
+        text.contains("attachments"),
+        "wide Detail should show an attachments rail panel"
+    );
+    assert!(
+        text.contains("accordion-mockup.png"),
+        "the attachments panel should list the demo attachment's filename"
     );
 }
 
@@ -174,6 +193,47 @@ fn detail_screen_narrow_layout_shows_facts_and_linked_panels() {
     assert!(
         text.contains(&first_author),
         "activity should still show comments"
+    );
+}
+
+#[test]
+fn detail_screen_narrow_layout_shows_the_attachments_section() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.open_by_key("DS-2722");
+    // Taller than the other narrow-layout tests: the attachments section
+    // sits after the description/linked panels in the scroll order, so
+    // reaching it needs a viewport tall enough to not scroll it off-screen.
+    let text = render_at(&app, 84, 70);
+    assert!(
+        text.contains("attachments · 2"),
+        "narrow Detail should show an attachments section with the demo count"
+    );
+    assert!(
+        text.contains("accordion-mockup.png"),
+        "the attachments section should list the demo attachment's filename"
+    );
+}
+
+#[test]
+fn attachment_picker_overlay_renders_when_open() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.open_by_key("DS-2722");
+    app.open_attachments();
+    assert!(app.attachments_open);
+    let text = render(&app);
+    assert!(
+        text.contains("attachments"),
+        "the attachment picker overlay should show its title"
+    );
+    assert!(
+        text.contains("accordion-mockup.png"),
+        "the attachment picker should list the demo attachment's filename"
+    );
+    assert!(
+        text.contains("download"),
+        "the attachment picker should hint at the download key"
     );
 }
 

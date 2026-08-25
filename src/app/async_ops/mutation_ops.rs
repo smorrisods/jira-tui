@@ -385,6 +385,56 @@ fn create_issue_blocking(
     Ok(local_key.to_string())
 }
 
+/// Spawn an attachment download off the render thread, sending the result
+/// back as `AppEvent::AttachmentDownloaded`. Only ever dispatched for a
+/// genuine `Source::Live` session (see `App::download_selected_attachment`),
+/// but — like every other `dispatch_*` here — compiles unconditionally,
+/// gating the actual network call inside the blocking half.
+pub(crate) fn dispatch_attachment_download(
+    tx: UnboundedSender<AppEvent>,
+    key: String,
+    filename: String,
+    content_url: String,
+) {
+    tokio::spawn(async move {
+        let key_for_result = key.clone();
+        let filename_for_result = filename.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            download_attachment_blocking(&filename, &content_url)
+        })
+        .await
+        .unwrap_or_else(|_| Err("internal error: task panicked".into()));
+        let _ = tx.send(AppEvent::AttachmentDownloaded {
+            key: key_for_result,
+            filename: filename_for_result,
+            result,
+        });
+    });
+}
+
+/// Fetches `content_url`'s bytes, sanitizes `filename` to a safe on-disk
+/// basename (`attachments::sanitize_attachment_filename` — the API response
+/// is untrusted input), de-dupes it against the current working directory
+/// (`attachments::dedupe_filename`), and writes the bytes there. Returns the
+/// saved path as a display string.
+#[allow(unused_variables)]
+fn download_attachment_blocking(filename: &str, content_url: &str) -> Result<String, String> {
+    #[cfg(feature = "live")]
+    {
+        let cfg =
+            crate::jira::Config::load().ok_or_else(|| "no credentials configured".to_string())?;
+        let bytes =
+            crate::jira::download_attachment(&cfg, content_url).map_err(|e| e.to_string())?;
+        let safe_name = super::super::attachments::sanitize_attachment_filename(filename);
+        let dir = std::env::current_dir().map_err(|e| e.to_string())?;
+        let path = super::super::attachments::dedupe_filename(&dir, &safe_name);
+        std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+        Ok(path.display().to_string())
+    }
+    #[cfg(not(feature = "live"))]
+    Err("this build has no live support".to_string())
+}
+
 impl App {
     /// Applies `AppEvent::TransitionApplied` — see `dispatch_transition` above.
     pub(super) fn apply_transition_applied(
@@ -648,6 +698,26 @@ impl App {
             }
         } else {
             self.refresh_release_drill_if_showing(&version_name);
+        }
+    }
+
+    /// Applies `AppEvent::AttachmentDownloaded` — see
+    /// `dispatch_attachment_download` above. No generation to check (see
+    /// that event variant's own doc comment) — this only ever surfaces a
+    /// status flash, never mutates state a stale result could corrupt.
+    pub(super) fn apply_attachment_downloaded(
+        &mut self,
+        key: String,
+        filename: String,
+        result: Result<String, String>,
+    ) {
+        self.loading = false;
+        match result {
+            Ok(path) => {
+                self.status = format!("{key}: downloaded {filename} to {path}");
+                self.flash(format!("✓ downloaded {filename}"));
+            }
+            Err(e) => self.status = format!("download failed: {e}"),
         }
     }
 }

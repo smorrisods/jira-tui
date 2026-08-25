@@ -21,6 +21,7 @@ use crate::git::GitContext;
 
 mod assign;
 mod async_ops;
+mod attachments;
 mod board;
 mod comments;
 mod detail;
@@ -212,6 +213,7 @@ pub struct App {
     pub detail_meta_area: Cell<Rect>,
     pub detail_links_area: Cell<Rect>,
     pub detail_children_area: Cell<Rect>,
+    pub detail_attachments_area: Cell<Rect>,
     pub quick_view_area: Cell<Rect>,
     /// The board's inner rendering area, recorded during render so keyboard
     /// navigation (which has no access to layout at input time) can compute
@@ -275,6 +277,13 @@ pub struct App {
     /// next keypress — `y`/`Y` confirms the discard, anything else dismisses
     /// the prompt and resumes editing.
     pub confirm_discard: bool,
+
+    // Attachment picker (`a`, Detail only): open a picker over the current
+    // issue's attachments, then open the highlighted one in the browser or
+    // download it — see `app::attachments`.
+    /// Whether the attachment picker is currently open.
+    pub attachments_open: bool,
+    pub attachment_index: usize,
 
     /// The screen `a` was pressed from, so backing out of About (see #38)
     /// restores it instead of always landing on Home.
@@ -493,6 +502,7 @@ impl App {
             detail_meta_area: Cell::new(Rect::default()),
             detail_links_area: Cell::new(Rect::default()),
             detail_children_area: Cell::new(Rect::default()),
+            detail_attachments_area: Cell::new(Rect::default()),
             quick_view_area: Cell::new(Rect::default()),
             board_area: Cell::new(Rect::default()),
             new_issue_project_area: Cell::new(Rect::default()),
@@ -512,6 +522,8 @@ impl App {
             edit_key: None,
             edit_return_screen: Screen::Detail,
             confirm_discard: false,
+            attachments_open: false,
+            attachment_index: 0,
             about_return_screen: Screen::Home,
             field_mapping: FieldMappingState::default(),
             current_view: ViewKind::default(),

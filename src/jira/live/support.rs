@@ -1,6 +1,8 @@
 //! HTTP request primitives and shared response-parsing helpers used by
 //! every other file in this module.
 
+use std::io::Read;
+
 use anyhow::{anyhow, Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::Value;
@@ -22,6 +24,22 @@ pub(super) fn get(cfg: &Config, path: &str) -> Result<Value> {
         .map_err(|e| anyhow!("Jira request failed: {e}"))?;
     let value: Value = resp.into_json().context("decoding Jira JSON")?;
     Ok(value)
+}
+
+/// Like `get`, but for a full absolute URL (not a `cfg.base_url`-relative
+/// path) and returning raw bytes rather than parsed JSON — Jira's
+/// attachment `content` URL is already absolute, and the payload is
+/// arbitrary binary data, not JSON. Reuses the same auth header `get` does.
+pub(super) fn get_bytes(cfg: &Config, url: &str) -> Result<Vec<u8>> {
+    let resp = ureq::get(url)
+        .set("Authorization", &auth_header(cfg))
+        .call()
+        .map_err(|e| anyhow!("Jira request failed: {e}"))?;
+    let mut buf = Vec::new();
+    resp.into_reader()
+        .read_to_end(&mut buf)
+        .context("reading attachment bytes")?;
+    Ok(buf)
 }
 
 pub(super) fn send(cfg: &Config, method: &str, path: &str, body: Value) -> Result<()> {

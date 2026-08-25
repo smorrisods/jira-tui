@@ -74,6 +74,7 @@ fn draw_wide(
             DetailPane::Meta => &mut wide.meta.lines,
             DetailPane::Links => &mut wide.links.lines,
             DetailPane::Children => &mut wide.children.lines,
+            DetailPane::Attachments => &mut wide.attachments.lines,
         };
         render::highlight_target(lines, &target);
     }
@@ -109,6 +110,11 @@ fn draw_wide(
     } else {
         format!("children · {}", detail.children.len())
     };
+    let attachments_title = if detail.attachments.is_empty() {
+        "attachments".to_string()
+    } else {
+        format!("attachments · {}", detail.attachments.len())
+    };
     draw_rail(
         f,
         cols[1],
@@ -127,11 +133,17 @@ fn draw_wide(
                 wide.children,
                 &app.detail_children_area,
             ),
+            (
+                attachments_title,
+                accent2(),
+                wide.attachments,
+                &app.detail_attachments_area,
+            ),
         ],
     );
 }
 
-/// The static side rail: four bordered mini-panels (matching this app's
+/// The static side rail: five bordered mini-panels (matching this app's
 /// established "titled card" look everywhere else — quick view, Board's
 /// cards, the outer Detail card itself), sized to their own wrapped content
 /// (via `wrapped_row_count`, against the *inner* content width now that a
@@ -142,7 +154,7 @@ fn draw_wide(
 /// clipping on genuine overflow (more content than the rail area has room
 /// for at all) is an accepted scope cut for this phase (see the module
 /// doc's plan reference).
-fn draw_rail(f: &mut Frame, area: Rect, panels: [(String, Color, Panel, &Cell<Rect>); 4]) {
+fn draw_rail(f: &mut Frame, area: Rect, panels: [(String, Color, Panel, &Cell<Rect>); 5]) {
     let last = panels.len() - 1;
     let content_width = area.width.saturating_sub(2);
     let constraints: Vec<Constraint> = panels

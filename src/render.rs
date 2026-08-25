@@ -6,7 +6,8 @@
 //!
 //! The body is built from small section-builder functions (`identity_lines`,
 //! `meta_lines`, `workflow_lines`, `links_lines`, `children_lines`,
-//! `description_lines`, `activity_lines_cards`, plus quick view's own
+//! `attachments_lines`, `description_lines`, `activity_lines_cards`, plus
+//! quick view's own
 //! `quick_view_chip_line`/`quick_view_kv_fields`/`quick_view_meta_lines`/
 //! `quick_view_inline_kv_line`), each producing a self-contained `Vec<Line>`.
 //! The composers below concatenate them in different orders/arrangements
@@ -56,6 +57,7 @@ pub enum DetailPane {
     Meta,
     Links,
     Children,
+    Attachments,
 }
 
 /// Something a navigable span in the rendered detail points to — either
@@ -114,6 +116,7 @@ pub struct WideDetail {
     pub meta: Panel,
     pub links: Panel,
     pub children: Panel,
+    pub attachments: Panel,
 }
 
 /// The Detail screen's narrow (< ~90 cols) layout: one scrollable document,
@@ -364,6 +367,54 @@ fn children_lines(detail: &IssueDetail) -> Vec<Line<'static>> {
         .collect()
 }
 
+fn attachments_lines(detail: &IssueDetail) -> Vec<Line<'static>> {
+    detail
+        .attachments
+        .iter()
+        .map(|a| {
+            Line::from(vec![
+                Span::styled(a.filename.clone(), Style::default().fg(accent())),
+                Span::styled(
+                    format!(" · {} · {}", human_size(a.size), a.mime_type),
+                    Style::default().fg(muted()),
+                ),
+            ])
+        })
+        .collect()
+}
+
+/// Human-readable file size (base-1024, matching common OS conventions):
+/// bytes below 1 KiB as a bare "N B", otherwise "N KB"/"N MB"/... with one
+/// decimal place, dropped when it would just be ".0" (so an exact "240 KB"
+/// reads as such, not "240.0 KB").
+pub(crate) fn human_size(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
+    if bytes < 1024 {
+        return format!("{bytes} B");
+    }
+    let mut size = bytes as f64 / 1024.0;
+    let mut unit = 0usize;
+    while size >= 1024.0 && unit + 1 < UNITS.len() {
+        size /= 1024.0;
+        unit += 1;
+    }
+    if (size - size.round()).abs() < 0.05 {
+        format!("{:.0} {}", size, UNITS[unit])
+    } else {
+        format!("{:.1} {}", size, UNITS[unit])
+    }
+}
+
+/// Narrow Detail's attachments section title, matching `linked_panel_title`'s
+/// "only rendered when non-empty" shape — the count is always ≥ 1 wherever
+/// this is actually used.
+fn attachments_panel_title(detail: &IssueDetail) -> Line<'static> {
+    Line::from(Span::styled(
+        format!("attachments · {}", detail.attachments.len()),
+        Style::default().fg(accent2()).add_modifier(Modifier::BOLD),
+    ))
+}
+
 /// Narrow Detail's "linked" panel (SPEC.md §6): links and children merged
 /// into one list.
 fn linked_lines(detail: &IssueDetail) -> Vec<Line<'static>> {
@@ -567,6 +618,7 @@ pub fn wide_detail(
     let meta = linkify_panel(meta_lines(detail, updated), DetailPane::Meta);
     let links = linkify_panel(links_lines(detail), DetailPane::Links);
     let children = linkify_panel(children_lines(detail), DetailPane::Children);
+    let attachments = linkify_panel(attachments_lines(detail), DetailPane::Attachments);
 
     let mut main_lines = description_lines(detail, main_width);
     let (activity, header, starts) =
@@ -592,15 +644,16 @@ pub fn wide_detail(
         meta,
         links,
         children,
+        attachments,
     }
 }
 
 /// The wide layout's link-cycling order: identity, then `main` (description
 /// and activity, reading all the way down the primary column), then the
-/// side rail top-to-bottom (workflow, meta, links, children) — so `{`/`}`
-/// cycling reaches every link in the layout, not just `main`'s. Shared by
-/// `app::links::active_links` and `ui::detail`'s highlight logic so both
-/// agree on what `link_index` N actually refers to.
+/// side rail top-to-bottom (workflow, meta, links, children, attachments) —
+/// so `{`/`}` cycling reaches every link in the layout, not just `main`'s.
+/// Shared by `app::links::active_links` and `ui::detail`'s highlight logic
+/// so both agree on what `link_index` N actually refers to.
 pub fn wide_detail_links(wide: &WideDetail) -> Vec<LinkTarget> {
     wide.identity
         .links
@@ -610,6 +663,7 @@ pub fn wide_detail_links(wide: &WideDetail) -> Vec<LinkTarget> {
         .chain(wide.meta.links.iter())
         .chain(wide.links.links.iter())
         .chain(wide.children.links.iter())
+        .chain(wide.attachments.links.iter())
         .cloned()
         .collect()
 }
@@ -642,6 +696,13 @@ pub fn narrow_detail(
         lines.push(divider());
         lines.push(linked_panel_title(detail));
         lines.extend(linked);
+    }
+
+    let attachments = attachments_lines(detail);
+    if !attachments.is_empty() {
+        lines.push(divider());
+        lines.push(attachments_panel_title(detail));
+        lines.extend(attachments);
     }
 
     let (activity, header, starts) = activity_lines_cards(&detail.comments, current_user, width);
@@ -1172,6 +1233,41 @@ mod link_tests {
     }
 
     #[test]
+    fn human_size_formats_bytes_below_a_kib_as_a_bare_count() {
+        assert_eq!(human_size(0), "0 B");
+        assert_eq!(human_size(1023), "1023 B");
+    }
+
+    #[test]
+    fn human_size_drops_a_trailing_zero_decimal() {
+        assert_eq!(human_size(1024), "1 KB");
+        assert_eq!(human_size(245_760), "240 KB");
+    }
+
+    #[test]
+    fn human_size_keeps_a_decimal_for_non_round_sizes() {
+        assert_eq!(human_size(88_213), "86.1 KB");
+        assert_eq!(human_size(1_258_291), "1.2 MB");
+    }
+
+    #[test]
+    fn human_size_scales_up_through_larger_units() {
+        assert_eq!(human_size(1024 * 1024), "1 MB");
+        assert_eq!(human_size(1024 * 1024 * 1024), "1 GB");
+    }
+
+    #[test]
+    fn attachments_lines_render_filename_size_and_mime_type() {
+        let detail = demo_detail(&demo_issues()[1].key);
+        let lines = attachments_lines(&detail);
+        assert!(!lines.is_empty());
+        let text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("accordion-mockup.png"));
+        assert!(text.contains("KB"));
+        assert!(text.contains("image/png"));
+    }
+
+    #[test]
     fn relation_colour_distinguishes_relates_from_everything_else() {
         assert_eq!(relation_colour("relates to"), ok());
         assert_eq!(relation_colour("is blocked by"), danger());
@@ -1194,6 +1290,7 @@ mod link_tests {
             &wide.meta,
             &wide.links,
             &wide.children,
+            &wide.attachments,
         ] {
             for target in &panel.links {
                 assert!(target.line < panel.lines.len());

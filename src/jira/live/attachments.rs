@@ -7,7 +7,7 @@
 use serde_json::Value;
 
 use super::super::config::Config;
-use super::support::{get, str_field};
+use super::support::{get, get_bytes, str_field};
 use crate::domain::Attachment;
 
 /// Parse a `fields.attachment` JSON array (Jira's shape:
@@ -44,6 +44,14 @@ pub fn fetch_attachments(cfg: &Config, key: &str) -> anyhow::Result<Vec<Attachme
     let issue = get(cfg, &path)?;
     let f = issue.get("fields").cloned().unwrap_or(Value::Null);
     Ok(parse_attachments(&f))
+}
+
+/// Download an attachment's raw bytes from its `content_url` (already an
+/// absolute URL, per Jira's `attachment.content` field) — used by
+/// `app::async_ops::mutation_ops::dispatch_attachment_download`'s blocking
+/// half to save an attachment to disk.
+pub fn download_attachment(cfg: &Config, content_url: &str) -> anyhow::Result<Vec<u8>> {
+    get_bytes(cfg, content_url)
 }
 
 #[cfg(test)]
@@ -102,5 +110,39 @@ mod tests {
 
         let cfg = test_config(server.url());
         assert!(fetch_attachments(&cfg, "DS-1").is_err());
+    }
+
+    #[test]
+    fn download_attachment_returns_the_raw_bytes() {
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("GET", "/secure/attachment/10001/accordion-mockup.png")
+            .with_status(200)
+            .with_header("content-type", "image/png")
+            .with_body(b"\x89PNG\r\n\x1a\nnot a real png, just test bytes")
+            .create();
+
+        let cfg = test_config(server.url());
+        let url = format!(
+            "{}/secure/attachment/10001/accordion-mockup.png",
+            cfg.base_url
+        );
+        let bytes = download_attachment(&cfg, &url).unwrap();
+
+        mock.assert();
+        assert_eq!(bytes, b"\x89PNG\r\n\x1a\nnot a real png, just test bytes");
+    }
+
+    #[test]
+    fn download_attachment_surfaces_http_errors() {
+        let mut server = mockito::Server::new();
+        server
+            .mock("GET", "/secure/attachment/missing.png")
+            .with_status(404)
+            .create();
+
+        let cfg = test_config(server.url());
+        let url = format!("{}/secure/attachment/missing.png", cfg.base_url);
+        assert!(download_attachment(&cfg, &url).is_err());
     }
 }

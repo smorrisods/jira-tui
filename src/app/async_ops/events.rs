@@ -202,6 +202,18 @@ pub enum AppEvent {
         description: Option<serde_json::Value>,
         result: Result<String, String>,
     },
+    /// An attachment download to disk resolved (or failed) — see
+    /// `App::download_selected_attachment`/`dispatch_attachment_download`.
+    /// Carries no `generation`: like `TeammatesDiscovered`, it only ever
+    /// surfaces a status flash and never mutates state a stale result could
+    /// corrupt, so there's nothing for a counter to guard against. `result`'s
+    /// `Ok` payload is the saved file's path, as a display string rather
+    /// than a `PathBuf`, since it's only ever shown to the user.
+    AttachmentDownloaded {
+        key: String,
+        filename: String,
+        result: Result<String, String>,
+    },
 }
 
 impl App {
@@ -327,6 +339,11 @@ impl App {
                 description,
                 result,
             } => self.apply_issue_created(generation, issue_type, summary, description, result),
+            AppEvent::AttachmentDownloaded {
+                key,
+                filename,
+                result,
+            } => self.apply_attachment_downloaded(key, filename, result),
         }
     }
 }
