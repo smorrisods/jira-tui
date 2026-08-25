@@ -68,6 +68,77 @@ pub(super) fn post_or_put(cfg: &Config, method: &str, path: &str, body: Value) -
     Ok(resp.into_json().unwrap_or(Value::Null))
 }
 
+/// Multipart/form-data boundary for `post_multipart`. Fixed rather than
+/// generated per call: every call sends exactly one part, so there's no risk
+/// of the payload's own bytes colliding with it — that would require the
+/// uploaded file to itself contain this exact line, which a boundary this
+/// long makes vanishingly unlikely.
+const MULTIPART_BOUNDARY: &str = "----jira-tui-boundary-7f3a9c2e1b6d4f58";
+
+/// Strip characters that would let a hostile filename break out of the
+/// `Content-Disposition` header's quoted `filename="..."` value: `"` would
+/// close the quote early, CR/LF would inject extra header lines into the
+/// multipart body.
+fn sanitize_filename(filename: &str) -> String {
+    filename
+        .chars()
+        .filter(|c| !matches!(c, '"' | '\r' | '\n'))
+        .collect()
+}
+
+/// Hand-build a multipart/form-data body containing a single `file` part.
+/// Split out from `post_multipart` as a pure function so the framing
+/// (escaping, CRLF terminators, boundary placement) is unit-testable without
+/// a network round-trip.
+fn build_multipart_body(boundary: &str, filename: &str, mime: &str, bytes: &[u8]) -> Vec<u8> {
+    let safe_name = sanitize_filename(filename);
+    let mut body = Vec::with_capacity(bytes.len() + 256);
+    body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+    body.extend_from_slice(
+        format!("Content-Disposition: form-data; name=\"file\"; filename=\"{safe_name}\"\r\n")
+            .as_bytes(),
+    );
+    body.extend_from_slice(format!("Content-Type: {mime}\r\n\r\n").as_bytes());
+    body.extend_from_slice(bytes);
+    body.extend_from_slice(b"\r\n");
+    body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+    body
+}
+
+/// POST a file as a `multipart/form-data` body — used for Jira's
+/// attachment-upload endpoint, the one write call that isn't plain JSON.
+/// Hand-rolled rather than pulling in a multipart crate, matching this
+/// file's existing style of hand-rolling small protocol bits (see
+/// `url_encode` above).
+pub(super) fn post_multipart(
+    cfg: &Config,
+    path: &str,
+    filename: &str,
+    mime: &str,
+    bytes: &[u8],
+) -> Result<Value> {
+    let url = format!("{}{}", cfg.base_url, path);
+    let body = build_multipart_body(MULTIPART_BOUNDARY, filename, mime, bytes);
+    let resp = ureq::post(&url)
+        .set("Authorization", &auth_header(cfg))
+        .set("Accept", "application/json")
+        .set(
+            "Content-Type",
+            &format!("multipart/form-data; boundary={MULTIPART_BOUNDARY}"),
+        )
+        // Jira's XSRF/CSRF check blocks any state-changing REST call unless
+        // it either carries a matching browser session cookie or explicitly
+        // opts out with this header. A plain REST client never has the
+        // cookie, so without this the upload gets bounced with a 403 before
+        // it reaches the attachment handler at all — a well-known but easy
+        // to miss Jira Cloud/Server trap for exactly this endpoint.
+        .set("X-Atlassian-Token", "no-check")
+        .send_bytes(&body)
+        .map_err(|e| anyhow!("Jira attachment upload failed: {e}"))?;
+    let value: Value = resp.into_json().context("decoding Jira JSON")?;
+    Ok(value)
+}
+
 pub(super) fn delete(cfg: &Config, path: &str) -> Result<()> {
     let url = format!("{}{}", cfg.base_url, path);
     ureq::delete(&url)
@@ -220,5 +291,37 @@ mod tests {
 
         let cfg = test_config(server.url());
         assert!(whoami(&cfg).is_err());
+    }
+
+    #[test]
+    fn multipart_body_escapes_a_quote_in_the_filename() {
+        let body = build_multipart_body("BOUND", "evil\".txt", "text/plain", b"hi");
+        let text = String::from_utf8_lossy(&body);
+        // The quote is stripped, not merely escaped, so it can't close the
+        // `filename="..."` value early and inject extra header syntax.
+        assert!(text.contains("filename=\"evil.txt\""));
+        assert!(!text.contains("evil\".txt"));
+    }
+
+    #[test]
+    fn multipart_body_strips_cr_and_lf_from_the_filename() {
+        let body =
+            build_multipart_body("BOUND", "evil\r\nX-Injected: yes.txt", "text/plain", b"hi");
+        let text = String::from_utf8_lossy(&body);
+        assert!(text.contains("filename=\"evilX-Injected: yes.txt\""));
+        assert!(!text.contains("X-Injected: yes.txt\r\n\r\nContent-Type"));
+    }
+
+    #[test]
+    fn multipart_body_has_the_expected_framing() {
+        let body = build_multipart_body("BOUND", "report.txt", "text/plain", b"payload-bytes");
+        let text = String::from_utf8_lossy(&body);
+        assert!(text.starts_with("--BOUND\r\n"));
+        assert!(text.contains(
+            "Content-Disposition: form-data; name=\"file\"; filename=\"report.txt\"\r\n"
+        ));
+        assert!(text.contains("Content-Type: text/plain\r\n\r\n"));
+        assert!(text.contains("payload-bytes"));
+        assert!(text.trim_end().ends_with("--BOUND--"));
     }
 }

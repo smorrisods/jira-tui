@@ -24,7 +24,7 @@ mod search;
 mod support;
 mod versions;
 
-pub use attachments::{download_attachment, fetch_attachments};
+pub use attachments::{download_attachment, fetch_attachments, guess_mime, upload_attachment};
 pub use comments::{add_comment, delete_comment, fetch_comments, update_comment};
 pub use detail::fetch_detail;
 pub use fields::{list_fields, FieldInfo};
