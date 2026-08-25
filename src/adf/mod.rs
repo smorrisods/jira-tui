@@ -167,6 +167,42 @@ fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize, width:
             }
         }
         "table" => render_table(node, out, width),
+        "mediaSingle" | "mediaGroup" => {
+            if let Some(content) = node.get("content").and_then(|c| c.as_array()) {
+                for child in content {
+                    render_block(child, out, depth, width);
+                }
+            }
+        }
+        "media" => {
+            let attrs = node.get("attrs");
+            let alt = attrs
+                .and_then(|a| a.get("alt"))
+                .and_then(|a| a.as_str())
+                .filter(|a| !a.is_empty());
+            let external_url =
+                attrs.and_then(|a| a.get("type")).and_then(|t| t.as_str()) == Some("external");
+            let url = attrs.and_then(|a| a.get("url")).and_then(|u| u.as_str());
+            let text = if let Some(alt) = alt {
+                format!("[image: {alt}]")
+            } else if external_url {
+                match url {
+                    Some(url) => format!("[image: {url}]"),
+                    None => "[embedded media]".to_string(),
+                }
+            } else {
+                "[embedded media]".to_string()
+            };
+            let mut spans = Vec::new();
+            if depth > 0 {
+                spans.push(Span::raw(indent(depth)));
+            }
+            spans.push(Span::styled(
+                text,
+                Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
+            ));
+            out.push(Line::from(spans));
+        }
         _ => {
             // generic container: descend if possible
             if let Some(content) = node.get("content").and_then(|c| c.as_array()) {
@@ -492,6 +528,87 @@ mod tests {
         assert!(joined.contains("Done"));
         assert!(joined.contains("[✓]"));
         assert!(joined.contains("ship it"));
+    }
+
+    fn flat(doc: &serde_json::Value) -> String {
+        render(doc, 120)
+            .lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn media_single_with_alt_renders_alt_text_placeholder() {
+        let doc = json!({
+            "type": "doc",
+            "content": [
+                { "type": "mediaSingle", "content": [
+                    { "type": "media", "attrs": { "id": "abc-123", "type": "file", "alt": "a screenshot" } }
+                ] }
+            ]
+        });
+        let s = flat(&doc);
+        assert!(s.contains("[image: a screenshot]"));
+    }
+
+    #[test]
+    fn media_without_alt_or_external_url_renders_generic_placeholder() {
+        let doc = json!({
+            "type": "doc",
+            "content": [
+                { "type": "media", "attrs": { "id": "abc-123", "type": "file" } }
+            ]
+        });
+        let s = flat(&doc);
+        assert!(s.contains("[embedded media]"));
+    }
+
+    #[test]
+    fn media_group_renders_one_placeholder_line_per_child() {
+        let doc = json!({
+            "type": "doc",
+            "content": [
+                { "type": "mediaGroup", "content": [
+                    { "type": "media", "attrs": { "id": "one", "type": "file", "alt": "first" } },
+                    { "type": "media", "attrs": { "id": "two", "type": "file", "alt": "second" } }
+                ] }
+            ]
+        });
+        let text = render(&doc, 120);
+        let placeholder_lines = text
+            .lines
+            .iter()
+            .filter(|l| {
+                let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+                s.starts_with("[image:")
+            })
+            .count();
+        assert_eq!(
+            placeholder_lines, 2,
+            "expected two separate placeholder lines"
+        );
+        let s = flat(&doc);
+        assert!(s.contains("[image: first]"));
+        assert!(s.contains("[image: second]"));
+    }
+
+    #[test]
+    fn doc_with_only_a_media_node_renders_visibly_instead_of_vanishing() {
+        let doc = json!({
+            "type": "doc",
+            "content": [
+                { "type": "media", "attrs": { "id": "abc-123", "type": "external", "url": "https://example.com/img.png" } }
+            ]
+        });
+        let text = render(&doc, 120);
+        assert!(
+            !text.lines.is_empty(),
+            "a doc containing only a media node must not render as empty"
+        );
+        let s = flat(&doc);
+        assert!(s.contains("[image: https://example.com/img.png]"));
+        assert!(!s.contains("no rich content"));
     }
 }
 
