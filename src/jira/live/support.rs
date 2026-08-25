@@ -73,7 +73,22 @@ pub(super) fn post_or_put(cfg: &Config, method: &str, path: &str, body: Value) -
 /// of the payload's own bytes colliding with it — that would require the
 /// uploaded file to itself contain this exact line, which a boundary this
 /// long makes vanishingly unlikely.
-const MULTIPART_BOUNDARY: &str = "----jira-tui-boundary-7f3a9c2e1b6d4f58";
+/// A fresh boundary per upload — reusing one fixed string across every
+/// request would let a file whose own bytes happen to contain that exact
+/// line truncate/corrupt the multipart body Jira receives. Nanosecond
+/// timestamp plus a per-process counter (rather than a `rand` dependency,
+/// which this repo otherwise has no use for) is enough entropy that a byte
+/// sequence colliding with it in an uploaded file is not a realistic
+/// concern.
+fn multipart_boundary() -> String {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    format!("--jira-tui-boundary-{nanos:x}-{n:x}")
+}
 
 /// Strip characters that would let a hostile filename break out of the
 /// `Content-Disposition` header's quoted `filename="..."` value: `"` would
@@ -118,13 +133,14 @@ pub(super) fn post_multipart(
     bytes: &[u8],
 ) -> Result<Value> {
     let url = format!("{}{}", cfg.base_url, path);
-    let body = build_multipart_body(MULTIPART_BOUNDARY, filename, mime, bytes);
+    let boundary = multipart_boundary();
+    let body = build_multipart_body(&boundary, filename, mime, bytes);
     let resp = ureq::post(&url)
         .set("Authorization", &auth_header(cfg))
         .set("Accept", "application/json")
         .set(
             "Content-Type",
-            &format!("multipart/form-data; boundary={MULTIPART_BOUNDARY}"),
+            &format!("multipart/form-data; boundary={boundary}"),
         )
         // Jira's XSRF/CSRF check blocks any state-changing REST call unless
         // it either carries a matching browser session cookie or explicitly
@@ -310,6 +326,17 @@ mod tests {
         let text = String::from_utf8_lossy(&body);
         assert!(text.contains("filename=\"evilX-Injected: yes.txt\""));
         assert!(!text.contains("X-Injected: yes.txt\r\n\r\nContent-Type"));
+    }
+
+    #[test]
+    fn multipart_boundary_is_unique_per_call() {
+        // Regression: a single fixed boundary reused across every upload
+        // could be truncated/corrupted by a file whose own bytes happen to
+        // contain that exact line. Consecutive calls (even within the same
+        // nanosecond, on a coarse-resolution clock) must never collide.
+        let a = multipart_boundary();
+        let b = multipart_boundary();
+        assert_ne!(a, b);
     }
 
     #[test]

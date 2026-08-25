@@ -399,6 +399,13 @@ pub(crate) fn human_size(bytes: u64) -> String {
         size /= 1024.0;
         unit += 1;
     }
+    // Rounding for display can itself cross a unit boundary (e.g. 1023.98 KB
+    // rounds to "1024 KB" instead of promoting to "1 MB") — the loop above
+    // only promotes on the *unrounded* value, so check again after it.
+    if size.round() >= 1024.0 && unit + 1 < UNITS.len() {
+        size /= 1024.0;
+        unit += 1;
+    }
     if (size - size.round()).abs() < 0.05 {
         format!("{:.0} {}", size, UNITS[unit])
     } else {
@@ -1255,6 +1262,14 @@ mod link_tests {
     fn human_size_scales_up_through_larger_units() {
         assert_eq!(human_size(1024 * 1024), "1 MB");
         assert_eq!(human_size(1024 * 1024 * 1024), "1 GB");
+    }
+
+    #[test]
+    fn human_size_promotes_a_value_that_rounds_up_to_the_next_unit() {
+        // Regression: 1048555 B is ~1023.98 KB, which used to round for
+        // display to a bare "1024 KB" instead of promoting to "1 MB".
+        assert_eq!(human_size(1_048_555), "1 MB");
+        assert_eq!(human_size(1_073_741_823), "1 GB");
     }
 
     #[test]
