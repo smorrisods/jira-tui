@@ -347,7 +347,7 @@ impl JiraMcpServer {
             Ok(cfg) => {
                 let attachments = crate::jira::fetch_attachments(&cfg, &key)
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-                to_json(&attachments)
+                to_json(&serde_json::json!({ "attachments": attachments }))
             }
             Err(_) => {
                 let attachments = demo_detail(&key).attachments;
