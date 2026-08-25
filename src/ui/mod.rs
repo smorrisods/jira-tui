@@ -22,6 +22,7 @@ use crate::domain::Priority;
 mod about;
 mod assignee_picker;
 mod attachment_picker;
+mod attachment_upload;
 mod board;
 pub(crate) mod board_columns;
 mod detail;
@@ -56,6 +57,7 @@ mod welcome;
 use about::draw_about;
 use assignee_picker::draw_assignee_picker;
 use attachment_picker::draw_attachment_picker;
+use attachment_upload::draw_attachment_upload;
 use board::draw_board;
 use detail::draw_detail;
 use editor::draw_editor;
@@ -314,6 +316,10 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     if app.attachments_open {
         draw_attachment_picker(f, app, f.area());
+    }
+
+    if app.attachment_upload.is_some() {
+        draw_attachment_upload(f, app, f.area());
     }
 
     if app.view_picker_open {

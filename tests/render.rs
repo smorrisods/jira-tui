@@ -238,6 +238,64 @@ fn attachment_picker_overlay_renders_when_open() {
 }
 
 #[test]
+fn attachment_upload_input_renders_the_typed_path() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.open_by_key("DS-2722");
+    app.open_attachment_upload();
+    for c in "/tmp/report.pdf".chars() {
+        app.attachment_upload_input_char(c);
+    }
+    let text = render(&app);
+    assert!(
+        text.contains("upload attachment"),
+        "the upload input overlay should show its title"
+    );
+    assert!(
+        text.contains("/tmp/report.pdf"),
+        "the upload input overlay should show the typed path"
+    );
+}
+
+#[test]
+fn attachment_upload_confirm_renders_the_preview() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.open_by_key("DS-2722");
+    app.attachment_upload = Some(jira_tui::app::AttachmentUpload::Confirm {
+        path: "/tmp/report.pdf".into(),
+        filename: "report.pdf".into(),
+        size: 245_760,
+        mime: "application/pdf",
+    });
+    let text = render(&app);
+    assert!(
+        text.contains("upload"),
+        "the confirm overlay should be titled around the upload"
+    );
+    assert!(
+        text.contains("DS-2722"),
+        "the confirm overlay should name the target issue"
+    );
+    assert!(
+        text.contains("report.pdf"),
+        "the confirm overlay should show the filename"
+    );
+    assert!(
+        text.contains("240 KB"),
+        "the confirm overlay should show a human-readable size"
+    );
+    assert!(
+        text.contains("application/pdf"),
+        "the confirm overlay should show the guessed mime type"
+    );
+    assert!(
+        text.contains("y/⏎"),
+        "confirm copy should mention both y and Enter confirm the upload"
+    );
+}
+
+#[test]
 fn detail_screen_narrow_facts_panel_folds_with_x() {
     let mut app = demo_app();
     app.screen = Screen::Home;

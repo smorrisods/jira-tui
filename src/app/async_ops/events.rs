@@ -5,8 +5,8 @@
 //! match arm — not a whole logic block — per new `AppEvent` variant.
 
 use crate::domain::{
-    AssignableUser, Comment, IssueDetail, IssueSummary, IssueType, Project, Source, Version,
-    ViewKind,
+    AssignableUser, Attachment, Comment, IssueDetail, IssueSummary, IssueType, Project, Source,
+    Version, ViewKind,
 };
 
 use super::super::{App, ReleaseBulkKind, Screen};
@@ -214,6 +214,18 @@ pub enum AppEvent {
         filename: String,
         result: Result<String, String>,
     },
+    /// An attachment upload resolved (or failed) — see
+    /// `App::confirm_attachment_upload`/`dispatch_attachment_upload`.
+    /// Carries no `generation`, same reasoning as `AttachmentDownloaded`:
+    /// see `apply_attachment_uploaded`'s own doc comment for how a stale
+    /// response is guarded instead. `result`'s `Ok` payload is Jira's
+    /// response to the upload — normally just the one newly-created
+    /// attachment — merged into `App::detail`/`detail_cache`.
+    AttachmentUploaded {
+        key: String,
+        filename: String,
+        result: Result<Vec<Attachment>, String>,
+    },
 }
 
 impl App {
@@ -344,6 +356,11 @@ impl App {
                 filename,
                 result,
             } => self.apply_attachment_downloaded(key, filename, result),
+            AppEvent::AttachmentUploaded {
+                key,
+                filename,
+                result,
+            } => self.apply_attachment_uploaded(key, filename, result),
         }
     }
 }

@@ -51,6 +51,7 @@ mod tests;
 
 pub use assign::{AssigneePickerState, AssigneeRow};
 pub use async_ops::AppEvent;
+pub use attachments::AttachmentUpload;
 pub use board::BoardSelection;
 pub use edit::{EditTarget, EditorState};
 pub use field_mapping::{FieldMappingOutcome, FieldMappingState};
@@ -284,6 +285,10 @@ pub struct App {
     /// Whether the attachment picker is currently open.
     pub attachments_open: bool,
     pub attachment_index: usize,
+    /// The upload flow (`u`, Detail only): typing a local path, then a
+    /// mandatory preview before the actual multipart POST — see
+    /// `App::open_attachment_upload`. `None` when the flow isn't active.
+    pub attachment_upload: Option<AttachmentUpload>,
 
     /// The screen `a` was pressed from, so backing out of About (see #38)
     /// restores it instead of always landing on Home.
@@ -524,6 +529,7 @@ impl App {
             confirm_discard: false,
             attachments_open: false,
             attachment_index: 0,
+            attachment_upload: None,
             about_return_screen: Screen::Home,
             field_mapping: FieldMappingState::default(),
             current_view: ViewKind::default(),
