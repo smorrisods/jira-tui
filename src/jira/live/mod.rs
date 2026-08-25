@@ -13,6 +13,7 @@
 //! `fetch_detail` assembles (e.g. one file per sub-fetch it stitches
 //! together), not re-drawing the endpoint-area boundary.
 
+mod attachments;
 mod comments;
 mod detail;
 mod fields;
@@ -23,6 +24,7 @@ mod search;
 mod support;
 mod versions;
 
+pub use attachments::fetch_attachments;
 pub use comments::{add_comment, delete_comment, fetch_comments, update_comment};
 pub use detail::fetch_detail;
 pub use fields::{list_fields, FieldInfo};

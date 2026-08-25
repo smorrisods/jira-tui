@@ -5,6 +5,7 @@
 use serde_json::Value;
 
 use super::super::config::Config;
+use super::attachments::parse_attachments;
 use super::comments::fetch_comments;
 use super::mutations::fetch_transitions;
 use super::search::search_issues;
@@ -13,7 +14,7 @@ use crate::domain::{ChildIssue, IssueDetail, IssueLink};
 
 pub fn fetch_detail(cfg: &Config, key: &str) -> anyhow::Result<IssueDetail> {
     let mut fields = "summary,status,issuetype,priority,assignee,reporter,labels,\
-        components,fixVersions,versions,parent,issuelinks,description,subtasks"
+        components,fixVersions,versions,parent,issuelinks,description,subtasks,attachment"
         .to_string();
     if let Some(ac_field) = &cfg.acceptance_criteria_field {
         fields.push(',');
@@ -84,6 +85,7 @@ pub fn fetch_detail(cfg: &Config, key: &str) -> anyhow::Result<IssueDetail> {
             .and_then(|field| f.get(field).cloned()),
         transitions: fetch_transitions(cfg, key).unwrap_or_default(),
         comments: fetch_comments(cfg, key).unwrap_or_default(),
+        attachments: parse_attachments(&f),
     })
 }
 
@@ -194,7 +196,7 @@ mod tests {
         let issue_mock = server
             .mock(
                 "GET",
-                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,fixVersions,versions,parent,issuelinks,description,subtasks,customfield_10001",
+                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,fixVersions,versions,parent,issuelinks,description,subtasks,attachment,customfield_10001",
             )
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -237,7 +239,7 @@ mod tests {
         let issue_mock = server
             .mock(
                 "GET",
-                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,fixVersions,versions,parent,issuelinks,description,subtasks",
+                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,fixVersions,versions,parent,issuelinks,description,subtasks,attachment",
             )
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -261,7 +263,7 @@ mod tests {
         let issue_mock = server
             .mock(
                 "GET",
-                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,fixVersions,versions,parent,issuelinks,description,subtasks",
+                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,fixVersions,versions,parent,issuelinks,description,subtasks,attachment",
             )
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -294,7 +296,7 @@ mod tests {
         server
             .mock(
                 "GET",
-                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,fixVersions,versions,parent,issuelinks,description,subtasks",
+                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,fixVersions,versions,parent,issuelinks,description,subtasks,attachment",
             )
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -313,12 +315,84 @@ mod tests {
     }
 
     #[test]
+    fn fetch_detail_parses_attachments() {
+        let mut server = mockito::Server::new();
+        let issue_mock = server
+            .mock(
+                "GET",
+                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,fixVersions,versions,parent,issuelinks,description,subtasks,attachment",
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "fields": {
+                        "summary": "Has an attachment",
+                        "attachment": [
+                            {
+                                "id": "10001",
+                                "filename": "accordion-mockup.png",
+                                "size": 245760,
+                                "mimeType": "image/png",
+                                "created": "2026-07-08T09:00:00.000-0400",
+                                "content": "https://demo.atlassian.net/secure/attachment/10001/accordion-mockup.png"
+                            }
+                        ]
+                    }
+                }"#,
+            )
+            .create();
+        server
+            .mock("GET", "/rest/api/3/issue/DS-1/transitions")
+            .with_status(404)
+            .create();
+
+        let cfg = test_config(server.url());
+        let detail = fetch_detail(&cfg, "DS-1").unwrap();
+
+        issue_mock.assert();
+        assert_eq!(detail.attachments.len(), 1);
+        assert_eq!(detail.attachments[0].id, "10001");
+        assert_eq!(detail.attachments[0].filename, "accordion-mockup.png");
+        assert_eq!(detail.attachments[0].size, 245_760);
+        assert_eq!(detail.attachments[0].mime_type, "image/png");
+        assert_eq!(detail.attachments[0].created, "2026-07-08");
+        assert_eq!(
+            detail.attachments[0].content_url,
+            "https://demo.atlassian.net/secure/attachment/10001/accordion-mockup.png"
+        );
+    }
+
+    #[test]
+    fn fetch_detail_defaults_to_empty_attachments_when_absent() {
+        let mut server = mockito::Server::new();
+        server
+            .mock(
+                "GET",
+                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,fixVersions,versions,parent,issuelinks,description,subtasks,attachment",
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"fields": {"summary": "No attachments here"}}"#)
+            .create();
+        server
+            .mock("GET", "/rest/api/3/issue/DS-1/transitions")
+            .with_status(404)
+            .create();
+
+        let cfg = test_config(server.url());
+        let detail = fetch_detail(&cfg, "DS-1").unwrap();
+
+        assert!(detail.attachments.is_empty());
+    }
+
+    #[test]
     fn fetch_detail_parses_inline_subtasks_for_non_epic_issues() {
         let mut server = mockito::Server::new();
         let issue_mock = server
             .mock(
                 "GET",
-                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,fixVersions,versions,parent,issuelinks,description,subtasks",
+                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,fixVersions,versions,parent,issuelinks,description,subtasks,attachment",
             )
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -365,7 +439,7 @@ mod tests {
         let issue_mock = server
             .mock(
                 "GET",
-                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,fixVersions,versions,parent,issuelinks,description,subtasks",
+                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,fixVersions,versions,parent,issuelinks,description,subtasks,attachment",
             )
             .with_status(200)
             .with_header("content-type", "application/json")

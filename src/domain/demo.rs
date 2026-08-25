@@ -5,8 +5,8 @@ use chrono::{Duration, Utc};
 use serde_json::json;
 
 use super::types::{
-    AssignableUser, ChildIssue, Comment, IssueDetail, IssueLink, IssueSummary, IssueType, Priority,
-    Project, Transition, Version,
+    AssignableUser, Attachment, ChildIssue, Comment, IssueDetail, IssueLink, IssueSummary,
+    IssueType, Priority, Project, Transition, Version,
 };
 
 /// The implicit "you" in demo mode — offline `Source::Demo` carries no real
@@ -402,7 +402,34 @@ pub fn demo_detail(key: &str) -> IssueDetail {
             })
             .collect(),
         comments: demo_comments(),
+        attachments: demo_attachments(),
     }
+}
+
+/// A couple of plausible attachments so the attachment-reading UI is fully
+/// explorable offline, without any live Jira connection.
+fn demo_attachments() -> Vec<Attachment> {
+    vec![
+        Attachment {
+            id: "10001".into(),
+            filename: "accordion-mockup.png".into(),
+            mime_type: "image/png".into(),
+            size: 245_760,
+            created: "2026-07-08".into(),
+            content_url: "https://demo.atlassian.net/secure/attachment/10001/accordion-mockup.png"
+                .into(),
+        },
+        Attachment {
+            id: "10002".into(),
+            filename: "beforematch-spike-notes.pdf".into(),
+            mime_type: "application/pdf".into(),
+            size: 88_213,
+            created: "2026-07-09".into(),
+            content_url:
+                "https://demo.atlassian.net/secure/attachment/10002/beforematch-spike-notes.pdf"
+                    .into(),
+        },
+    ]
 }
 
 /// A few canned comments so the comment-reading UI is fully explorable
@@ -489,6 +516,7 @@ fn demo_detail_not_found(key: &str) -> IssueDetail {
         acceptance_criteria: None,
         transitions: Vec::new(),
         comments: Vec::new(),
+        attachments: Vec::new(),
     }
 }
 
@@ -532,6 +560,15 @@ mod tests {
         let d = demo_detail("DS-0000");
         assert_eq!(d.key, "DS-0000");
         assert!(!d.summary.is_empty());
+    }
+
+    #[test]
+    fn demo_detail_has_attachments_but_the_not_found_fallback_does_not() {
+        let d = demo_detail("DS-2725");
+        assert!(!d.attachments.is_empty());
+
+        let fallback = demo_detail("DS-0000");
+        assert!(fallback.attachments.is_empty());
     }
 
     #[test]

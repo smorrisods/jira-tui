@@ -103,6 +103,8 @@ pub struct IssueDetail {
     /// mode (see `jira::live::fetch_comments`); a handful of canned entries
     /// in demo mode.
     pub comments: Vec<Comment>,
+    /// This issue's file attachments (Jira's `attachment` field).
+    pub attachments: Vec<Attachment>,
 }
 
 /// A single issue comment.
@@ -114,6 +116,20 @@ pub struct Comment {
     pub created: String,
     /// Raw ADF comment body, rendered the same way as the description.
     pub body: Value,
+}
+
+/// A file attached to an issue (Jira's `attachment` field).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Attachment {
+    pub id: String,
+    pub filename: String,
+    pub mime_type: String,
+    pub size: u64,
+    /// Display string, truncated the same way as `IssueSummary::updated`
+    /// (Jira's ISO-8601 `created` timestamp, cut to the date portion).
+    pub created: String,
+    /// Direct download URL for the attachment's content.
+    pub content_url: String,
 }
 
 /// A workflow transition available from the current status.
@@ -303,6 +319,24 @@ mod tests {
         let back: Vec<IssueSummary> = serde_json::from_str(&json).unwrap();
         assert_eq!(back.len(), issues.len());
         assert_eq!(back[0].key, issues[0].key);
+    }
+
+    #[test]
+    fn attachment_round_trips_through_json() {
+        let attachment = Attachment {
+            id: "10001".into(),
+            filename: "accordion-mockup.png".into(),
+            mime_type: "image/png".into(),
+            size: 245_760,
+            created: "2026-07-08".into(),
+            content_url: "https://demo.atlassian.net/secure/attachment/10001/accordion-mockup.png"
+                .into(),
+        };
+        let json = serde_json::to_string(&attachment).unwrap();
+        let back: Attachment = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.id, attachment.id);
+        assert_eq!(back.filename, attachment.filename);
+        assert_eq!(back.size, attachment.size);
     }
 
     #[test]
