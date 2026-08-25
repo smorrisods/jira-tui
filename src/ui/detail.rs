@@ -1,5 +1,5 @@
 //! The full issue Detail screen (SPEC.md §6): a wide two-column layout
-//! (scrollable main column + a static four-panel side rail) at ≥ ~90 cols,
+//! (scrollable main column + a static five-panel side rail) at ≥ ~90 cols,
 //! or a single scrollable column with a foldable facts panel below that —
 //! see `detail_columns::detail_layout_for_width`.
 

@@ -205,7 +205,7 @@ pub struct App {
     /// hit-testing (`app::mouse::link_at`) needs the exact scrolled Rect,
     /// not the breakpoint-decision width.
     pub detail_main_area: Cell<Rect>,
-    /// The wide Detail layout's four side-rail panels' inner areas (post-
+    /// The wide Detail layout's five side-rail panels' inner areas (post-
     /// border), for mouse hit-testing (`app::mouse::link_at`) — deliberately
     /// non-scrolling (see `ui::detail::draw_rail`'s doc comment), so unlike
     /// `detail_main_area` these need no separate scroll-Rect distinction.

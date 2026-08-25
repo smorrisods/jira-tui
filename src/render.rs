@@ -22,10 +22,11 @@
 //!   Detail's own meta/facts panels (no reporter/components), and no
 //!   workflow/activity sections at all.
 //! - `wide_detail` — the Detail screen's wide layout (SPEC.md §6): identity
-//!   + a scrollable `main` column (description + activity) plus four static
-//!   side-rail panels (workflow/meta/links/children), each independently
-//!   linkified and tagged with the `DetailPane` they live in so `{`/`}`
-//!   cycling can reach every link regardless of which pane it's in.
+//!   + a scrollable `main` column (description + activity) plus five static
+//!   side-rail panels (workflow/meta/links/children/attachments), each
+//!   independently linkified and tagged with the `DetailPane` they live in
+//!   so `{`/`}` cycling can reach every link regardless of which pane it's
+//!   in.
 //! - `narrow_detail` — the Detail screen's narrow layout: identity → facts
 //!   panel (foldable) → description → linked (links+children merged) →
 //!   activity.
@@ -42,7 +43,7 @@ use crate::ui::{
 
 /// Which Detail-screen pane a navigable link lives in. Quick view and the
 /// narrow Detail layout only ever use `Main` (there's one scrollable
-/// document); the wide layout's four side-rail panels get their own tags so
+/// document); the wide layout's five side-rail panels get their own tags so
 /// mouse hit-testing can stay scoped to `Main` while keyboard `{`/`}`
 /// cycling still reaches every pane.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,7 +109,7 @@ pub struct Panel {
 }
 
 /// The Detail screen's wide (≥ ~90 cols) layout: a scrollable main column
-/// (description + activity) beside a static four-panel side rail.
+/// (description + activity) beside a static five-panel side rail.
 pub struct WideDetail {
     pub identity: Panel,
     pub main: IssueLines,
@@ -601,7 +602,7 @@ fn linkify_panel(mut lines: Vec<Line<'static>>, pane: DetailPane) -> Panel {
 }
 
 /// The Detail screen's wide layout (SPEC.md §6). `main` is the scrollable
-/// column (description + activity); the other four fields are the static
+/// column (description + activity); the other five fields are the static
 /// side rail, each independently linkified and pane-tagged so `{`/`}`
 /// cycling reaches every one of them even though only `main` gets mouse
 /// hit-testing (see `app::mouse::link_at`). `main_width` is the actual
