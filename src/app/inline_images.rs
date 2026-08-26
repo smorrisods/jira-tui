@@ -207,7 +207,9 @@ impl App {
             return;
         };
         let generation = self.inline_image_generation;
-        for (key, url) in resolve_inline_images(detail) {
+        let (resolved, candidates) = resolve_inline_images_with_candidates(detail);
+        let attachments = detail.attachments.clone();
+        for (key, url) in resolved {
             if self.inline_images.borrow().contains_key(&key)
                 || self.inline_images_pending.contains(&key)
             {
@@ -216,6 +218,10 @@ impl App {
             self.inline_images_pending.insert(key.clone());
             let tx = self.events_tx.clone();
             async_ops::dispatch_inline_image(tx, generation, key, url);
+        }
+        if !candidates.is_empty() && attachments.iter().any(|a| a.image_preview_url().is_some()) {
+            let tx = self.events_tx.clone();
+            async_ops::dispatch_uuid_resolve(tx, generation, candidates, attachments);
         }
     }
 
@@ -262,7 +268,9 @@ impl App {
             return;
         };
         let generation = self.inline_image_generation;
-        for (key, url) in resolve_inline_images(detail) {
+        let (resolved, candidates) = resolve_inline_images_with_candidates(detail);
+        let attachments = detail.attachments.clone();
+        for (key, url) in resolved {
             if self.inline_images.borrow().contains_key(&key)
                 || self.inline_images_pending.contains(&key)
             {
@@ -271,6 +279,10 @@ impl App {
             self.inline_images_pending.insert(key.clone());
             let tx = self.events_tx.clone();
             async_ops::dispatch_inline_image(tx, generation, key, url);
+        }
+        if !candidates.is_empty() && attachments.iter().any(|a| a.image_preview_url().is_some()) {
+            let tx = self.events_tx.clone();
+            async_ops::dispatch_uuid_resolve(tx, generation, candidates, attachments);
         }
     }
 
@@ -565,7 +577,33 @@ fn rows_cols_for(
 ///   leaves the placeholder showing, never a wrong image, so the bet is
 ///   safe even if imperfect), then filters to matches whose attachment
 ///   `mime_type` starts with `"image/"`.
-pub(crate) fn resolve_inline_images(detail: &IssueDetail) -> Vec<(InlineImageKey, String)> {
+///
+/// Also returns the `attrs.id` uuids of `type: "file"` media nodes it
+/// couldn't resolve via `alt` matching — candidates for
+/// `dispatch_uuid_resolve`'s redirect-probe fallback, kicked off by
+/// `App::refresh_inline_images`/
+/// `App::refresh_quick_view_inline_images` whenever this list comes back
+/// non-empty (see either fn's own doc comment for why alt matching alone
+/// isn't always enough — a media node embedded without Jira's editor
+/// stamping `alt` to the original filename, confirmed to happen in practice
+/// on a real instance, has nothing for the alt path to match against at
+/// all).
+///
+/// Doing both in one walk, rather than a second function re-deriving "is
+/// this node already resolved" from scratch, avoids the exact kind of
+/// duplicated-matching-logic drift a code review already caught once this
+/// session (see `App::refresh_detail_images`'s own doc comment) — there's
+/// only one place that decides what counts as "resolved via alt" here.
+///
+/// `candidates` shares `resolved`'s `MAX_INLINE_IMAGES` budget rather than
+/// getting its own — the combined total, once the uuid probe resolves
+/// however many of these candidates it can, must still respect the same
+/// cap the alt-only path already enforced, so this bounds the *candidate
+/// list itself* at whatever's left over rather than letting the uuid
+/// fallback uncap it.
+pub(crate) fn resolve_inline_images_with_candidates(
+    detail: &IssueDetail,
+) -> (Vec<(InlineImageKey, String)>, Vec<String>) {
     let mut nodes: Vec<&Value> = Vec::new();
     find_media_nodes(&detail.description, &mut nodes);
     if let Some(criteria) = detail.acceptance_criteria.as_ref() {
@@ -576,8 +614,9 @@ pub(crate) fn resolve_inline_images(detail: &IssueDetail) -> Vec<(InlineImageKey
     }
 
     let mut resolved = Vec::new();
+    let mut candidates = Vec::new();
     for node in nodes {
-        if resolved.len() >= MAX_INLINE_IMAGES {
+        if resolved.len() + candidates.len() >= MAX_INLINE_IMAGES {
             break;
         }
         let attrs = node.get("attrs");
@@ -589,22 +628,28 @@ pub(crate) fn resolve_inline_images(detail: &IssueDetail) -> Vec<(InlineImageKey
             }
             continue;
         }
-        let Some(alt) = attrs
+        let alt = attrs
             .and_then(|a| a.get("alt"))
             .and_then(|a| a.as_str())
-            .filter(|a| !a.is_empty())
-        else {
-            continue;
-        };
-        let Some(attachment) = detail.attachments.iter().find(|a| a.filename == alt) else {
-            continue;
-        };
-        let Some(url) = attachment.image_preview_url() else {
-            continue;
-        };
-        resolved.push((InlineImageKey::Attachment(attachment.id.clone()), url));
+            .filter(|a| !a.is_empty());
+        if let Some(alt) = alt {
+            if let Some(attachment) = detail.attachments.iter().find(|a| a.filename == alt) {
+                if let Some(url) = attachment.image_preview_url() {
+                    resolved.push((InlineImageKey::Attachment(attachment.id.clone()), url));
+                    continue;
+                }
+            }
+        }
+        // No alt, or alt present but it didn't match any image attachment —
+        // a candidate for the uuid-probe fallback, if the node carries its
+        // own Media Services id to look up (it always should for a
+        // `type: "file"` node, but defensively skip rather than panic if
+        // Jira ever omits it).
+        if let Some(uuid) = attrs.and_then(|a| a.get("id")).and_then(|i| i.as_str()) {
+            candidates.push(uuid.to_string());
+        }
     }
-    resolved
+    (resolved, candidates)
 }
 
 /// Minimal ADF tree walk scoped to finding `media` nodes, in document order.

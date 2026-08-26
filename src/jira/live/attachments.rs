@@ -65,6 +65,62 @@ pub fn download_attachment(cfg: &Config, content_url: &str) -> anyhow::Result<Ve
     get_bytes(cfg, content_url)
 }
 
+/// The Media Services UUID backing an attachment's `content_url`, if the
+/// server still redirects there — confirmed live (see the comment on issue
+/// #122) that Jira's classic `content` endpoint responds with a 3xx whose
+/// `Location` points at `https://api.media.atlassian.com/file/<uuid>/binary?...`
+/// rather than serving bytes directly. This is the bridge between an
+/// attachment's classic numeric id and an ADF `media` node's own `attrs.id`
+/// (a UUID unrelated to the classic id, see `app::inline_images`'s doc
+/// comment) — used when a media node's `alt` text doesn't match any
+/// attachment filename, so there's nothing else to identify it by.
+///
+/// `Ok(None)` (not an error) for anything that isn't a redirect, or a
+/// redirect whose `Location` doesn't parse as a media URL — an attachment
+/// that doesn't redirect this way just can't be matched by uuid, same as
+/// one that was never fetched at all; the caller falls back to leaving the
+/// media node as a placeholder, never treats this as fatal.
+pub fn media_uuid_for(cfg: &Config, content_url: &str) -> anyhow::Result<Option<String>> {
+    let resp = media_probe_agent()
+        .get(content_url)
+        .set("Authorization", &super::support::auth_header(cfg))
+        .call();
+    let resp = match resp {
+        Ok(resp) => resp,
+        // A genuine 4xx/5xx (auth failure, deleted attachment, …) — not a
+        // redirect at all, so there's no UUID to extract; not this
+        // function's job to decide whether that's alarming.
+        Err(ureq::Error::Status(_, resp)) => resp,
+        Err(e) => return Err(anyhow::anyhow!("attachment redirect probe failed: {e}")),
+    };
+    if !(300..400).contains(&resp.status()) {
+        return Ok(None);
+    }
+    Ok(resp
+        .header("Location")
+        .and_then(extract_media_uuid)
+        .map(str::to_string))
+}
+
+/// Pulls the UUID out of a Media Services binary URL's path, e.g.
+/// `https://api.media.atlassian.com/file/a1b2c3d4-.../binary?token=...`
+/// → `a1b2c3d4-...`. Returns `None` for anything that doesn't match this
+/// exact shape rather than guessing — an unrecognized redirect target
+/// should fall through to "no uuid found", not a wrong one.
+fn extract_media_uuid(location: &str) -> Option<&str> {
+    location.split("/file/").nth(1)?.split("/binary").next()
+}
+
+/// The redirect-disabled agent every `media_uuid_for` call reuses — same
+/// "build once, reuse the connection pool" reasoning as `support`'s
+/// `public_agent`, just authenticated (this hits our own Jira site, not an
+/// arbitrary external host, so there's no credential-leak concern the way
+/// there is for external media).
+fn media_probe_agent() -> &'static ureq::Agent {
+    static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+    AGENT.get_or_init(|| ureq::AgentBuilder::new().redirects(0).build())
+}
+
 /// Upload a file to an issue's attachments. Jira's response to this
 /// endpoint is a bare JSON array of attachment objects (same per-entry
 /// shape as `fields.attachment`), so it reuses `parse_attachment_array`
@@ -278,5 +334,74 @@ mod tests {
 
         let cfg = test_config(server.url());
         assert!(upload_attachment(&cfg, "DS-1", "big.zip", "application/zip", b"x").is_err());
+    }
+
+    #[test]
+    fn extract_media_uuid_parses_a_real_shaped_location() {
+        assert_eq!(
+            extract_media_uuid(
+                "https://api.media.atlassian.com/file/a1b2c3d4-5e6f-7890-abcd-ef1234567890/binary?client=x&token=y"
+            ),
+            Some("a1b2c3d4-5e6f-7890-abcd-ef1234567890")
+        );
+    }
+
+    #[test]
+    fn extract_media_uuid_is_none_for_an_unrecognized_shape() {
+        assert_eq!(extract_media_uuid("https://example.com/whatever"), None);
+    }
+
+    #[test]
+    fn media_uuid_for_extracts_the_uuid_from_a_redirect() {
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("GET", "/rest/api/3/attachment/content/119842")
+            .match_header("authorization", mockito::Matcher::Any)
+            .with_status(303)
+            .with_header(
+                "location",
+                "https://api.media.atlassian.com/file/a1b2c3d4-5e6f-7890-abcd-ef1234567890/binary?token=y",
+            )
+            .create();
+
+        let cfg = test_config(server.url());
+        let url = format!("{}/rest/api/3/attachment/content/119842", server.url());
+        let uuid = media_uuid_for(&cfg, &url).unwrap();
+
+        mock.assert();
+        assert_eq!(
+            uuid.as_deref(),
+            Some("a1b2c3d4-5e6f-7890-abcd-ef1234567890")
+        );
+    }
+
+    #[test]
+    fn media_uuid_for_is_none_when_the_response_is_not_a_redirect() {
+        let mut server = mockito::Server::new();
+        server
+            .mock("GET", "/rest/api/3/attachment/content/119842")
+            .with_status(200)
+            .with_body(b"not-a-redirect".as_slice())
+            .create();
+
+        let cfg = test_config(server.url());
+        let url = format!("{}/rest/api/3/attachment/content/119842", server.url());
+        assert_eq!(media_uuid_for(&cfg, &url).unwrap(), None);
+    }
+
+    #[test]
+    fn media_uuid_for_is_none_for_a_404() {
+        // A real HTTP error (deleted attachment, bad auth) — not a redirect
+        // at all, so there's nothing to extract; not this function's job to
+        // treat that as fatal, the caller just has one less uuid to match.
+        let mut server = mockito::Server::new();
+        server
+            .mock("GET", "/rest/api/3/attachment/content/119842")
+            .with_status(404)
+            .create();
+
+        let cfg = test_config(server.url());
+        let url = format!("{}/rest/api/3/attachment/content/119842", server.url());
+        assert_eq!(media_uuid_for(&cfg, &url).unwrap(), None);
     }
 }

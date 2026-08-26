@@ -1,5 +1,5 @@
 //! Inline description image resolution/cache/fetch (issue #130 phase 1,
-//! `images` feature only). Pure `resolve_inline_images` tests need no
+//! `images` feature only). Pure `resolve_inline_images_with_candidates` tests need no
 //! `App`; the rest mirror `attachments.rs`'s own
 //! `attachment_preview_drops_a_stale_response_after_moving_again`/
 //! `refresh_detail_invalidates_a_cached_attachment_preview` shape, just
@@ -9,7 +9,7 @@ use serde_json::json;
 
 use crate::domain::{Attachment, Comment, IssueDetail};
 
-use super::super::inline_images::resolve_inline_images;
+use super::super::inline_images::resolve_inline_images_with_candidates;
 use super::super::*;
 use super::support::*;
 
@@ -27,7 +27,7 @@ fn image_attachment(id: &str, filename: &str, mime: &str, thumbnail: Option<&str
 
 /// A base `IssueDetail` with `description`/`attachments` swapped for
 /// whatever a test needs — the other fields are irrelevant to
-/// `resolve_inline_images`, so the demo fallback's defaults are fine as-is.
+/// `resolve_inline_images_with_candidates`, so the demo fallback's defaults are fine as-is.
 fn detail_with(description: serde_json::Value, attachments: Vec<Attachment>) -> IssueDetail {
     let mut detail = crate::domain::demo_detail("DS-INLINE-TEST");
     detail.description = description;
@@ -55,7 +55,7 @@ fn resolves_a_media_node_whose_alt_matches_an_attachment_filename() {
     });
     let detail = detail_with(description, vec![attachment]);
 
-    let resolved = resolve_inline_images(&detail);
+    let resolved = resolve_inline_images_with_candidates(&detail).0;
 
     assert_eq!(
         resolved,
@@ -75,7 +75,7 @@ fn resolves_to_content_url_when_there_is_no_thumbnail_either() {
     });
     let detail = detail_with(description, vec![attachment]);
 
-    let resolved = resolve_inline_images(&detail);
+    let resolved = resolve_inline_images_with_candidates(&detail).0;
 
     assert_eq!(
         resolved,
@@ -92,7 +92,7 @@ fn no_match_when_alt_does_not_equal_any_attachment_filename() {
     });
     let detail = detail_with(description, vec![attachment]);
 
-    assert!(resolve_inline_images(&detail).is_empty());
+    assert!(resolve_inline_images_with_candidates(&detail).0.is_empty());
 }
 
 #[test]
@@ -104,7 +104,7 @@ fn no_match_when_the_matched_attachment_is_not_an_image() {
     });
     let detail = detail_with(description, vec![attachment]);
 
-    assert!(resolve_inline_images(&detail).is_empty());
+    assert!(resolve_inline_images_with_candidates(&detail).0.is_empty());
 }
 
 #[test]
@@ -120,7 +120,7 @@ fn a_media_groups_children_resolve_both_in_document_order() {
     });
     let detail = detail_with(description, vec![first, second]);
 
-    let resolved = resolve_inline_images(&detail);
+    let resolved = resolve_inline_images_with_candidates(&detail).0;
 
     assert_eq!(
         resolved.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>(),
@@ -153,7 +153,7 @@ fn a_media_node_inside_a_table_cell_is_never_resolved() {
     let detail = detail_with(description, vec![attachment]);
 
     assert!(
-        resolve_inline_images(&detail).is_empty(),
+        resolve_inline_images_with_candidates(&detail).0.is_empty(),
         "a table-cell-nested media node must never be resolved — render_table can't paint it"
     );
 }
@@ -177,7 +177,7 @@ fn a_media_node_directly_inside_a_list_item_is_never_resolved() {
     let detail = detail_with(description, vec![attachment]);
 
     assert!(
-        resolve_inline_images(&detail).is_empty(),
+        resolve_inline_images_with_candidates(&detail).0.is_empty(),
         "a media node directly inside a list item must never be resolved — \
          render_list_item routes it through the text-only inline_spans, not render_block"
     );
@@ -208,7 +208,7 @@ fn a_media_node_inside_a_nested_list_is_also_never_resolved() {
     let detail = detail_with(description, vec![attachment]);
 
     assert!(
-        resolve_inline_images(&detail).is_empty(),
+        resolve_inline_images_with_candidates(&detail).0.is_empty(),
         "a media node inside a nested list must never be resolved either — its own immediate \
          container is never itself a list type, so render_list_item's nested-list exception \
          never applies to it, at any depth"
@@ -230,7 +230,7 @@ fn an_external_media_node_resolves_to_its_own_url() {
     });
     let detail = detail_with(description, vec![]);
 
-    let resolved = resolve_inline_images(&detail);
+    let resolved = resolve_inline_images_with_candidates(&detail).0;
 
     assert_eq!(
         resolved,
@@ -256,7 +256,7 @@ fn an_external_media_node_with_no_alt_still_resolves() {
     let detail = detail_with(description, vec![]);
 
     assert_eq!(
-        resolve_inline_images(&detail),
+        resolve_inline_images_with_candidates(&detail).0,
         vec![(
             InlineImageKey::External("https://third-party.example.com/pic.png".into()),
             "https://third-party.example.com/pic.png".into()
@@ -288,7 +288,7 @@ fn the_cap_is_shared_across_attachment_and_external_nodes_in_document_order() {
     let description = json!({ "type": "doc", "version": 1, "content": content });
     let detail = detail_with(description, attachments);
 
-    let resolved = resolve_inline_images(&detail);
+    let resolved = resolve_inline_images_with_candidates(&detail).0;
 
     assert_eq!(
         resolved.len(),
@@ -319,7 +319,7 @@ fn more_than_the_cap_only_resolves_the_first_matches_in_document_order() {
     let description = json!({ "type": "doc", "version": 1, "content": content });
     let detail = detail_with(description, attachments);
 
-    let resolved = resolve_inline_images(&detail);
+    let resolved = resolve_inline_images_with_candidates(&detail).0;
 
     assert_eq!(
         resolved.len(),
@@ -345,7 +345,7 @@ fn acceptance_criteria_media_nodes_are_also_resolved() {
         "content": [ media_node("ac.png") ]
     }));
 
-    let resolved = resolve_inline_images(&detail);
+    let resolved = resolve_inline_images_with_candidates(&detail).0;
 
     assert_eq!(
         resolved,
@@ -381,7 +381,7 @@ fn comment_media_nodes_are_also_resolved() {
         }),
     )];
 
-    let resolved = resolve_inline_images(&detail);
+    let resolved = resolve_inline_images_with_candidates(&detail).0;
 
     assert_eq!(
         resolved,
@@ -429,7 +429,7 @@ fn the_cap_combines_description_acceptance_criteria_and_comments() {
         ),
     ];
 
-    let resolved = resolve_inline_images(&detail);
+    let resolved = resolve_inline_images_with_candidates(&detail).0;
 
     assert_eq!(
         resolved.len(),
@@ -475,6 +475,12 @@ async fn opening_an_issue_with_a_resolvable_image_dispatches_a_fetch_that_lands_
         "type": "doc", "version": 1,
         "content": [ media_node("mockup.png") ]
     });
+    // The baked-in demo comment carries its own unrelated media node (see
+    // `demo::demo_detail`'s comment fixture) — cleared here so it can't
+    // also become a uuid-probe candidate (`resolve_inline_images_with_candidates`)
+    // and race an extra `InlineImageUuidsResolved` against the single
+    // `InlineImageLoaded` this test expects to drain.
+    detail.comments = vec![];
     app.locally_created
         .push(LocallyCreatedIssue { summary, detail });
 
@@ -541,6 +547,11 @@ async fn external_fetch_runs_with_zero_jira_credentials_configured() {
             "id": "x", "type": "external", "url": external_url
         } } ]
     });
+    // See the same clearing in `opening_an_issue_with_a_resolvable_image_dispatches_a_fetch_that_lands_in_the_cache`
+    // above — the baked-in demo comment's own media node would otherwise
+    // race an extra `InlineImageUuidsResolved` event against this test's
+    // single expected `InlineImageLoaded`.
+    detail.comments = vec![];
     app.locally_created
         .push(LocallyCreatedIssue { summary, detail });
 
@@ -583,6 +594,12 @@ async fn a_stale_generation_response_is_dropped() {
         "type": "doc", "version": 1,
         "content": [ media_node("mockup.png") ]
     });
+    // See the same clearing in `opening_an_issue_with_a_resolvable_image_dispatches_a_fetch_that_lands_in_the_cache`
+    // above — the baked-in demo comment's own media node would otherwise
+    // dispatch an extra uuid-probe fetch, and this test's fixed two-`next_event`
+    // sequence (drain the inline-image dispatch, then drain the refresh's
+    // own response) assumes exactly one dispatch per step.
+    detail.comments = vec![];
     app.locally_created
         .push(LocallyCreatedIssue { summary, detail });
 
@@ -608,6 +625,60 @@ async fn a_stale_generation_response_is_dropped() {
         app.inline_images.borrow().is_empty(),
         "a response tagged with a since-superseded generation must not be applied"
     );
+}
+
+/// A media node with no `alt` (or an `alt` matching nothing) still gets a
+/// uuid-probe fetch dispatched, as long as at least one image attachment
+/// exists to possibly match against — the redirect-probe fallback
+/// (`dispatch_uuid_resolve`) this session added for issue #130's DS-1880
+/// follow-up. No live server is reachable here, so the probe itself always
+/// comes back empty (`media_uuid_for` errors on the unreachable host and is
+/// filtered out — see `resolve_uuids_blocking`), but that still proves the
+/// dispatch is reached and its response applied without panicking, rather
+/// than silently skipped.
+#[tokio::test]
+async fn an_unmatched_media_node_dispatches_a_uuid_probe_when_an_image_attachment_exists() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    let summary = app.issues[0].clone();
+    let key = summary.key.clone();
+    let mut detail = crate::domain::demo_detail(&key);
+    detail.attachments = vec![image_attachment("10001", "mockup.png", "image/png", None)];
+    detail.description = json!({
+        "type": "doc", "version": 1,
+        "content": [ { "type": "media", "attrs": {
+            "id": "some-media-uuid", "type": "file"
+        } } ]
+    });
+    detail.comments = vec![];
+    app.locally_created
+        .push(LocallyCreatedIssue { summary, detail });
+
+    app.open_by_key(&key);
+    let generation = app.inline_image_generation;
+
+    let event = next_event(&mut app).await;
+    match event {
+        AppEvent::InlineImageUuidsResolved {
+            generation: g,
+            resolved,
+        } => {
+            assert_eq!(g, generation);
+            assert!(
+                resolved.is_empty(),
+                "no live server is reachable, so the probe can never actually match"
+            );
+        }
+        _ => panic!("expected InlineImageUuidsResolved, got a different event"),
+    }
+
+    // Applying it must not panic even though nothing resolved.
+    app.apply_event(AppEvent::InlineImageUuidsResolved {
+        generation,
+        resolved: vec![],
+    });
+    assert!(app.inline_images.borrow().is_empty());
 }
 
 /// A demo/cache session never dispatches an inline-image fetch at all, even

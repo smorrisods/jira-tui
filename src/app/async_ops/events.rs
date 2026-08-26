@@ -254,6 +254,18 @@ pub enum AppEvent {
         key: super::super::InlineImageKey,
         image: Option<image::DynamicImage>,
     },
+    /// A batch of media nodes that `resolve_inline_images_with_candidates`
+    /// couldn't resolve via `alt` matching were checked against a
+    /// redirect-probe uuid map instead (`dispatch_uuid_resolve`, `images`
+    /// feature only) — see that fn's own doc comment. Each resolved `(key,
+    /// url)` pair still needs its own byte-fetch/decode, dispatched via the
+    /// same `dispatch_inline_image` the alt-matched path already uses —
+    /// this event only carries *identity* resolution, not image bytes.
+    #[cfg(feature = "images")]
+    InlineImageUuidsResolved {
+        generation: u64,
+        resolved: Vec<(super::super::InlineImageKey, String)>,
+    },
 }
 
 impl App {
@@ -401,6 +413,11 @@ impl App {
                 key,
                 image,
             } => self.apply_inline_image_loaded(generation, key, image),
+            #[cfg(feature = "images")]
+            AppEvent::InlineImageUuidsResolved {
+                generation,
+                resolved,
+            } => self.apply_inline_image_uuids_resolved(generation, resolved),
         }
     }
 }

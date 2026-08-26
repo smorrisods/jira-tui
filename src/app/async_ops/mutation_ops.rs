@@ -645,6 +645,80 @@ pub(crate) fn dispatch_inline_image(
     });
 }
 
+/// Spawn the redirect-probe uuid fallback off the render thread (`images`
+/// feature only) for whatever candidates `resolve_inline_images_with_candidates`
+/// couldn't resolve via `alt` matching — see `App::resolve_unmatched_media_by_uuid`,
+/// which is this dispatch's only caller. Resolves *identity* only (which
+/// candidate uuid belongs to which attachment); each resolved pair still
+/// needs its own byte-fetch, which `App::apply_inline_image_uuids_resolved`
+/// hands off to the existing `dispatch_inline_image` once this lands.
+#[cfg(feature = "images")]
+pub(crate) fn dispatch_uuid_resolve(
+    tx: UnboundedSender<AppEvent>,
+    generation: u64,
+    candidates: Vec<String>,
+    attachments: Vec<Attachment>,
+) {
+    tokio::spawn(async move {
+        let resolved =
+            tokio::task::spawn_blocking(move || resolve_uuids_blocking(&candidates, &attachments))
+                .await
+                .unwrap_or_default();
+        let _ = tx.send(AppEvent::InlineImageUuidsResolved {
+            generation,
+            resolved,
+        });
+    });
+}
+
+/// Blocking body of `dispatch_uuid_resolve`: probes each image-mime
+/// attachment's `content_url` redirect (`jira::media_uuid_for` — see that
+/// fn's own doc comment for the mechanism, confirmed live on issue #122)
+/// to build a `{uuid -> Attachment}` map, then looks up each of
+/// `candidates` in it. Only image attachments are probed at all — a
+/// candidate media node can never resolve to a non-image attachment (see
+/// `resolve_inline_images_with_candidates`'s own alt-matching path, which
+/// applies the same restriction), so probing one would just be a wasted
+/// request that can never match. `None`/error from any single probe just
+/// drops that attachment from the map — one attachment Jira won't redirect
+/// for shouldn't block resolving the rest.
+#[cfg(feature = "images")]
+#[allow(unused_variables)]
+fn resolve_uuids_blocking(
+    candidates: &[String],
+    attachments: &[Attachment],
+) -> Vec<(super::super::InlineImageKey, String)> {
+    #[cfg(feature = "live")]
+    {
+        let Some(cfg) = crate::jira::Config::load() else {
+            return Vec::new();
+        };
+        let mut uuid_map: std::collections::HashMap<String, &Attachment> =
+            std::collections::HashMap::new();
+        for attachment in attachments {
+            if !attachment.mime_type.starts_with("image/") {
+                continue;
+            }
+            if let Ok(Some(uuid)) = crate::jira::media_uuid_for(&cfg, &attachment.content_url) {
+                uuid_map.insert(uuid, attachment);
+            }
+        }
+        candidates
+            .iter()
+            .filter_map(|candidate| {
+                let attachment = uuid_map.get(candidate)?;
+                let url = attachment.image_preview_url()?;
+                Some((
+                    super::super::InlineImageKey::Attachment(attachment.id.clone()),
+                    url,
+                ))
+            })
+            .collect()
+    }
+    #[cfg(not(feature = "live"))]
+    Vec::new()
+}
+
 /// Merge `uploaded` (Jira's response to a successful `upload_attachment`
 /// call) into `existing`: replacing any attachment that already shares an
 /// id (re-uploading to an existing entry, which Jira allows) and appending
@@ -1058,6 +1132,34 @@ impl App {
             return;
         };
         self.inline_images.borrow_mut().insert(key, image);
+    }
+
+    /// Applies `AppEvent::InlineImageUuidsResolved` (`images` feature only)
+    /// — see `App::resolve_unmatched_media_by_uuid`/`dispatch_uuid_resolve`
+    /// above. This event only resolved *identity*, not bytes: for each
+    /// `(key, url)` pair not already cached or in flight, this marks it
+    /// pending and hands it to the same `dispatch_inline_image` the
+    /// alt-matched path already uses, so the actual fetch/decode/cache
+    /// pipeline is shared rather than duplicated.
+    #[cfg(feature = "images")]
+    pub(super) fn apply_inline_image_uuids_resolved(
+        &mut self,
+        generation: u64,
+        resolved: Vec<(super::super::InlineImageKey, String)>,
+    ) {
+        if generation != self.inline_image_generation {
+            return;
+        }
+        for (key, url) in resolved {
+            if self.inline_images.borrow().contains_key(&key)
+                || self.inline_images_pending.contains(&key)
+            {
+                continue;
+            }
+            self.inline_images_pending.insert(key.clone());
+            let tx = self.events_tx.clone();
+            dispatch_inline_image(tx, generation, key, url);
+        }
     }
 }
 

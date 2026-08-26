@@ -24,7 +24,7 @@ mod search;
 mod support;
 mod versions;
 
-pub use attachments::{download_attachment, fetch_attachments, upload_attachment};
+pub use attachments::{download_attachment, fetch_attachments, media_uuid_for, upload_attachment};
 // `guess_mime` lives in `crate::mime` (shared across every feature set —
 // see that module's doc comment), not in this `live`-only module; re-export
 // it here anyway so `jira::guess_mime` keeps resolving for existing/future

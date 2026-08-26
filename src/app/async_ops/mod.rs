@@ -36,6 +36,8 @@ pub(crate) use list_ops::{
 pub(crate) use mutation_ops::dispatch_attachment_preview;
 #[cfg(feature = "images")]
 pub(crate) use mutation_ops::dispatch_inline_image;
+#[cfg(feature = "images")]
+pub(crate) use mutation_ops::dispatch_uuid_resolve;
 pub(crate) use mutation_ops::{
     dispatch_add_comment, dispatch_assign, dispatch_attachment_download,
     dispatch_attachment_upload, dispatch_create_issue, dispatch_release_bulk,
