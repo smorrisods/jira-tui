@@ -6,6 +6,8 @@
 
 use serde_json::{json, Value};
 
+use super::media;
+
 /// Compile Markdown text into an ADF `doc`.
 pub fn compile(md: &str) -> Value {
     let mut blocks: Vec<Value> = Vec::new();
@@ -127,6 +129,69 @@ pub fn compile(md: &str) -> Value {
             continue;
         }
 
+        // Standalone image reference (nothing else on the line): matches
+        // how Jira's own editor treats a lone image as its own media
+        // block rather than inline text (see the `mediaSingle`/`mediaGroup`
+        // render arms in `src/adf/mod.rs`). Only one of our own
+        // `adf-media://` round-trip tokens (see `media`) gets reconstructed
+        // into a real `media` node here; anything else (a plain filename or
+        // a real URL a human typed) falls through to the paragraph path,
+        // where `parse_inline`'s image branch neutralizes it as inert text
+        // — `compile()` has no attachment-lookup capability to turn that
+        // into a real embed.
+        if let Some((_alt, url)) = whole_line_image(trimmed.trim_end()) {
+            if media::is_adf_media_url(&url) {
+                if let Some(decoded) = media::decode(&url) {
+                    flush_paragraph!();
+                    match decoded.wrapper {
+                        media::DecodedWrapper::Group => {
+                            let mut children =
+                                vec![json!({ "type": "media", "attrs": decoded.media_attrs })];
+                            i += 1;
+                            while i < lines.len() {
+                                let t = lines[i].trim();
+                                let next = whole_line_image(t).and_then(|(_, u)| {
+                                    if media::is_adf_media_url(&u) {
+                                        media::decode(&u)
+                                    } else {
+                                        None
+                                    }
+                                });
+                                match next {
+                                    Some(d)
+                                        if matches!(d.wrapper, media::DecodedWrapper::Group) =>
+                                    {
+                                        children.push(
+                                            json!({ "type": "media", "attrs": d.media_attrs }),
+                                        );
+                                        i += 1;
+                                    }
+                                    _ => break,
+                                }
+                            }
+                            blocks.push(json!({ "type": "mediaGroup", "content": children }));
+                        }
+                        media::DecodedWrapper::Single(ms_attrs) => {
+                            let mut node = json!({
+                                "type": "mediaSingle",
+                                "content": [ { "type": "media", "attrs": decoded.media_attrs } ]
+                            });
+                            if ms_attrs.as_object().is_some_and(|o| !o.is_empty()) {
+                                node["attrs"] = ms_attrs;
+                            }
+                            blocks.push(node);
+                            i += 1;
+                        }
+                        media::DecodedWrapper::None => {
+                            blocks.push(json!({ "type": "media", "attrs": decoded.media_attrs }));
+                            i += 1;
+                        }
+                    }
+                    continue;
+                }
+            }
+        }
+
         // Otherwise, accumulate into a paragraph.
         paragraph.push(line.trim());
         i += 1;
@@ -141,6 +206,25 @@ fn list_item(text: &str) -> Value {
         "type": "listItem",
         "content": [ { "type": "paragraph", "content": parse_inline(text) } ]
     })
+}
+
+/// Recognizes a line that is *only* an image reference (`![alt](url)`,
+/// with nothing else before or after it), the same way `is_bullet_item`/
+/// `heading_level` recognize other block-starting syntax. Reuses
+/// `parse_link`'s `[label](href)` scanner (an image is just `!` + that
+/// shape) rather than a separate hand-rolled matcher.
+fn whole_line_image(line: &str) -> Option<(String, String)> {
+    let rest = line.strip_prefix('!')?;
+    let chars: Vec<char> = rest.chars().collect();
+    if chars.first() != Some(&'[') {
+        return None;
+    }
+    let (label, href, next) = parse_link(&chars, 0)?;
+    if next == chars.len() {
+        Some((label, href))
+    } else {
+        None
+    }
 }
 
 fn heading_level(s: &str) -> Option<usize> {
@@ -227,6 +311,26 @@ pub fn parse_inline(text: &str) -> Vec<Value> {
                     "marks": [ { "type": "em" } ]
                 }));
                 i = end + 1;
+                continue;
+            }
+        }
+        // Image: ![alt](url) — tried before the link branch below, since
+        // otherwise `!` lands in the plain-text buffer and the following
+        // `[alt](url)` matches the link branch on its own, fabricating a
+        // bogus hyperlink literally named "alt" (see issue #122). A
+        // standalone image on its own line is reconstructed into a real
+        // `media` node earlier, at the block level in `compile()` (see
+        // `whole_line_image`), before `parse_inline` ever runs on it; if
+        // one shows up here instead (inline, mixed with other text, or a
+        // plain filename/URL that isn't one of this crate's own
+        // `adf-media://` tokens), there's no attachment-lookup capability
+        // at this layer to turn it into a real embed, so it collapses to
+        // inert text rather than a link.
+        if chars[i] == '!' && i + 1 < chars.len() && chars[i + 1] == '[' {
+            if let Some((label, href, next)) = parse_link(&chars, i + 1) {
+                flush!();
+                nodes.push(json!({ "type": "text", "text": format!("![{label}]({href})") }));
+                i = next;
                 continue;
             }
         }
@@ -450,5 +554,228 @@ mod tests {
         let doc = compile("");
         assert_eq!(doc["type"], "doc");
         assert_eq!(doc["content"].as_array().unwrap().len(), 0);
+    }
+
+    /// True if a "link" mark/node type shows up anywhere in the tree —
+    /// used to prove the image-syntax fix (issue #122) never fabricates a
+    /// link out of `![alt](url)`, regardless of where in the JSON shape
+    /// such a mark would land.
+    fn contains_link_mark(v: &Value) -> bool {
+        if v.get("type").and_then(|t| t.as_str()) == Some("link") {
+            return true;
+        }
+        match v {
+            Value::Array(a) => a.iter().any(contains_link_mark),
+            Value::Object(o) => o.values().any(contains_link_mark),
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn media_single_round_trips_through_markdown() {
+        // A realistic mediaSingle > media node (the shape a real Jira
+        // description carries for an inline image), run through the full
+        // to_markdown -> compile round trip. This is the core regression
+        // test for the data-loss bug (#122): before the fix, `to_markdown`
+        // silently dropped media nodes entirely.
+        let original = json!({
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {
+                    "type": "mediaSingle",
+                    "attrs": { "layout": "center", "width": 800, "widthType": "pixel" },
+                    "content": [
+                        {
+                            "type": "media",
+                            "attrs": {
+                                "type": "file",
+                                "id": "5f2d9c3a-1234-4abc-9def-abcdef012345",
+                                "collection": "",
+                                "width": 800,
+                                "height": 381,
+                                "alt": "screenshot.png"
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let md = to_markdown(&original);
+        let recompiled = compile(&md);
+
+        let orig_node = &original["content"][0];
+        let got_node = &recompiled["content"][0];
+        assert_eq!(got_node["type"], orig_node["type"]);
+        assert_eq!(got_node["attrs"], orig_node["attrs"]);
+        assert_eq!(
+            got_node["content"][0]["type"],
+            orig_node["content"][0]["type"]
+        );
+        assert_eq!(
+            got_node["content"][0]["attrs"],
+            orig_node["content"][0]["attrs"]
+        );
+    }
+
+    #[test]
+    fn media_group_round_trips_with_order_preserved() {
+        let original = json!({
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {
+                    "type": "mediaGroup",
+                    "content": [
+                        {
+                            "type": "media",
+                            "attrs": { "type": "file", "id": "id-one", "collection": "", "alt": "first" }
+                        },
+                        {
+                            "type": "media",
+                            "attrs": { "type": "file", "id": "id-two", "collection": "", "alt": "second" }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let md = to_markdown(&original);
+        let recompiled = compile(&md);
+
+        let got_node = &recompiled["content"][0];
+        assert_eq!(got_node["type"], "mediaGroup");
+        let got_children = got_node["content"].as_array().expect("mediaGroup content");
+        let orig_children = original["content"][0]["content"].as_array().unwrap();
+        assert_eq!(got_children.len(), orig_children.len());
+        for (got, orig) in got_children.iter().zip(orig_children.iter()) {
+            assert_eq!(got["type"], orig["type"]);
+            assert_eq!(got["attrs"], orig["attrs"]);
+        }
+    }
+
+    #[test]
+    fn plain_image_reference_compiles_to_inert_text_not_link() {
+        // A plain filename (not one of this crate's own `adf-media://`
+        // tokens) must never produce a bogus link styled with the alt text
+        // — the core regression test for the bogus-link bug (#122).
+        let doc = compile("![alt](some-filename.png)");
+        assert!(!contains_link_mark(&doc));
+        assert!(text_of(&doc).contains("![alt](some-filename.png)"));
+    }
+
+    #[test]
+    fn plain_external_image_url_compiles_to_inert_text_not_link() {
+        let doc = compile("See ![a diagram](https://example.com/diagram.png) above.");
+        assert!(!contains_link_mark(&doc));
+        assert!(text_of(&doc).contains("![a diagram](https://example.com/diagram.png)"));
+    }
+
+    #[test]
+    fn adf_media_token_round_trips_special_characters() {
+        // `&`, spaces, and unicode in `alt`, plus `&`/`=` in `collection`,
+        // all need percent-encoding to survive the query string intact.
+        let tricky_alt = "weird & spacey näme (v2).png";
+        let original = json!({
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {
+                    "type": "media",
+                    "attrs": {
+                        "type": "file",
+                        "id": "abc-123",
+                        "collection": "proj=DS&team=x",
+                        "alt": tricky_alt
+                    }
+                }
+            ]
+        });
+
+        let md = to_markdown(&original);
+        let recompiled = compile(&md);
+        assert_eq!(
+            recompiled["content"][0]["attrs"],
+            original["content"][0]["attrs"]
+        );
+    }
+
+    #[test]
+    fn adf_media_token_round_trips_when_alt_contains_a_closing_bracket() {
+        // `alt` containing a literal `]` would otherwise close the
+        // Markdown bracket early and make the token unrecognizable —
+        // `media::encode` sanitizes only the cosmetic bracket text, while
+        // the query param (authoritative on decode) keeps the exact
+        // original string.
+        let original = json!({
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {
+                    "type": "media",
+                    "attrs": { "type": "file", "id": "abc-123", "alt": "img].png" }
+                }
+            ]
+        });
+
+        let md = to_markdown(&original);
+        let recompiled = compile(&md);
+        assert_eq!(recompiled["content"][0]["type"], "media");
+        assert_eq!(
+            recompiled["content"][0]["attrs"],
+            original["content"][0]["attrs"]
+        );
+    }
+
+    #[test]
+    fn adf_media_token_survives_trailing_whitespace_on_its_line() {
+        // A standalone image line with trailing whitespace (plausible after
+        // an `$EDITOR` save) must still be recognized as a media block, not
+        // silently degrade into an inert-text paragraph.
+        let original = json!({
+            "type": "doc",
+            "version": 1,
+            "content": [
+                { "type": "media", "attrs": { "type": "file", "id": "abc-123" } }
+            ]
+        });
+        let md = to_markdown(&original);
+        let padded = format!("{}   ", md.trim_end());
+        let recompiled = compile(&padded);
+        assert_eq!(recompiled["content"][0]["type"], "media");
+        assert_eq!(
+            recompiled["content"][0]["attrs"],
+            original["content"][0]["attrs"]
+        );
+    }
+
+    #[test]
+    fn adf_media_token_preserves_whole_number_float_dimensions() {
+        // A width/height that arrives as a whole-number JSON float (e.g.
+        // `800.0`) must not silently become an integer `800` on the way
+        // back — the two `Number` representations aren't `==`, and Jira
+        // would receive a different wire value than it sent.
+        let original = json!({
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {
+                    "type": "media",
+                    "attrs": {
+                        "type": "file",
+                        "id": "abc-123",
+                        "width": 800.0,
+                        "height": 600.0
+                    }
+                }
+            ]
+        });
+        let md = to_markdown(&original);
+        let recompiled = compile(&md);
+        assert_eq!(
+            recompiled["content"][0]["attrs"],
+            original["content"][0]["attrs"]
+        );
     }
 }
