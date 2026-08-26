@@ -30,6 +30,8 @@ mod detail;
 mod edit;
 mod field_mapping;
 mod history;
+#[cfg(feature = "images")]
+mod inline_images;
 mod links;
 mod loader;
 mod mouse;
@@ -60,6 +62,8 @@ pub use board::BoardSelection;
 pub use edit::{EditTarget, EditorState};
 pub use field_mapping::{FieldMappingOutcome, FieldMappingState};
 pub(crate) use history::{NavEntry, NavHistory};
+#[cfg(feature = "images")]
+pub use inline_images::InlineImageKey;
 pub use mouse::{ListFocus, MouseState, SelectionSpan};
 pub(crate) use new_issue::LocallyCreatedIssue;
 pub use new_issue::{NewIssueField, NewIssueState};
@@ -323,6 +327,25 @@ pub struct App {
     /// counter on `App`.
     #[cfg(feature = "images")]
     pub(crate) attachment_preview_generation: u64,
+    /// Fetched-and-decoded inline description images (`images` feature
+    /// only), keyed by `InlineImageKey` rather than one single slot like
+    /// `attachment_preview` — every media node the description/acceptance
+    /// criteria resolves to is independently and simultaneously valid,
+    /// there's no single "current selection" the way the attachment picker
+    /// has one. See `App::refresh_inline_images`/
+    /// `AppEvent::InlineImageLoaded`. `RefCell`-wrapped for the same
+    /// "paint-time code needs `&mut` access through `&App`" reason as
+    /// `attachment_preview` — a later phase's rendering will construct a
+    /// `StatefulProtocol`-adjacent value from each cached `DynamicImage` at
+    /// paint time.
+    #[cfg(feature = "images")]
+    pub(crate) inline_images: RefCell<HashMap<InlineImageKey, image::DynamicImage>>,
+    /// Bumped whenever the viewed issue changes (mirrors
+    /// `attachment_preview_generation`) — a completed fetch whose generation
+    /// no longer matches this belongs to an issue that's no longer showing
+    /// and is dropped instead of populating the cache for the wrong issue.
+    #[cfg(feature = "images")]
+    pub(crate) inline_image_generation: u64,
 
     /// The screen `a` was pressed from, so backing out of About (see #38)
     /// restores it instead of always landing on Home.
@@ -570,6 +593,10 @@ impl App {
             attachment_preview: RefCell::new(None),
             #[cfg(feature = "images")]
             attachment_preview_generation: 0,
+            #[cfg(feature = "images")]
+            inline_images: RefCell::new(HashMap::new()),
+            #[cfg(feature = "images")]
+            inline_image_generation: 0,
             about_return_screen: Screen::Home,
             field_mapping: FieldMappingState::default(),
             current_view: ViewKind::default(),

@@ -241,6 +241,19 @@ pub enum AppEvent {
         attachment_id: String,
         image: Option<image::DynamicImage>,
     },
+    /// An eagerly-fetched inline description/acceptance-criteria image
+    /// resolved (`images` feature only) — see
+    /// `App::refresh_inline_images`/`dispatch_inline_image`. Mirrors
+    /// `AttachmentPreviewLoaded`'s shape; `image` is `None` for every
+    /// fallback reason (network error, decode failure), in which case the
+    /// apply arm leaves that key absent from the cache so the description
+    /// keeps showing its normal placeholder for it.
+    #[cfg(feature = "images")]
+    InlineImageLoaded {
+        generation: u64,
+        key: super::super::InlineImageKey,
+        image: Option<image::DynamicImage>,
+    },
 }
 
 impl App {
@@ -382,6 +395,12 @@ impl App {
                 attachment_id,
                 image,
             } => self.apply_attachment_preview_loaded(generation, attachment_id, image),
+            #[cfg(feature = "images")]
+            AppEvent::InlineImageLoaded {
+                generation,
+                key,
+                image,
+            } => self.apply_inline_image_loaded(generation, key, image),
         }
     }
 }

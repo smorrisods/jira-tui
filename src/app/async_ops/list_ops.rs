@@ -425,7 +425,11 @@ impl App {
             self.detail_scroll = 0;
             self.detail = Some(*detail);
             #[cfg(feature = "images")]
-            self.invalidate_attachment_preview();
+            {
+                self.invalidate_attachment_preview();
+                self.invalidate_inline_images();
+                self.refresh_inline_images();
+            }
             self.screen = Screen::Detail;
             if let Some(pos) = self.issues.iter().position(|i| i.key == key) {
                 self.selected = pos;

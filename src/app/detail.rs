@@ -75,7 +75,11 @@ impl App {
         self.detail_cache.insert(key.to_string(), detail.clone());
         self.detail = Some(detail);
         #[cfg(feature = "images")]
-        self.invalidate_attachment_preview();
+        {
+            self.invalidate_attachment_preview();
+            self.invalidate_inline_images();
+            self.refresh_inline_images();
+        }
         self.screen = Screen::Detail;
         if let Some(pos) = self.issues.iter().position(|i| i.key == key) {
             self.selected = pos;
@@ -111,7 +115,11 @@ impl App {
             if self.screen == Screen::Detail {
                 self.detail = Some(detail);
                 #[cfg(feature = "images")]
-                self.invalidate_attachment_preview();
+                {
+                    self.invalidate_attachment_preview();
+                    self.invalidate_inline_images();
+                    self.refresh_inline_images();
+                }
             }
             self.status = format!("refreshed {key}");
             self.flash(format!("↻ refreshed {key}"));

@@ -15,6 +15,8 @@ mod detail;
 mod edit;
 mod field_mapping;
 mod history;
+#[cfg(feature = "images")]
+mod inline_images;
 mod links;
 mod mouse;
 mod new_issue;

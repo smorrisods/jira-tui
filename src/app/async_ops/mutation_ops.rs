@@ -541,6 +541,34 @@ fn fetch_attachment_preview_blocking(url: &str) -> Option<image::DynamicImage> {
     None
 }
 
+/// Spawn an eager inline-image fetch+decode off the render thread (`images`
+/// feature only), sending the result back as `AppEvent::InlineImageLoaded`.
+/// One dispatch per resolved `(key, url)` pair from
+/// `App::refresh_inline_images` — the byte-fetch-and-decode step is
+/// literally `fetch_attachment_preview_blocking` above (it already takes
+/// nothing but a URL, so there's no attachment-specific logic to
+/// parameterize around), just tagged with an `InlineImageKey` on the way
+/// back instead of an attachment id.
+#[cfg(feature = "images")]
+pub(crate) fn dispatch_inline_image(
+    tx: UnboundedSender<AppEvent>,
+    generation: u64,
+    key: super::super::InlineImageKey,
+    url: String,
+) {
+    tokio::spawn(async move {
+        let key_for_result = key.clone();
+        let image = tokio::task::spawn_blocking(move || fetch_attachment_preview_blocking(&url))
+            .await
+            .unwrap_or(None);
+        let _ = tx.send(AppEvent::InlineImageLoaded {
+            generation,
+            key: key_for_result,
+            image,
+        });
+    });
+}
+
 /// Merge `uploaded` (Jira's response to a successful `upload_attachment`
 /// call) into `existing`: replacing any attachment that already shares an
 /// id (re-uploading to an existing entry, which Jira allows) and appending
@@ -920,5 +948,30 @@ impl App {
             attachment_id,
             protocol,
         });
+    }
+
+    /// Applies `AppEvent::InlineImageLoaded` (`images` feature only) — see
+    /// `App::refresh_inline_images`/`dispatch_inline_image` above. Only the
+    /// usual generation check guards this, unlike
+    /// `apply_attachment_preview_loaded`'s extra "still the highlighted
+    /// attachment" recheck: there's no single currently-selected slot this
+    /// cache tracks, every resolved key is independently valid for as long
+    /// as the generation matches, since `App::invalidate_inline_images`
+    /// clears the whole map on invalidation rather than one slot getting
+    /// overwritten out from under a stale response.
+    #[cfg(feature = "images")]
+    pub(super) fn apply_inline_image_loaded(
+        &mut self,
+        generation: u64,
+        key: super::super::InlineImageKey,
+        image: Option<image::DynamicImage>,
+    ) {
+        if generation != self.inline_image_generation {
+            return;
+        }
+        let Some(image) = image else {
+            return;
+        };
+        self.inline_images.borrow_mut().insert(key, image);
     }
 }

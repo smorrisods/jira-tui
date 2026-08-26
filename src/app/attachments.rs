@@ -358,8 +358,7 @@ fn attachment_preview_url(
     source: &Source,
     attachment: &crate::domain::Attachment,
 ) -> Option<String> {
-    picker?;
-    if !matches!(source, Source::Live { .. }) {
+    if !images_eligible(picker, source) {
         return None;
     }
     if !attachment.mime_type.starts_with("image/") {
@@ -371,6 +370,23 @@ fn attachment_preview_url(
             .clone()
             .unwrap_or_else(|| attachment.content_url.clone()),
     )
+}
+
+/// Whether image fetching is worth attempting at all (`images` feature
+/// only): a detected terminal image-rendering capability (`picker`, from
+/// `main::detect_image_picker`) and a genuine live session (demo/cache
+/// attachment URLs aren't real, so fetching them would just fail). Split out
+/// of `attachment_preview_url` so `app::inline_images::refresh_inline_images`
+/// can reuse the exact same coarse gate for its own eager-fetch batch,
+/// rather than re-deriving it — it already filters to image mimes during
+/// resolution (see `inline_images::resolve_inline_images`), so it only needs
+/// this picker/source half of the check, not the per-attachment mime half.
+#[cfg(feature = "images")]
+pub(crate) fn images_eligible(
+    picker: Option<&ratatui_image::picker::Picker>,
+    source: &Source,
+) -> bool {
+    picker.is_some() && matches!(source, Source::Live { .. })
 }
 
 /// Expand a leading `~` (or `~/...`) to the user's home directory, via the
