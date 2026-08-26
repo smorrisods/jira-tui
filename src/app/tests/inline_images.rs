@@ -7,7 +7,7 @@
 
 use serde_json::json;
 
-use crate::domain::{Attachment, IssueDetail};
+use crate::domain::{Attachment, Comment, IssueDetail};
 
 use super::super::inline_images::resolve_inline_images;
 use super::super::*;
@@ -350,6 +350,105 @@ fn acceptance_criteria_media_nodes_are_also_resolved() {
     assert_eq!(
         resolved,
         vec![(InlineImageKey::Attachment("10001".into()), content_url)]
+    );
+}
+
+fn comment_with(id: &str, body: serde_json::Value) -> Comment {
+    Comment {
+        id: id.into(),
+        author: "someone".into(),
+        created: "1h ago".into(),
+        body,
+    }
+}
+
+/// A comment's own body is walked the same way description/acceptance
+/// criteria already are — closing the gap this issue's comment-image phase
+/// exists to fix.
+#[test]
+fn comment_media_nodes_are_also_resolved() {
+    let attachment = image_attachment("10001", "comment-shot.png", "image/png", None);
+    let content_url = attachment.content_url.clone();
+    let mut detail = detail_with(
+        json!({ "type": "doc", "version": 1, "content": [] }),
+        vec![attachment],
+    );
+    detail.comments = vec![comment_with(
+        "1",
+        json!({
+            "type": "doc", "version": 1,
+            "content": [ media_node("comment-shot.png") ]
+        }),
+    )];
+
+    let resolved = resolve_inline_images(&detail);
+
+    assert_eq!(
+        resolved,
+        vec![(InlineImageKey::Attachment("10001".into()), content_url)]
+    );
+}
+
+/// The `MAX_INLINE_IMAGES` cap combines *all three* sources — description,
+/// acceptance criteria, and comments — into one shared budget, not a
+/// separate cap per source: 2 images in the description, 2 in acceptance
+/// criteria, and 3 spread one-per-comment across three comments (6 total
+/// candidates before the 7th, in the third/chronologically-last comment)
+/// only resolves the first `MAX_INLINE_IMAGES` (6) of them, walked in
+/// description → acceptance criteria → comments order, oldest comment
+/// first (matching `IssueDetail::comments`' own doc comment and how the
+/// activity feed already renders them).
+#[test]
+fn the_cap_combines_description_acceptance_criteria_and_comments() {
+    let attachments: Vec<Attachment> = (1..=7)
+        .map(|n| image_attachment(&n.to_string(), &format!("img{n}.png"), "image/png", None))
+        .collect();
+    let mut detail = detail_with(
+        json!({
+            "type": "doc", "version": 1,
+            "content": [ media_node("img1.png"), media_node("img2.png") ]
+        }),
+        attachments,
+    );
+    detail.acceptance_criteria = Some(json!({
+        "type": "doc", "version": 1,
+        "content": [ media_node("img3.png"), media_node("img4.png") ]
+    }));
+    detail.comments = vec![
+        comment_with(
+            "1",
+            json!({ "type": "doc", "version": 1, "content": [ media_node("img5.png") ] }),
+        ),
+        comment_with(
+            "2",
+            json!({ "type": "doc", "version": 1, "content": [ media_node("img6.png") ] }),
+        ),
+        comment_with(
+            "3",
+            json!({ "type": "doc", "version": 1, "content": [ media_node("img7.png") ] }),
+        ),
+    ];
+
+    let resolved = resolve_inline_images(&detail);
+
+    assert_eq!(
+        resolved.len(),
+        super::super::inline_images::MAX_INLINE_IMAGES
+    );
+    assert_eq!(
+        resolved.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>(),
+        vec![
+            InlineImageKey::Attachment("1".into()),
+            InlineImageKey::Attachment("2".into()),
+            InlineImageKey::Attachment("3".into()),
+            InlineImageKey::Attachment("4".into()),
+            InlineImageKey::Attachment("5".into()),
+            InlineImageKey::Attachment("6".into()),
+        ],
+        "img7 (in the third, chronologically-last comment) must not resolve — the cap is shared \
+         across description + acceptance criteria + comments combined, not per-source, and \
+         comments are only reached after description and acceptance criteria have had first \
+         claim on the shared budget"
     );
 }
 

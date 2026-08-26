@@ -1,9 +1,10 @@
 //! Resolving and eagerly fetching inline images embedded in an issue's
-//! description/acceptance criteria (`images` feature only) — Phase 1 of
-//! issue #130's inline-image rendering. This module only builds the
-//! resolver/cache/fetch machinery; nothing renders these yet (see the
-//! `AttachmentPreview` machinery in `app::attachments` for the sibling
-//! feature this generalizes, and a later phase for the actual paint code).
+//! description/acceptance criteria/comments (`images` feature only) — Phase
+//! 1 of issue #130's inline-image rendering (comment bodies joined the walk
+//! later in the same issue). This module only builds the resolver/cache/
+//! fetch machinery; nothing renders these yet (see the `AttachmentPreview`
+//! machinery in `app::attachments` for the sibling feature this
+//! generalizes, and a later phase for the actual paint code).
 //!
 //! Unlike the attachment picker's single "preview for whatever's
 //! highlighted" slot, every media node a description resolves to is
@@ -55,12 +56,14 @@ pub enum InlineImageKey {
     External(String),
 }
 
-/// Only the first this-many resolvable images in document order are ever
-/// eagerly fetched — a description with more than this many still renders
-/// the rest as their normal `[image: alt]` placeholder (see
-/// `adf::render_block`'s `"media"` arm), it just never gets a decoded
-/// preview. Keeps a pathological description from kicking off a pile of
-/// concurrent fetches on every detail load.
+/// Only the first this-many resolvable images — across description,
+/// acceptance criteria, *and every comment's body combined* (see
+/// `resolve_inline_images`'s own doc comment for the exact document order)
+/// — are ever eagerly fetched; the rest still render as their normal
+/// `[image: alt]` placeholder (see `adf::render_block`'s `"media"` arm),
+/// they just never get a decoded preview. Keeps a pathological
+/// description/comment thread from kicking off a pile of concurrent
+/// fetches on every detail load.
 pub(crate) const MAX_INLINE_IMAGES: usize = 6;
 
 /// Cap for both `App::inline_images` (decoded `DynamicImage`s) and
@@ -528,17 +531,24 @@ fn rows_cols_for(
     (rows, cols)
 }
 
-/// Walk `detail`'s description and acceptance criteria (both raw ADF
-/// documents — see `IssueDetail`'s own field docs) for `media` nodes and
-/// resolve each one to a fetchable `(InlineImageKey, url)` pair, capped at
-/// the first `MAX_INLINE_IMAGES` matches in document order *across both
-/// kinds combined* — an external node found early in the document still
-/// counts against the same cap as an attachment-backed one found later, so
-/// a description mixing both kinds never resolves more than
-/// `MAX_INLINE_IMAGES` total. Anything past the cap, or that never
-/// resolved, leaves the description's own `[image: alt]`/`[image: url]`
-/// placeholder (see `adf::render_block`) showing instead — not an error,
-/// just nothing for the caller to fetch.
+/// Walk `detail`'s description, acceptance criteria, and every comment's
+/// body (all raw ADF documents — see `IssueDetail`'s own field docs) for
+/// `media` nodes and resolve each one to a fetchable `(InlineImageKey,
+/// url)` pair, capped at the first `MAX_INLINE_IMAGES` matches in document
+/// order *across description + acceptance criteria + comments combined* —
+/// an external node found early in the document still counts against the
+/// same cap as an attachment-backed one found later, and a comment's own
+/// images count against that same shared budget rather than getting a cap
+/// of their own, so a description mixing both kinds plus a chatty comment
+/// thread never resolves more than `MAX_INLINE_IMAGES` total. Comments are
+/// walked in `detail.comments`' own order — oldest first (see that field's
+/// own doc comment), matching how the activity feed already renders them —
+/// after description and acceptance criteria, so an image already showing
+/// in the description always wins a fetch slot over one buried in a later
+/// comment. Anything past the cap, or that never resolved, leaves the
+/// source's own `[image: alt]`/`[image: url]` placeholder (see
+/// `adf::render_block`) showing instead — not an error, just nothing for
+/// the caller to fetch.
 ///
 /// Two independent resolution paths per node:
 /// - `type: "external"`: resolves directly from `attrs.url` — no
@@ -560,6 +570,9 @@ pub(crate) fn resolve_inline_images(detail: &IssueDetail) -> Vec<(InlineImageKey
     find_media_nodes(&detail.description, &mut nodes);
     if let Some(criteria) = detail.acceptance_criteria.as_ref() {
         find_media_nodes(criteria, &mut nodes);
+    }
+    for comment in &detail.comments {
+        find_media_nodes(&comment.body, &mut nodes);
     }
 
     let mut resolved = Vec::new();

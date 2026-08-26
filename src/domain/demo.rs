@@ -465,7 +465,18 @@ fn demo_comments() -> Vec<Comment> {
                     { "type": "paragraph", "content": [
                         { "type": "text", "text": "Prototype using " },
                         { "type": "text", "text": "hidden=\"until-found\"", "marks": [ { "type": "code" } ] },
-                        { "type": "text", "text": " looks promising — pushing a branch for review shortly." }
+                        { "type": "text", "text": " looks promising — pushing a branch for review shortly. Screenshot of the panel mid-expand:" }
+                    ] },
+                    // Reuses the demo `accordion-mockup.png` attachment
+                    // (id `10001`, see `demo_attachments` below) by
+                    // filename — exactly the shape `resolve_inline_images`
+                    // matches an attachment-backed media node on — so this
+                    // gives issue #130's comment-image rendering something
+                    // real to exercise in demo mode, not just live.
+                    { "type": "mediaSingle", "content": [
+                        { "type": "media", "attrs": {
+                            "id": "10001", "type": "file", "alt": "accordion-mockup.png"
+                        } }
                     ] }
                 ]
             }),

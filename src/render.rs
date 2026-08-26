@@ -118,13 +118,14 @@ pub struct WideDetail {
     pub links: Panel,
     pub children: Panel,
     pub attachments: Panel,
-    /// Line reservations for any description `media` node
-    /// `description_lines` was told is ready to render (see
-    /// `adf::MediaSizing`) — indices into `main.lines`. Populated whenever
-    /// `wide_detail`'s caller passes a `MediaSizing::Ready` (Phase 3 of
-    /// issue #130 — see `App::with_detail_media_sizing`); still always
-    /// empty for a `Disabled` caller (e.g. quick view, out of scope for
-    /// this phase).
+    /// Line reservations for any description/acceptance-criteria/comment
+    /// `media` node `description_lines`/`activity_lines_cards` were told is
+    /// ready to render (see `adf::MediaSizing`) — indices into `main.lines`.
+    /// Populated whenever `wide_detail`'s caller passes a
+    /// `MediaSizing::Ready` (Phase 3 of issue #130 for description/
+    /// acceptance-criteria — see `App::with_detail_media_sizing` — extended
+    /// to comment bodies later in the same issue); still always empty for a
+    /// `Disabled` caller.
     pub image_placements: Vec<adf::ImagePlacement>,
 }
 
@@ -513,15 +514,28 @@ pub(crate) fn description_lines(
 /// — ahead of the author/timestamp header and every ADF body line, each
 /// pre-wrapped to `width` (via `wrap_with_bar`) so the rule survives a long
 /// line wrapping instead of only showing on its first on-screen row. Same
-/// section-local-offset contract as `activity_lines_plain`.
+/// section-local-offset contract as `activity_lines_plain`. `media` is
+/// forwarded to `adf::render_with_media` for each comment body in turn
+/// (issue #130's comment-image phase) — the returned `Vec<ImagePlacement>`
+/// is already rebased to be relative to *this function's own* `lines`
+/// (i.e. as if it were the only thing on screen); `wide_detail`/
+/// `narrow_detail` rebase it again by their own comments-section `base`,
+/// the same way `comment_starts`/`comments_header` already are.
 fn activity_lines_cards(
     comments: &[Comment],
     current_user: &str,
     width: usize,
-) -> (Vec<Line<'static>>, Option<usize>, Vec<usize>) {
+    media: &adf::MediaSizing,
+) -> (
+    Vec<Line<'static>>,
+    Option<usize>,
+    Vec<usize>,
+    Vec<adf::ImagePlacement>,
+) {
     let mut lines = Vec::new();
     let mut header = None;
     let mut starts = Vec::with_capacity(comments.len());
+    let mut placements = Vec::new();
     if !comments.is_empty() {
         header = Some(lines.len());
         lines.push(Line::from(Span::styled(
@@ -558,12 +572,34 @@ fn activity_lines_cards(
             // any *inner* bar it adds is sized against the space actually
             // left over rather than the full column width.
             let body_width = width.saturating_sub(2).max(1);
-            for body_line in adf::render(&comment.body, body_width).lines {
-                lines.extend(wrap_with_bar(&body_line, width, "▌ ", rule));
+            let (body_lines, body_placements) =
+                adf::render_with_media(&comment.body, body_width, media);
+            // Same rebase problem the blockquote arm of `adf::render_block`
+            // already solves, one level up: each `body_placements` entry's
+            // `line_start` indexes into `body_lines` (this comment's own
+            // private buffer), and `wrap_with_bar` below can turn one
+            // `body_lines` entry into several wrapped rows once spliced
+            // into `lines` — so a placement can't just be shifted by
+            // `lines.len()`. Build the same per-line cumulative
+            // wrapped-row-count table and rebase through it.
+            let body_base = lines.len();
+            let mut cumulative_rows = Vec::with_capacity(body_lines.len() + 1);
+            cumulative_rows.push(0usize);
+            for body_line in &body_lines {
+                let rows = wrap_with_bar(body_line, width, "▌ ", rule);
+                cumulative_rows.push(cumulative_rows.last().copied().unwrap_or(0) + rows.len());
+                lines.extend(rows);
             }
+            placements.extend(body_placements.into_iter().map(|p| {
+                let offset = cumulative_rows.get(p.line_start).copied().unwrap_or(0);
+                adf::ImagePlacement {
+                    line_start: body_base + offset,
+                    ..p
+                }
+            }));
         }
     }
-    (lines, header, starts)
+    (lines, header, starts, placements)
 }
 
 /// Quick view's compact kv fields (SPEC.md §4): assignee, parent (if any),
@@ -676,14 +712,15 @@ pub fn wide_detail(
     let children = linkify_panel(children_lines(detail), DetailPane::Children);
     let attachments = linkify_panel(attachments_lines(detail), DetailPane::Attachments);
 
-    let (mut main_lines, image_placements) = description_lines(detail, main_width, media);
-    let (activity, header, starts) =
-        activity_lines_cards(&detail.comments, current_user, main_width);
+    let (mut main_lines, mut image_placements) = description_lines(detail, main_width, media);
+    let (activity, header, starts, activity_placements) =
+        activity_lines_cards(&detail.comments, current_user, main_width, media);
     if !activity.is_empty() {
         main_lines.push(divider());
     }
     let base = main_lines.len();
     main_lines.extend(activity);
+    image_placements.extend(rebase_placements(activity_placements, base));
     let comments_header = header.map(|h| h + base);
     let comment_starts = starts.into_iter().map(|s| s + base).collect();
     let main_links = linkify(&mut main_lines, DetailPane::Main);
@@ -751,7 +788,7 @@ pub fn narrow_detail(
     let description_base = lines.len();
     let (description, placements) = description_lines(detail, width, media);
     lines.extend(description);
-    let image_placements = rebase_placements(placements, description_base);
+    let mut image_placements = rebase_placements(placements, description_base);
 
     let linked = linked_lines(detail);
     if !linked.is_empty() {
@@ -767,12 +804,14 @@ pub fn narrow_detail(
         lines.extend(attachments);
     }
 
-    let (activity, header, starts) = activity_lines_cards(&detail.comments, current_user, width);
+    let (activity, header, starts, activity_placements) =
+        activity_lines_cards(&detail.comments, current_user, width, media);
     if !activity.is_empty() {
         lines.push(divider());
     }
     let base = lines.len();
     lines.extend(activity);
+    image_placements.extend(rebase_placements(activity_placements, base));
     let comments_header = header.map(|h| h + base);
     let comment_starts = starts.into_iter().map(|s| s + base).collect();
 
@@ -1480,7 +1519,8 @@ mod link_tests {
                 ]
             }),
         };
-        let (lines, _header, starts) = activity_lines_cards(&[comment], "someone else", 20);
+        let (lines, _header, starts, _placements) =
+            activity_lines_cards(&[comment], "someone else", 20, &adf::MediaSizing::Disabled);
         assert_eq!(starts.len(), 1);
         let comment_lines = &lines[starts[0]..];
         assert!(
@@ -1490,6 +1530,88 @@ mod link_tests {
         for l in comment_lines {
             assert_eq!(l.spans[0].content.as_ref(), "▌ ");
         }
+    }
+
+    /// Code-review-style regression test (issue #130's comment-image
+    /// phase), mirroring `adf::render_block`'s own blockquote rebase test:
+    /// a media node inside a comment body records its `line_start` against
+    /// `render_with_media`'s own private per-comment buffer (`body_lines`
+    /// inside `activity_lines_cards`), and — the actually tricky part —
+    /// `wrap_with_bar` can turn one *logical* line ahead of it (the
+    /// preceding paragraph) into *several* visual rows once bar-wrapped.
+    /// A naive rebase (`local_index + body_base`) would land on the wrong
+    /// row entirely whenever that happens; this proves the fix's
+    /// cumulative-wrapped-row-count table instead lands exactly on the
+    /// reserved row, accounting for the header row, every row the wrapped
+    /// paragraph actually produced, and the breathing-room row
+    /// `render_with_media` inserts between top-level blocks.
+    #[test]
+    fn media_inside_a_comment_body_rebases_past_a_wrapped_preceding_paragraph() {
+        let long_text = "word ".repeat(10);
+        let comment = Comment {
+            id: "1".into(),
+            author: "Ada".into(),
+            created: "1h ago".into(),
+            body: serde_json::json!({
+                "type": "doc", "version": 1,
+                "content": [
+                    { "type": "paragraph", "content": [ { "type": "text", "text": long_text.clone() } ] },
+                    { "type": "mediaSingle", "content": [
+                        { "type": "media", "attrs": { "id": "x", "type": "file", "alt": "shot" } }
+                    ] }
+                ]
+            }),
+        };
+        let width = 20;
+        let ready = |media: &adf::InlineMediaRef| -> Option<(u16, u16)> {
+            (media.alt == "shot").then_some((2, 14))
+        };
+        let media = adf::MediaSizing::Ready(&ready);
+        let (lines, _header, starts, placements) =
+            activity_lines_cards(&[comment], "someone else", width, &media);
+
+        assert_eq!(placements.len(), 1);
+        let placement = &placements[0];
+
+        // Independently recompute how many visual rows the long paragraph
+        // itself wraps into at this width, the same way
+        // `activity_lines_cards` does internally — must be more than one
+        // row for this test to actually exercise the wrap-expansion case,
+        // not just a flat per-line offset.
+        let paragraph_line = Line::from(long_text);
+        let wrapped_paragraph_rows = wrap_with_bar(&paragraph_line, width, "▌ ", accent2()).len();
+        assert!(
+            wrapped_paragraph_rows > 1,
+            "the fixture text must actually wrap across multiple rows at this width for this \
+             test to exercise anything, got {wrapped_paragraph_rows} row(s)"
+        );
+
+        // `starts[0]` is this comment's own author/timestamp header row
+        // (a short enough line to stay on one row at width 20); the body
+        // starts right after it.
+        let body_base = starts[0] + 1;
+        // Plus one breathing-room blank row (itself bar-wrapped to a
+        // single row) between the paragraph and the mediaSingle block, per
+        // `render_with_media`'s top-level block spacing.
+        let expected = body_base + wrapped_paragraph_rows + 1;
+
+        assert_eq!(
+            placement.line_start, expected,
+            "line_start must be rebased past every wrapped row of the preceding paragraph (not \
+             just its single logical line in render_with_media's own buffer) plus the \
+             breathing-room row between top-level blocks, got lines: {lines:?}"
+        );
+        let reserved_row_text: String = lines[placement.line_start]
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(
+            reserved_row_text, "▌ ",
+            "line_start must point at a reserved (blank, bar-prefixed) row, not the wrapped \
+             paragraph or the wrong row entirely, got: {:?}",
+            lines[placement.line_start]
+        );
     }
 }
 

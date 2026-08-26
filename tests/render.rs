@@ -754,6 +754,151 @@ mod quick_view_inline_images {
     }
 }
 
+/// Issue #130's comment-image phase: `activity_lines_cards` now renders
+/// comment bodies via `adf::render_with_media` instead of plain
+/// `adf::render`, so a media node embedded in a comment paints the same way
+/// a description-embedded one already does — mirrors
+/// `inline_description_images` above as closely as possible, just landing
+/// the media node in the (single, replaced) comment's body rather than the
+/// description, and using `App::jump_to_comments` (rather than a known
+/// scroll offset) to reach it, since the comments section's own offset
+/// accounting is exactly the rebasing this phase had to get right.
+#[cfg(feature = "images")]
+mod inline_comment_images {
+    use super::*;
+    use jira_tui::app::InlineImageKey;
+    use jira_tui::domain::Comment;
+    use ratatui_image::picker::Picker;
+    use serde_json::json;
+
+    /// Same fixture shape as `inline_description_images::gradient_image` —
+    /// kept as its own copy rather than shared, matching
+    /// `quick_view_inline_images::gradient_image`'s own precedent for why
+    /// (`tests/render.rs` has no shared-fixtures module).
+    fn gradient_image() -> image::DynamicImage {
+        let (width, height) = (2000u32, 100u32);
+        let mut img = image::RgbImage::new(width, height);
+        let denom = f64::from(height.saturating_sub(1).max(1));
+        for y in 0..height {
+            let shade = ((f64::from(y) * 255.0) / denom).round() as u8;
+            for x in 0..width {
+                img.put_pixel(x, y, image::Rgb([shade, 0, 255 - shade]));
+            }
+        }
+        image::DynamicImage::ImageRgb8(img)
+    }
+
+    /// DS-2722's demo detail, with its comments replaced by a single one
+    /// whose body is just a `mediaSingle` block with an `alt` matching the
+    /// demo `accordion-mockup.png` attachment (id `10001` — see
+    /// `domain::demo::demo_attachments`, shared by every demo issue) — the
+    /// comment's only content, so once `jump_to_comments` scrolls to it,
+    /// the image sits right at the top of the comment card with nothing
+    /// else in the same comment pushing it further down.
+    fn open_issue_with_a_media_comment(app: &mut App) {
+        app.screen = Screen::Home;
+        app.open_by_key("DS-2722");
+        let mut detail = app.detail.clone().unwrap();
+        detail.comments = vec![Comment {
+            id: "1".into(),
+            author: "Ada".into(),
+            created: "1h ago".into(),
+            body: json!({
+                "type": "doc", "version": 1,
+                "content": [ { "type": "mediaSingle", "content": [
+                    { "type": "media", "attrs": {
+                        "id": "x", "type": "file", "alt": "accordion-mockup.png"
+                    } }
+                ] } ]
+            }),
+        }];
+        app.detail = Some(detail);
+    }
+
+    #[test]
+    fn a_decoded_image_renders_as_halfblock_cells_when_visible() {
+        let mut app = demo_app();
+        open_issue_with_a_media_comment(&mut app);
+        app.image_picker = Some(Picker::halfblocks());
+        app.inline_images
+            .get_mut()
+            .insert(InlineImageKey::Attachment("10001".into()), gradient_image());
+
+        // `jump_to_comments` picks its offset from the last-rendered
+        // `detail_area`'s width, so render once first — the same call-order
+        // requirement `app::comments`' own tests already document.
+        let _ = render_at(&app, 120, 40);
+        app.jump_to_comments();
+        let text = render_at(&app, 120, 40);
+        assert!(
+            text.contains('▀') || text.contains('▄'),
+            "a decoded, on-screen inline image embedded in a comment should paint halfblock \
+             cells, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn an_image_scrolled_fully_out_of_view_paints_nothing() {
+        let mut app = demo_app();
+        open_issue_with_a_media_comment(&mut app);
+        app.image_picker = Some(Picker::halfblocks());
+        app.inline_images
+            .get_mut()
+            .insert(InlineImageKey::Attachment("10001".into()), gradient_image());
+
+        // Comfortably past the comments section entirely.
+        app.detail_scroll = 500;
+        let text = render_at(&app, 120, 40);
+        assert!(
+            !text.contains('▀') && !text.contains('▄'),
+            "an image scrolled fully out of view must not paint any cells, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn an_image_partially_scrolled_into_view_does_not_panic() {
+        let mut app = demo_app();
+        open_issue_with_a_media_comment(&mut app);
+        app.image_picker = Some(Picker::halfblocks());
+        app.inline_images
+            .get_mut()
+            .insert(InlineImageKey::Attachment("10001".into()), gradient_image());
+
+        let _ = render_at(&app, 120, 40);
+        app.jump_to_comments();
+        // One row further than the comments header itself — partway into
+        // the one comment's card, exactly the partial-visibility case
+        // `SlicedProtocol` exists to handle. The only hard requirement is
+        // "doesn't panic", per the same rationale
+        // `inline_description_images::an_image_partially_scrolled_into_view_does_not_panic`
+        // already documents.
+        app.detail_scroll += 1;
+        let _ = render_at(&app, 120, 40);
+    }
+
+    #[test]
+    fn an_undecoded_attachment_still_shows_the_placeholder() {
+        let mut app = demo_app();
+        open_issue_with_a_media_comment(&mut app);
+        app.image_picker = Some(Picker::halfblocks());
+        // Deliberately never populated: `app.inline_images` stays empty,
+        // mirroring "still fetching, failed, or never eligible".
+
+        let _ = render_at(&app, 120, 40);
+        app.jump_to_comments();
+        let text = render_at(&app, 120, 40);
+        assert!(
+            text.contains("[image: accordion-mockup.png]"),
+            "an undecoded image embedded in a comment must keep showing its placeholder, \
+             got:\n{text}"
+        );
+        assert!(
+            !text.contains('▀') && !text.contains('▄'),
+            "nothing should be painted for an image that was never decoded"
+        );
+    }
+}
+
 #[test]
 fn attachment_upload_input_renders_the_typed_path() {
     let mut app = demo_app();
