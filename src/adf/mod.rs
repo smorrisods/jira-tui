@@ -68,20 +68,18 @@ pub enum MediaSizing<'a> {
 /// source it built, without `adf` needing to re-parse the node itself.
 ///
 /// Deliberately narrower than `app::inline_images::InlineImageKey` (which
-/// is keyed by a resolved attachment id): this module has no
-/// `IssueDetail`/attachment list to resolve against, only the ADF node in
+/// is keyed by a resolved attachment id or an external URL): this module has
+/// no `IssueDetail`/attachment list to resolve against, only the ADF node in
 /// front of it, so it's keyed the same way `resolve_inline_images` itself
-/// matches a media node in the first place — its (non-empty) `alt` text.
-/// External (`type: "external"`) media nodes are never offered readiness
-/// at all — Phase 1 deliberately never resolves them (fetching a
-/// third-party URL through the authenticated attachment pipeline would
-/// leak the auth header), so `alt` alone stays unambiguous for every node
-/// this can actually reserve space for. A later phase adding external-media
-/// support would need to extend this (e.g. a `Url` variant) rather than
-/// overload `alt`.
+/// matches a media node in the first place — an attachment-backed node's
+/// (non-empty) `alt` text, or an external node's `url` (issue #130 phase 4).
+/// `url` is `None` for an attachment-backed node and `Some` for an external
+/// one; the two never collide because `render_block`'s `"media"` arm only
+/// ever sets one or the other, never both — see the callers below.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct InlineMediaRef {
     pub alt: String,
+    pub url: Option<String>,
 }
 
 /// One media node's reserved space, recorded by `render_with_media`
@@ -285,11 +283,25 @@ fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize, ctx: &
                 attrs.and_then(|a| a.get("type")).and_then(|t| t.as_str()) == Some("external");
             let url = attrs.and_then(|a| a.get("url")).and_then(|u| u.as_str());
 
-            if let Some(alt) = alt {
+            // An attachment-backed node is identified by its (non-empty)
+            // `alt` text, matching `resolve_inline_images`'s own matching;
+            // an external node is identified by its `url` instead — its
+            // `alt` may be empty or absent, but the `url` *is* the fetch
+            // target, so it alone is enough to ask for readiness.
+            let media_ref = if external_url {
+                url.map(|url| InlineMediaRef {
+                    alt: alt.unwrap_or_default().to_string(),
+                    url: Some(url.to_string()),
+                })
+            } else {
+                alt.map(|alt| InlineMediaRef {
+                    alt: alt.to_string(),
+                    url: None,
+                })
+            };
+
+            if let Some(media_ref) = media_ref {
                 if let MediaSizing::Ready(ready) = ctx.sizing {
-                    let media_ref = InlineMediaRef {
-                        alt: alt.to_string(),
-                    };
                     if let Some((rows, cols)) = ready(&media_ref) {
                         let line_start = out.len();
                         for _ in 0..rows {
@@ -758,7 +770,8 @@ mod tests {
         assert_eq!(
             placement.media,
             InlineMediaRef {
-                alt: "a screenshot".into()
+                alt: "a screenshot".into(),
+                url: None,
             }
         );
         assert_eq!(placement.rows, 3);
@@ -806,7 +819,8 @@ mod tests {
         assert_eq!(
             placement.media,
             InlineMediaRef {
-                alt: "ready one".into()
+                alt: "ready one".into(),
+                url: None,
             }
         );
         assert_eq!(placement.line_start, 0);
@@ -821,6 +835,41 @@ mod tests {
         }
         let placeholder_text: String = lines[2].spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(placeholder_text, "[image: not ready]");
+    }
+
+    /// Issue #130 phase 4: an external (`type: "external"`) media node with
+    /// no `alt` at all is still offered readiness, keyed by its `url` —
+    /// unlike an attachment-backed node (gated on a non-empty `alt`), the
+    /// URL alone is enough identity to reserve space for it.
+    #[test]
+    fn media_sizing_ready_reserves_space_for_an_external_node_by_url() {
+        let doc = json!({
+            "type": "doc",
+            "content": [
+                { "type": "media", "attrs": {
+                    "id": "x", "type": "external",
+                    "url": "https://third-party.example.com/pic.png"
+                } }
+            ]
+        });
+        let ready = |media: &InlineMediaRef| -> Option<(u16, u16)> {
+            (media.url.as_deref() == Some("https://third-party.example.com/pic.png"))
+                .then_some((4, 20))
+        };
+        let sizing = MediaSizing::Ready(&ready);
+        let (lines, placements) = render_with_media(&doc, 120, &sizing);
+
+        assert_eq!(placements.len(), 1);
+        assert_eq!(
+            placements[0].media,
+            InlineMediaRef {
+                alt: String::new(),
+                url: Some("https://third-party.example.com/pic.png".into()),
+            }
+        );
+        assert_eq!(placements[0].rows, 4);
+        assert_eq!(placements[0].cols, 20);
+        assert_eq!(lines.len(), 4, "exactly the reserved rows, nothing else");
     }
 
     #[test]

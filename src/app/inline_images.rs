@@ -31,11 +31,12 @@ pub(crate) const MIN_INLINE_IMAGE_ROWS: u16 = 3;
 pub(crate) const MAX_INLINE_IMAGE_ROWS: u16 = 14;
 
 /// Identifies one inline image's decoded cache entry (`App::inline_images`).
-/// Only `Attachment` exists so far — a resolved `media` node whose `alt`
-/// matched an attachment's filename (see `resolve_inline_images`) — but the
-/// variant is named so an `External(String)` case (keyed by URL, for
-/// `type: "external"` media nodes) can be added in a later phase without
-/// reshaping any of this phase's callers.
+/// `Attachment(id)` is a resolved `media` node whose `alt` matched an
+/// attachment's filename (see `resolve_inline_images`); `External(url)` is a
+/// `type: "external"` media node, keyed by its own URL — a stable identity
+/// with no attachment/filename lookup involved, since the URL *is* the fetch
+/// target. Added in issue #130 phase 4; Phase 1 named the enum anticipating
+/// exactly this addition without reshaping any of its own callers.
 ///
 /// `pub`, not `pub(crate)`, purely because `AppEvent` (which carries one)
 /// is itself `pub` — Rust requires a public item's field types be at least
@@ -44,6 +45,7 @@ pub(crate) const MAX_INLINE_IMAGE_ROWS: u16 = 14;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum InlineImageKey {
     Attachment(String),
+    External(String),
 }
 
 /// Only the first this-many resolvable images in document order are ever
@@ -153,24 +155,38 @@ impl App {
     /// caller, and `Option`-chaining past a second `None` costs nothing.
     fn sized_inline_image(&self, media: &InlineMediaRef, pane_width: u16) -> Option<(u16, u16)> {
         let picker = self.image_picker.as_ref()?;
-        let img = self.decoded_inline_image(&media.alt)?;
+        let img = self.decoded_inline_image(media)?;
         Some(rows_cols_for(&img, picker.font_size(), pane_width))
     }
 
-    /// Look up whichever decoded inline image (if any) corresponds to
-    /// `alt` — mirrors `resolve_inline_images`'s own alt -> attachment
-    /// matching, then keys into the `inline_images` cache the same way
-    /// `refresh_inline_images` populated it. Returns a `Ref` (rather than a
-    /// bare `&DynamicImage`) since the cache lives behind a `RefCell` and a
-    /// borrow guard can't be shortened to `&self`'s lifetime without one.
-    fn decoded_inline_image(&self, alt: &str) -> Option<Ref<'_, image::DynamicImage>> {
+    /// Resolve `media` (an ADF node reference from `render_with_media`'s
+    /// recursion) into the `InlineImageKey` it was fetched under — an
+    /// external node (`media.url` is `Some`) is keyed by that URL directly,
+    /// mirroring how `resolve_inline_images` resolves one; an
+    /// attachment-backed node (`media.url` is `None`) still needs its `alt`
+    /// matched against `detail.attachments` the way it always did, since the
+    /// cache is keyed by attachment id, not by `alt` itself.
+    fn inline_image_key_for(&self, media: &InlineMediaRef) -> Option<InlineImageKey> {
+        if let Some(url) = media.url.as_ref() {
+            return Some(InlineImageKey::External(url.clone()));
+        }
         let attachment = self
             .detail
             .as_ref()?
             .attachments
             .iter()
-            .find(|a| a.filename == alt)?;
-        let key = InlineImageKey::Attachment(attachment.id.clone());
+            .find(|a| a.filename == media.alt)?;
+        Some(InlineImageKey::Attachment(attachment.id.clone()))
+    }
+
+    /// Look up whichever decoded inline image (if any) corresponds to
+    /// `media` — resolves the same key `refresh_inline_images` fetched under
+    /// (`inline_image_key_for`), then keys into the `inline_images` cache.
+    /// Returns a `Ref` (rather than a bare `&DynamicImage`) since the cache
+    /// lives behind a `RefCell` and a borrow guard can't be shortened to
+    /// `&self`'s lifetime without one.
+    fn decoded_inline_image(&self, media: &InlineMediaRef) -> Option<Ref<'_, image::DynamicImage>> {
+        let key = self.inline_image_key_for(media)?;
         Ref::filter_map(self.inline_images.borrow(), |cache| cache.get(&key)).ok()
     }
 
@@ -195,7 +211,7 @@ impl App {
             .get(&placement.media)
             .is_some_and(|p| p.size() == target);
         if !up_to_date {
-            let img = self.decoded_inline_image(&placement.media.alt)?.clone();
+            let img = self.decoded_inline_image(&placement.media)?.clone();
             let protocol =
                 SlicedProtocol::new_with_resize(picker, img, target, Resize::Fit(None)).ok()?;
             self.inline_image_protocols
@@ -243,25 +259,32 @@ fn rows_cols_for(
 }
 
 /// Walk `detail`'s description and acceptance criteria (both raw ADF
-/// documents — see `IssueDetail`'s own field docs) for `media` nodes,
-/// matching each one's `alt` text against `detail.attachments[].filename`
-/// (case-sensitive, exact match only — Jira's own editor sets a media node's
-/// `alt` to the original filename it was embedded under; externally
-/// confirmed this session, not yet verified against this codebase's own
-/// live Jira, but a wrong match just leaves the placeholder showing, never a
-/// wrong image, so the bet is safe even if imperfect). Filters to matches
-/// whose attachment `mime_type` starts with `"image/"`, and caps the result
-/// at the first `MAX_INLINE_IMAGES` in document order — anything past the
-/// cap, or that never matched, or matched a non-image attachment, resolves
-/// to no key at all: not an error, just nothing for the caller to fetch, so
-/// the description's own `[image: alt]`/`[embedded media]` placeholder (see
-/// `adf::render_block`) keeps showing.
+/// documents — see `IssueDetail`'s own field docs) for `media` nodes and
+/// resolve each one to a fetchable `(InlineImageKey, url)` pair, capped at
+/// the first `MAX_INLINE_IMAGES` matches in document order *across both
+/// kinds combined* — an external node found early in the document still
+/// counts against the same cap as an attachment-backed one found later, so
+/// a description mixing both kinds never resolves more than
+/// `MAX_INLINE_IMAGES` total. Anything past the cap, or that never
+/// resolved, leaves the description's own `[image: alt]`/`[image: url]`
+/// placeholder (see `adf::render_block`) showing instead — not an error,
+/// just nothing for the caller to fetch.
 ///
-/// `type: "external"` media nodes are deliberately never resolved here:
-/// fetching an arbitrary third-party URL through the same authenticated
-/// pipeline used for Jira's own attachments would leak the auth header to
-/// that third party. External media gets its own resolution path in a later
-/// phase of issue #130.
+/// Two independent resolution paths per node:
+/// - `type: "external"`: resolves directly from `attrs.url` — no
+///   filename/attachment matching needed, the URL *is* the fetch target
+///   (issue #130 phase 4; fetched credential-free via
+///   `jira::get_bytes_public`, never through the authenticated attachment
+///   pipeline, so a hostile external URL can never see the user's Jira
+///   auth header).
+/// - otherwise: matches the node's `alt` text against
+///   `detail.attachments[].filename` (case-sensitive, exact match only —
+///   Jira's own editor sets a media node's `alt` to the original filename
+///   it was embedded under; externally confirmed this session, not yet
+///   verified against this codebase's own live Jira, but a wrong match just
+///   leaves the placeholder showing, never a wrong image, so the bet is
+///   safe even if imperfect), then filters to matches whose attachment
+///   `mime_type` starts with `"image/"`.
 pub(crate) fn resolve_inline_images(detail: &IssueDetail) -> Vec<(InlineImageKey, String)> {
     let mut nodes: Vec<&Value> = Vec::new();
     find_media_nodes(&detail.description, &mut nodes);
@@ -278,6 +301,9 @@ pub(crate) fn resolve_inline_images(detail: &IssueDetail) -> Vec<(InlineImageKey
         let is_external =
             attrs.and_then(|a| a.get("type")).and_then(|t| t.as_str()) == Some("external");
         if is_external {
+            if let Some(url) = attrs.and_then(|a| a.get("url")).and_then(|u| u.as_str()) {
+                resolved.push((InlineImageKey::External(url.to_string()), url.to_string()));
+            }
             continue;
         }
         let Some(alt) = attrs

@@ -132,11 +132,12 @@ fn a_media_groups_children_resolve_both_in_document_order() {
     );
 }
 
+/// Issue #130 phase 4: an external media node resolves to `External(url)`
+/// directly from its own `url` attribute — no attachment/filename matching
+/// involved at all, unlike the attachment-backed path. A matching `alt` here
+/// is incidental, not what makes this resolve.
 #[test]
-fn an_external_media_node_is_never_resolved_even_with_a_matching_alt() {
-    // `alt` matches a real, image-mime attachment — the only thing that
-    // should stop this from resolving is `type: "external"` itself.
-    let attachment = image_attachment("10001", "mockup.png", "image/png", None);
+fn an_external_media_node_resolves_to_its_own_url() {
     let description = json!({
         "type": "doc", "version": 1,
         "content": [ { "type": "media", "attrs": {
@@ -144,11 +145,83 @@ fn an_external_media_node_is_never_resolved_even_with_a_matching_alt() {
             "url": "https://third-party.example.com/mockup.png"
         } } ]
     });
-    let detail = detail_with(description, vec![attachment]);
+    let detail = detail_with(description, vec![]);
 
-    assert!(
-        resolve_inline_images(&detail).is_empty(),
-        "external media nodes are out of scope for this phase and must never resolve"
+    let resolved = resolve_inline_images(&detail);
+
+    assert_eq!(
+        resolved,
+        vec![(
+            InlineImageKey::External("https://third-party.example.com/mockup.png".into()),
+            "https://third-party.example.com/mockup.png".into()
+        )]
+    );
+}
+
+/// An external media node with no `alt` at all still resolves — its `url`
+/// alone is enough identity, unlike an attachment-backed node which needs a
+/// non-empty `alt` to have anything to match against.
+#[test]
+fn an_external_media_node_with_no_alt_still_resolves() {
+    let description = json!({
+        "type": "doc", "version": 1,
+        "content": [ { "type": "media", "attrs": {
+            "id": "x", "type": "external",
+            "url": "https://third-party.example.com/pic.png"
+        } } ]
+    });
+    let detail = detail_with(description, vec![]);
+
+    assert_eq!(
+        resolve_inline_images(&detail),
+        vec![(
+            InlineImageKey::External("https://third-party.example.com/pic.png".into()),
+            "https://third-party.example.com/pic.png".into()
+        )]
+    );
+}
+
+/// The `MAX_INLINE_IMAGES` cap is shared across both kinds combined, in
+/// document order — an external node early in the document still counts
+/// against the same budget as attachment-backed ones found later, rather
+/// than each kind getting its own separate cap.
+#[test]
+fn the_cap_is_shared_across_attachment_and_external_nodes_in_document_order() {
+    let attachments: Vec<Attachment> = (1..=5)
+        .map(|n| image_attachment(&n.to_string(), &format!("img{n}.png"), "image/png", None))
+        .collect();
+    let mut content = vec![media_node("img1.png"), media_node("img2.png")];
+    content.push(json!({ "type": "media", "attrs": {
+        "id": "ext", "type": "external", "url": "https://third-party.example.com/a.png"
+    } }));
+    content.extend(
+        (3..=5)
+            .map(|n| media_node(&format!("img{n}.png")))
+            .collect::<Vec<_>>(),
+    );
+    content.push(json!({ "type": "media", "attrs": {
+        "id": "ext2", "type": "external", "url": "https://third-party.example.com/b.png"
+    } }));
+    let description = json!({ "type": "doc", "version": 1, "content": content });
+    let detail = detail_with(description, attachments);
+
+    let resolved = resolve_inline_images(&detail);
+
+    assert_eq!(
+        resolved.len(),
+        super::super::inline_images::MAX_INLINE_IMAGES
+    );
+    assert_eq!(
+        resolved.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>(),
+        vec![
+            InlineImageKey::Attachment("1".into()),
+            InlineImageKey::Attachment("2".into()),
+            InlineImageKey::External("https://third-party.example.com/a.png".into()),
+            InlineImageKey::Attachment("3".into()),
+            InlineImageKey::Attachment("4".into()),
+            InlineImageKey::Attachment("5".into()),
+        ],
+        "the 7th match (the second external node) must not resolve — the cap is shared, not per-kind"
     );
 }
 
@@ -249,6 +322,66 @@ async fn opening_an_issue_with_a_resolvable_image_dispatches_a_fetch_that_lands_
     let cache = app.inline_images.borrow();
     assert_eq!(cache.len(), 1);
     assert!(cache.contains_key(&InlineImageKey::Attachment("10001".into())));
+}
+
+/// Issue #130 phase 4: dispatching a fetch for an `External` key needs no
+/// Jira credentials at all — unlike the `Attachment` path (whose blocking
+/// fetch starts with `crate::jira::Config::load()?` and returns `None`
+/// immediately, with no network attempt, when none are configured; see the
+/// test above), the `External` path (`fetch_external_image_blocking`) calls
+/// `jira::get_bytes_public(url)` directly, which takes no `Config`
+/// parameter at all — there is nothing for it to load. `live_app()` here
+/// guarantees zero configured credentials (env vars cleared,
+/// `XDG_CONFIG_HOME` pointed at an empty temp dir); the dispatch still runs
+/// to completion — a real, deterministic, offline connection-refused
+/// failure against a closed loopback port — rather than short-circuiting on
+/// a missing `Config`, proving the `External` path is structurally
+/// credential-free at the app-level wiring, not just the leaf function.
+/// (`get_bytes_public` sending no `Authorization` header on an actual
+/// successful request is verified directly, at the wire, by
+/// `jira::live::support`'s own
+/// `fetch_public_bytes_sends_no_authorization_header` test — `mockito` has
+/// no TLS support, so that assertion can't be driven through this crate's
+/// `https://`-only gate from an app-level test.)
+#[tokio::test]
+async fn external_fetch_runs_with_zero_jira_credentials_configured() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    let summary = app.issues[0].clone();
+    let key = summary.key.clone();
+    let mut detail = crate::domain::demo_detail(&key);
+    detail.attachments = vec![];
+    let external_url = "https://127.0.0.1:1/unreachable.png";
+    detail.description = json!({
+        "type": "doc", "version": 1,
+        "content": [ { "type": "media", "attrs": {
+            "id": "x", "type": "external", "url": external_url
+        } } ]
+    });
+    app.locally_created
+        .push(LocallyCreatedIssue { summary, detail });
+
+    app.open_by_key(&key);
+    let generation = app.inline_image_generation;
+
+    let event = next_event(&mut app).await;
+    match event {
+        AppEvent::InlineImageLoaded {
+            generation: g,
+            key: k,
+            image,
+        } => {
+            assert_eq!(g, generation);
+            assert_eq!(k, InlineImageKey::External(external_url.into()));
+            assert!(
+                image.is_none(),
+                "127.0.0.1:1 refuses the connection; a Some would mean this \
+                 somehow reached a real server"
+            );
+        }
+        _ => panic!("expected InlineImageLoaded, got a different event"),
+    }
 }
 
 /// A response tagged with a since-superseded generation (the issue changed
@@ -368,6 +501,7 @@ fn refresh_detail_also_clears_the_stale_sliced_protocol_cache() {
     app.open_detail();
     let media = crate::adf::InlineMediaRef {
         alt: "shared-filename.png".into(),
+        url: None,
     };
     let picker = app.image_picker.as_ref().unwrap();
     let protocol = ratatui_image::sliced::SlicedProtocol::new_with_resize(

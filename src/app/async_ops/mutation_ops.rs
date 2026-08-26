@@ -527,7 +527,10 @@ pub(crate) fn dispatch_attachment_preview(
 /// network error, or bytes that don't decode as a supported image format —
 /// collapses to `None` rather than propagating an error: a failed preview
 /// fetch is never worth surfacing to the user, it just means the picker
-/// falls back to its normal metadata + placeholder rendering.
+/// falls back to its normal metadata + placeholder rendering. Decoded
+/// images are downscaled (`downscale_for_preview`) before being handed
+/// back, bounding how much memory even a huge source image can occupy for
+/// what's only ever rendered at a handful of terminal cells.
 #[cfg(feature = "images")]
 #[allow(unused_variables)]
 fn fetch_attachment_preview_blocking(url: &str) -> Option<image::DynamicImage> {
@@ -535,20 +538,90 @@ fn fetch_attachment_preview_blocking(url: &str) -> Option<image::DynamicImage> {
     {
         let cfg = crate::jira::Config::load()?;
         let bytes = crate::jira::download_attachment(&cfg, url).ok()?;
-        image::load_from_memory(&bytes).ok()
+        image::load_from_memory(&bytes)
+            .ok()
+            .map(downscale_for_preview)
     }
     #[cfg(not(feature = "live"))]
     None
 }
 
+/// Issue #130 phase 4's `External`-keyed sibling of
+/// `fetch_attachment_preview_blocking` above: fetches `url` (an ADF `media`
+/// node's `type: "external"` `url`, potentially any third-party host) via
+/// `jira::get_bytes_public` instead of the authenticated attachment
+/// pipeline — no `Config` is loaded or needed at all, since there's no
+/// Jira credential to apply to an arbitrary external host in the first
+/// place (see `get_bytes_public`'s own doc comment for the full reasoning,
+/// including its `https://`-only restriction). Same downscale step as the
+/// attachment path — an external image is, if anything, more likely to be
+/// oversized, since nothing about it is shaped by Jira's own attachment
+/// handling.
+#[cfg(feature = "images")]
+#[allow(unused_variables)]
+fn fetch_external_image_blocking(url: &str) -> Option<image::DynamicImage> {
+    #[cfg(feature = "live")]
+    {
+        let bytes = crate::jira::get_bytes_public(url).ok()?;
+        image::load_from_memory(&bytes)
+            .ok()
+            .map(downscale_for_preview)
+    }
+    #[cfg(not(feature = "live"))]
+    None
+}
+
+/// Row/column-agnostic downscale cap applied to every decoded inline/preview
+/// image before it's cached (`fetch_attachment_preview_blocking`/
+/// `fetch_external_image_blocking` above) — an oversized `DynamicImage`
+/// sitting in `App::inline_images`/`App::attachment_preview` for the life of
+/// the session is a real memory cost for something that only ever renders
+/// at a handful of terminal rows/cols (see `inline_images::MAX_INLINE_IMAGE_ROWS`),
+/// so anything north of ~2 megapixels gets resized down before it's ever
+/// stored, not just before it's painted. Applies to the attachment-picker's
+/// single preview slot too, not just inline images — both share this same
+/// decode step, and bounding memory there is equally worth having, not a
+/// side effect to work around.
+#[cfg(feature = "images")]
+const MAX_PREVIEW_PIXELS: u32 = 2_000_000;
+
+/// Resize `img` down to at most `MAX_PREVIEW_PIXELS` total pixels,
+/// preserving aspect ratio, when it's bigger than that — a no-op otherwise.
+/// `DynamicImage::resize` (rather than `resize_exact`, which would distort
+/// the aspect ratio, or `thumbnail`, whose faster nearest-neighbour-ish
+/// filter trades away more quality than this needs to) fits the image
+/// within a same-aspect-ratio bounding box computed from the target pixel
+/// count, using a `Triangle` (bilinear) filter — a reasonable quality/speed
+/// tradeoff for a terminal preview image, not a final-quality asset.
+/// `target_w`/`target_h` are floored rather than rounded: since both are
+/// scaled down by the same factor, flooring each dimension independently
+/// can only shrink their product relative to the exact (unrounded) target,
+/// guaranteeing the result never rounds back up past `MAX_PREVIEW_PIXELS` —
+/// rounding instead could overshoot the cap by a few dozen pixels.
+#[cfg(feature = "images")]
+fn downscale_for_preview(img: image::DynamicImage) -> image::DynamicImage {
+    let (w, h) = (img.width().max(1), img.height().max(1));
+    if (w as u64) * (h as u64) <= MAX_PREVIEW_PIXELS as u64 {
+        return img;
+    }
+    let scale = (MAX_PREVIEW_PIXELS as f64 / (w as f64 * h as f64)).sqrt();
+    let target_w = ((w as f64 * scale).floor() as u32).max(1);
+    let target_h = ((h as f64 * scale).floor() as u32).max(1);
+    img.resize(target_w, target_h, image::imageops::FilterType::Triangle)
+}
+
 /// Spawn an eager inline-image fetch+decode off the render thread (`images`
 /// feature only), sending the result back as `AppEvent::InlineImageLoaded`.
 /// One dispatch per resolved `(key, url)` pair from
-/// `App::refresh_inline_images` — the byte-fetch-and-decode step is
-/// literally `fetch_attachment_preview_blocking` above (it already takes
-/// nothing but a URL, so there's no attachment-specific logic to
-/// parameterize around), just tagged with an `InlineImageKey` on the way
-/// back instead of an attachment id.
+/// `App::refresh_inline_images` — the byte-fetch-and-decode step branches on
+/// `key`'s variant: `Attachment` reuses the existing authenticated
+/// `fetch_attachment_preview_blocking` (it already takes nothing but a URL,
+/// so there's no attachment-specific logic to parameterize around);
+/// `External` (issue #130 phase 4) instead uses
+/// `fetch_external_image_blocking`, which fetches credential-free via
+/// `jira::get_bytes_public` rather than the authenticated attachment
+/// pipeline. Either way the result comes back tagged with the same
+/// `InlineImageKey` it was dispatched under.
 #[cfg(feature = "images")]
 pub(crate) fn dispatch_inline_image(
     tx: UnboundedSender<AppEvent>,
@@ -558,9 +631,12 @@ pub(crate) fn dispatch_inline_image(
 ) {
     tokio::spawn(async move {
         let key_for_result = key.clone();
-        let image = tokio::task::spawn_blocking(move || fetch_attachment_preview_blocking(&url))
-            .await
-            .unwrap_or(None);
+        let image = tokio::task::spawn_blocking(move || match key {
+            super::super::InlineImageKey::Attachment(_) => fetch_attachment_preview_blocking(&url),
+            super::super::InlineImageKey::External(_) => fetch_external_image_blocking(&url),
+        })
+        .await
+        .unwrap_or(None);
         let _ = tx.send(AppEvent::InlineImageLoaded {
             generation,
             key: key_for_result,
@@ -973,5 +1049,53 @@ impl App {
             return;
         };
         self.inline_images.borrow_mut().insert(key, image);
+    }
+}
+
+#[cfg(all(test, feature = "images"))]
+mod tests {
+    use super::*;
+
+    /// Issue #130 phase 4's memory-bounding step: a decoded image bigger
+    /// than `MAX_PREVIEW_PIXELS` gets resized down (preserving aspect ratio)
+    /// before it's ever handed back to be cached — constructs a synthetic
+    /// oversized image directly (no network/decode involved) and runs it
+    /// through the same `downscale_for_preview` both
+    /// `fetch_attachment_preview_blocking` and `fetch_external_image_blocking`
+    /// call before returning.
+    #[test]
+    fn downscale_for_preview_shrinks_an_oversized_image_to_the_pixel_cap() {
+        // 3000x2000 = 6,000,000 px, well past the ~2,000,000px cap.
+        let oversized = image::DynamicImage::new_rgb8(3000, 2000);
+
+        let result = downscale_for_preview(oversized);
+
+        let pixels = result.width() as u64 * result.height() as u64;
+        assert!(
+            pixels <= MAX_PREVIEW_PIXELS as u64,
+            "expected at most {MAX_PREVIEW_PIXELS} px, got {pixels} ({}x{})",
+            result.width(),
+            result.height()
+        );
+        // Aspect ratio (3:2) must survive the resize, not just the pixel count.
+        let original_ratio = 3000.0 / 2000.0;
+        let result_ratio = result.width() as f64 / result.height() as f64;
+        assert!(
+            (original_ratio - result_ratio).abs() < 0.01,
+            "aspect ratio should be preserved: expected {original_ratio}, got {result_ratio}"
+        );
+    }
+
+    /// An image already at or under the cap is returned unchanged — no
+    /// pointless resize (and no possibility of a rounding-driven upscale)
+    /// for images that were already a reasonable size.
+    #[test]
+    fn downscale_for_preview_leaves_a_small_image_untouched() {
+        let small = image::DynamicImage::new_rgb8(100, 80);
+
+        let result = downscale_for_preview(small);
+
+        assert_eq!(result.width(), 100);
+        assert_eq!(result.height(), 80);
     }
 }

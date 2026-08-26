@@ -43,5 +43,5 @@ pub use search::{
     fetch_my_work, jql_for, jql_for_version, search_by_text, search_issues, MY_WORK_JQL,
     SEARCH_RESULTS_CAP,
 };
-pub use support::whoami;
+pub use support::{get_bytes_public, whoami};
 pub use versions::{list_versions, set_affects_versions, set_fix_versions};
