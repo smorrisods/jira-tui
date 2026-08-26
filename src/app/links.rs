@@ -54,12 +54,20 @@ impl App {
                 detail,
                 &current_user,
                 &updated,
+                self.sprint_field_configured(),
                 width,
             )),
             DetailLayout::Narrow => {
-                render::narrow_detail(detail, &current_user, &updated, self.facts_folded, width)
-                    .lines
-                    .links
+                render::narrow_detail(
+                    detail,
+                    &current_user,
+                    &updated,
+                    self.facts_folded,
+                    self.sprint_field_configured(),
+                    width,
+                )
+                .lines
+                .links
             }
         }
     }
@@ -107,6 +115,7 @@ impl App {
                         &current_user,
                         &updated,
                         self.facts_folded,
+                        self.sprint_field_configured(),
                         width,
                     )
                     .lines
@@ -115,7 +124,13 @@ impl App {
                 _ => None,
             },
             DetailLayout::Wide => {
-                let wide = render::wide_detail(detail, &current_user, &updated, width);
+                let wide = render::wide_detail(
+                    detail,
+                    &current_user,
+                    &updated,
+                    self.sprint_field_configured(),
+                    width,
+                );
                 Some(match pane {
                     DetailPane::Identity => wide.identity.lines,
                     DetailPane::Main => wide.main.lines,

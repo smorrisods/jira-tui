@@ -21,6 +21,7 @@ mod issue_types;
 mod mutations;
 mod projects;
 mod search;
+mod sprint;
 mod support;
 mod versions;
 
@@ -43,5 +44,6 @@ pub use search::{
     fetch_my_work, jql_for, jql_for_version, search_by_text, search_issues, MY_WORK_JQL,
     SEARCH_RESULTS_CAP,
 };
+pub use sprint::{assign_sprint, list_open_sprints, remove_from_sprint};
 pub use support::whoami;
 pub use versions::{list_versions, set_affects_versions, set_fix_versions};

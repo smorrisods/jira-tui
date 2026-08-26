@@ -273,6 +273,8 @@ pub(super) fn test_config(base_url: String) -> Config {
         token: "secret-token".into(),
         project: "PROJ".into(),
         acceptance_criteria_field: None,
+        sprint_field: None,
+        sprint_board_id: None,
     }
 }
 

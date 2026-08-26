@@ -211,6 +211,22 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Modal: the sprint picker. No type-to-filter (the row list is already
+    // short — "Remove from sprint" plus a handful of active/future
+    // sprints), so arrow/j/k move and Enter confirms the highlighted row,
+    // same shape as the version picker minus the field-tab/checkbox parts
+    // it doesn't need.
+    if app.sprint_picker_open {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => app.sprint_picker_move(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.sprint_picker_move(1),
+            KeyCode::Enter => app.confirm_sprint_picker(),
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => app.close_sprint_picker(),
+            _ => {}
+        }
+        return;
+    }
+
     // Modal: the new-issue form's issue-type dropdown (opened by Enter on
     // the IssueType field — see the `Screen::NewIssue` block below). No
     // filtering, mirroring the transition picker.
@@ -654,6 +670,21 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char('R') if matches!(app.screen, Screen::Home | Screen::List) => {
             app.open_release_screen()
+        }
+        // Sprint picker: move the viewed issue into a sprint, or back to
+        // the backlog (Detail or quick-view). `S` is free here — `s`/`S`'s
+        // only other bindings (`cycle_sort`/`toggle_sort_dir`, `release`'s
+        // list-mode cycle) are gated to Home/List/Release, none of which
+        // this arm's guard overlaps with. Same target-resolution scope as
+        // `A`/`R` above; `open_sprint_picker` itself refuses to open at all
+        // when Sprint isn't configured for this instance.
+        KeyCode::Char('S')
+            if (app.screen == Screen::Detail && app.detail.is_some())
+                || (matches!(app.screen, Screen::Home | Screen::List)
+                    && app.quick_view
+                    && app.quick_view_detail().is_some()) =>
+        {
+            app.open_sprint_picker();
         }
         KeyCode::Char(']')
             if app.screen == Screen::Detail

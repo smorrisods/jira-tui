@@ -406,6 +406,7 @@ impl App {
             children: Vec::new(),
             description: description.unwrap_or_else(|| crate::adf::compile("")),
             acceptance_criteria: None,
+            sprint: None,
             transitions: new_issue_transitions(),
             comments: Vec::new(),
             attachments: Vec::new(),

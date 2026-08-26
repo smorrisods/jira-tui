@@ -4,7 +4,7 @@
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::domain::{Attachment, Comment};
+use crate::domain::{Attachment, Comment, Sprint};
 
 use super::super::{App, ReleaseBulkKind, Screen};
 use super::AppEvent;
@@ -166,6 +166,56 @@ fn set_versions_blocking(
         }
     }
     (None, None)
+}
+
+/// Spawn a sprint change off the render thread, sending the result back as
+/// `AppEvent::SprintApplied`. `sprint_id`/`sprint` are both `None` together
+/// to remove the issue from its sprint (back to the backlog), or both
+/// `Some` to move it into a specific sprint — mirrors `dispatch_assign`'s
+/// shape.
+pub(crate) fn dispatch_set_sprint(
+    tx: UnboundedSender<AppEvent>,
+    generation: u64,
+    key: String,
+    sprint_id: Option<String>,
+    sprint: Option<Sprint>,
+) {
+    tokio::spawn(async move {
+        let key_for_result = key.clone();
+        let sprint_for_result = sprint.clone();
+        let error =
+            tokio::task::spawn_blocking(move || set_sprint_blocking(&key, sprint_id.as_deref()))
+                .await
+                .unwrap_or_else(|_| Some("internal error: task panicked".into()));
+        let _ = tx.send(AppEvent::SprintApplied {
+            generation,
+            key: key_for_result,
+            sprint: if error.is_none() {
+                sprint_for_result
+            } else {
+                None
+            },
+            error,
+        });
+    });
+}
+
+/// Mirrors `assign_issue_blocking`'s "no credentials means nothing to do
+/// live" shape. `sprint_id` of `None` removes the issue from its sprint
+/// (the backlog endpoint); `Some` moves it into that sprint.
+#[allow(unused_variables)]
+fn set_sprint_blocking(key: &str, sprint_id: Option<&str>) -> Option<String> {
+    #[cfg(feature = "live")]
+    {
+        if let Some(cfg) = crate::jira::Config::load() {
+            let result = match sprint_id {
+                Some(id) => crate::jira::assign_sprint(&cfg, id, key),
+                None => crate::jira::remove_from_sprint(&cfg, key),
+            };
+            return result.err().map(|e| e.to_string());
+        }
+    }
+    None
 }
 
 /// Spawn a bulk add-to-release or remove-from-release off the render
@@ -702,6 +752,38 @@ impl App {
             (None, Some(e)) => self.status = format!("affects version update failed: {e}"),
             (Some(fe), Some(ae)) => self.status = format!("version update failed: {fe}; {ae}"),
         }
+    }
+
+    /// Applies `AppEvent::SprintApplied` — see `dispatch_set_sprint` above.
+    /// Mirrors `apply_assignee_applied`'s shape exactly.
+    pub(super) fn apply_sprint_applied(
+        &mut self,
+        generation: u64,
+        key: String,
+        sprint: Option<Sprint>,
+        error: Option<String>,
+    ) {
+        if generation != self.sprint_generation {
+            // A newer picker interaction superseded this result; drop it
+            // silently, mirroring `apply_assignee_applied`'s stale-generation
+            // guard.
+            return;
+        }
+        self.loading = false;
+        self.sprint_pending = false;
+        if let Some(e) = error {
+            self.status = format!("sprint update failed: {e}");
+            return;
+        }
+        self.apply_sprint_locally(&key, sprint.clone());
+        self.status = match &sprint {
+            Some(s) => format!("moved {key} to {}", s.name),
+            None => format!("removed {key} from its sprint"),
+        };
+        self.flash(match &sprint {
+            Some(s) => format!("✓ moved to {}", s.name),
+            None => "✓ removed from sprint".to_string(),
+        });
     }
 
     /// Applies `AppEvent::ReleaseBulkApplied` — see `dispatch_release_bulk`

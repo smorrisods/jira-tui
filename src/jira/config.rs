@@ -16,6 +16,24 @@ pub struct Config {
     /// `JIRA_ACCEPTANCE_CRITERIA_FIELD` or `acceptance_criteria_field` in
     /// `config.toml`. Left unset, acceptance criteria are simply not fetched.
     pub acceptance_criteria_field: Option<String>,
+    /// Custom field ID for "Sprint" (e.g. `customfield_XXXXX`) — like
+    /// `acceptance_criteria_field`, Sprint is a Jira Software custom field
+    /// with an instance-specific id (this repo's own findings: verified live
+    /// against a real Jira Cloud site as `customfield_10020`, but that
+    /// number is *not* portable — every site assigns its own). Opt-in via
+    /// `JIRA_SPRINT_FIELD`/`sprint_field` in `config.toml`; left unset, the
+    /// Sprint field is neither fetched nor shown, and the sprint picker
+    /// (`S`) refuses to open.
+    pub sprint_field: Option<String>,
+    /// The Scrum board `list_open_sprints` asks for candidate sprints on
+    /// (`GET /rest/agile/1.0/board/{id}/sprint`) — needed by the sprint
+    /// picker (`S`) to offer a choice of sprints to move an issue into.
+    /// Unlike `sprint_field`, there's no reliable auto-discovery: a project
+    /// can have several boards (Kanban and Scrum both), so this is opt-in
+    /// via `JIRA_SPRINT_BOARD_ID`/`sprint_board_id` in `config.toml`. Left
+    /// unset, the picker still lets you remove an issue from its sprint
+    /// (back to the backlog), just not choose a new one.
+    pub sprint_board_id: Option<String>,
 }
 
 impl Config {
@@ -42,6 +60,14 @@ impl Config {
             .ok()
             .or_else(|| file.get("acceptance_criteria_field").cloned())
             .filter(|s| !s.trim().is_empty());
+        let sprint_field = std::env::var("JIRA_SPRINT_FIELD")
+            .ok()
+            .or_else(|| file.get("sprint_field").cloned())
+            .filter(|s| !s.trim().is_empty());
+        let sprint_board_id = std::env::var("JIRA_SPRINT_BOARD_ID")
+            .ok()
+            .or_else(|| file.get("sprint_board_id").cloned())
+            .filter(|s| !s.trim().is_empty());
 
         let token = std::env::var("JIRA_API_TOKEN")
             .ok()
@@ -57,6 +83,8 @@ impl Config {
             token: token.trim().to_string(),
             project,
             acceptance_criteria_field,
+            sprint_field,
+            sprint_board_id,
         })
     }
 
@@ -112,6 +140,8 @@ mod tests {
             "JIRA_API_TOKEN",
             "JIRA_PROJECT",
             "JIRA_ACCEPTANCE_CRITERIA_FIELD",
+            "JIRA_SPRINT_FIELD",
+            "JIRA_SPRINT_BOARD_ID",
             "JIRA_TOKEN_FILE",
         ] {
             std::env::remove_var(var);
@@ -134,6 +164,8 @@ mod tests {
         assert_eq!(cfg.token, "secret");
         assert_eq!(cfg.project, "");
         assert_eq!(cfg.acceptance_criteria_field, None);
+        assert_eq!(cfg.sprint_field, None);
+        assert_eq!(cfg.sprint_board_id, None);
         assert_eq!(cfg.site_host(), "x.atlassian.net");
 
         // A trailing slash on base_url is trimmed.
@@ -144,12 +176,16 @@ mod tests {
         // Optional fields, when set, come through.
         std::env::set_var("JIRA_PROJECT", "PROJ");
         std::env::set_var("JIRA_ACCEPTANCE_CRITERIA_FIELD", "customfield_10001");
+        std::env::set_var("JIRA_SPRINT_FIELD", "customfield_10020");
+        std::env::set_var("JIRA_SPRINT_BOARD_ID", "843");
         let cfg = Config::load().unwrap();
         assert_eq!(cfg.project, "PROJ");
         assert_eq!(
             cfg.acceptance_criteria_field.as_deref(),
             Some("customfield_10001")
         );
+        assert_eq!(cfg.sprint_field.as_deref(), Some("customfield_10020"));
+        assert_eq!(cfg.sprint_board_id.as_deref(), Some("843"));
 
         for var in [
             "JIRA_BASE_URL",
@@ -157,6 +193,8 @@ mod tests {
             "JIRA_API_TOKEN",
             "JIRA_PROJECT",
             "JIRA_ACCEPTANCE_CRITERIA_FIELD",
+            "JIRA_SPRINT_FIELD",
+            "JIRA_SPRINT_BOARD_ID",
         ] {
             std::env::remove_var(var);
         }

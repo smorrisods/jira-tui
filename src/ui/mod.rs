@@ -49,6 +49,7 @@ pub(crate) mod quick_view_columns;
 mod release;
 mod search;
 mod spell_suggest;
+mod sprint_picker;
 mod transition_picker;
 mod version_picker;
 mod view_picker;
@@ -78,6 +79,7 @@ use quick_view::draw_quick_view;
 use release::draw_release;
 use search::draw_search;
 use spell_suggest::draw_spell_suggest;
+use sprint_picker::draw_sprint_picker;
 use transition_picker::draw_transition_picker;
 use version_picker::draw_version_picker;
 use view_picker::draw_view_picker;
@@ -336,6 +338,10 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     if app.version_picker_open {
         draw_version_picker(f, app, f.area());
+    }
+
+    if app.sprint_picker_open {
+        draw_sprint_picker(f, app, f.area());
     }
 
     if app.new_issue_type_picker_open {

@@ -131,6 +131,21 @@ const DEFAULT_CONFIG: &str = r#"# jira-tui configuration
 # You can also find and set this from within jira-tui — press `F`.
 # acceptance_criteria_field = "customfield_10001"
 
+# Optional: custom field ID for "Sprint" on your Jira site — like
+# acceptance_criteria_field above, this is instance-specific (every site
+# assigns its own numeric ID). Leave commented out to skip fetching/showing
+# Sprint entirely; the sprint picker (`S`) refuses to open without it.
+# sprint_field = "customfield_10020"
+
+# Optional: the Scrum board ID the sprint picker (`S`) offers sprints from
+# (Settings -> your board's URL has ?rapidView=<id>, or GET
+# /rest/agile/1.0/board?projectKeyOrId=<project> lists your project's
+# boards). There's no reliable auto-discovery — a project can have several
+# boards — so this is opt-in too. Leave commented out and the picker still
+# lets you remove an issue from its sprint (back to the backlog), just not
+# choose a new one.
+# sprint_board_id = "843"
+
 # Optional: path to a file containing just your API token, if you'd rather
 # not use the JIRA_API_TOKEN env var or the default
 # ~/.config/jira-tui/token file.

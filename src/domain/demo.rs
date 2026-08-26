@@ -6,7 +6,7 @@ use serde_json::json;
 
 use super::types::{
     AssignableUser, Attachment, ChildIssue, Comment, IssueDetail, IssueLink, IssueSummary,
-    IssueType, Priority, Project, Transition, Version,
+    IssueType, Priority, Project, Sprint, Transition, Version,
 };
 
 /// The implicit "you" in demo mode — offline `Source::Demo` carries no real
@@ -257,6 +257,37 @@ pub fn demo_versions() -> Vec<Version> {
     ]
 }
 
+/// Offline stand-in for `jira::live::sprint::list_open_sprints`, so the
+/// per-issue sprint picker (`S`) is fully explorable in demo mode — see
+/// `App::sprint_rows_source`. Only active/future sprints (mirroring the
+/// live call's `state=active,future` filter): a closed sprint is history,
+/// not something you'd offer to move an issue into.
+pub fn demo_open_sprints() -> Vec<Sprint> {
+    vec![
+        Sprint {
+            id: "9001".into(),
+            name: "DS Sprint 24".into(),
+            state: "active".into(),
+        },
+        Sprint {
+            id: "9002".into(),
+            name: "DS Sprint 25".into(),
+            state: "future".into(),
+        },
+    ]
+}
+
+/// This issue's current sprint, if any — `demo_open_sprints()[0]` (the
+/// active sprint) for a couple of in-flight demo issues, `None` (backlog)
+/// for everything else, so both states are explorable offline. Keyed by
+/// hand like `demo_versions_for`.
+fn demo_sprint_for(key: &str) -> Option<Sprint> {
+    match key {
+        "DS-2722" | "DS-2725" => Some(demo_open_sprints()[0].clone()),
+        _ => None,
+    }
+}
+
 /// `fix_versions`/`affects_versions` for a demo issue key, keyed by hand so
 /// `v3.4.0` (released) and `v3.5.0` (upcoming) both have a mix of issues in
 /// different statuses — see `demo_versions`. Keys not listed here (including
@@ -392,6 +423,7 @@ pub fn demo_detail(key: &str) -> IssueDetail {
             .collect(),
         description,
         acceptance_criteria: Some(acceptance),
+        sprint: demo_sprint_for(&base.key),
         transitions: ["To Do", "In Progress", "In Review", "Done"]
             .iter()
             .enumerate()
@@ -514,6 +546,7 @@ fn demo_detail_not_found(key: &str) -> IssueDetail {
         children: Vec::new(),
         description,
         acceptance_criteria: None,
+        sprint: None,
         transitions: Vec::new(),
         comments: Vec::new(),
         attachments: Vec::new(),
@@ -613,6 +646,40 @@ mod tests {
     #[test]
     fn demo_issues_for_version_is_empty_for_a_version_with_no_issues() {
         assert!(demo_issues_for_version("v3.6.0").is_empty());
+    }
+
+    #[test]
+    fn demo_open_sprints_are_all_active_or_future() {
+        for sprint in demo_open_sprints() {
+            assert!(
+                sprint.state == "active" || sprint.state == "future",
+                "{} has state {}, but demo_open_sprints must only offer sprints \
+                 you could actually move an issue into",
+                sprint.name,
+                sprint.state
+            );
+        }
+    }
+
+    #[test]
+    fn demo_detail_sprint_is_either_the_active_demo_sprint_or_none() {
+        let active = demo_open_sprints()[0].clone();
+        for issue in demo_issues() {
+            let detail = demo_detail(&issue.key);
+            if let Some(sprint) = detail.sprint {
+                assert_eq!(sprint, active, "{} carries an unexpected sprint", issue.key);
+            }
+        }
+        // At least one demo issue actually has a sprint, so the picker/meta
+        // row has something non-empty to show offline.
+        assert!(demo_issues()
+            .iter()
+            .any(|i| demo_detail(&i.key).sprint.is_some()));
+    }
+
+    #[test]
+    fn demo_detail_not_found_fallback_has_no_sprint() {
+        assert_eq!(demo_detail("DS-0000").sprint, None);
     }
 
     #[test]

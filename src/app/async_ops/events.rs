@@ -6,7 +6,7 @@
 
 use crate::domain::{
     AssignableUser, Attachment, Comment, IssueDetail, IssueSummary, IssueType, Project, Source,
-    Version, ViewKind,
+    Sprint, Version, ViewKind,
 };
 
 use super::super::{App, ReleaseBulkKind, Screen};
@@ -152,6 +152,20 @@ pub enum AppEvent {
         fix_error: Option<String>,
         affects_versions: Option<Vec<String>>,
         affects_error: Option<String>,
+    },
+    /// A one-shot background fetch of the configured board's open sprints
+    /// resolved, dispatched once at startup for a genuine live session —
+    /// see `dispatch_open_sprints`. Mirrors `ProjectVersionsLoaded`: carries
+    /// no `generation`, since it only replaces `App::open_sprints` wholesale
+    /// and can't be made stale by an unrelated refresh/switch_view.
+    OpenSprintsLoaded { sprints: Vec<Sprint> },
+    /// A sprint change (or removal, when `sprint` was `None`) resolved
+    /// against live Jira — see `App::confirm_sprint_picker`/`dispatch_set_sprint`.
+    SprintApplied {
+        generation: u64,
+        key: String,
+        sprint: Option<Sprint>,
+        error: Option<String>,
     },
     /// The release review screen's drill-down fetch resolved — see
     /// `App::open_release_drill`/`dispatch_release_issues`. Carries its own
@@ -328,6 +342,13 @@ impl App {
                 affects_versions,
                 affects_error,
             ),
+            AppEvent::OpenSprintsLoaded { sprints } => self.apply_open_sprints_loaded(sprints),
+            AppEvent::SprintApplied {
+                generation,
+                key,
+                sprint,
+                error,
+            } => self.apply_sprint_applied(generation, key, sprint, error),
             AppEvent::ReleaseIssuesLoaded {
                 generation,
                 issues,
