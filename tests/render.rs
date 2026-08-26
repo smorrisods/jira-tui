@@ -459,6 +459,301 @@ mod inline_description_images {
     }
 }
 
+/// Issue #130 Phase 5: the quick-view panel's inline description-image
+/// paint pass — mirrors `inline_description_images` above as closely as
+/// possible, just against `ui::quick_view`'s own screen/selection shape
+/// (`app.quick_view = true`, `app.detail_cache` rather than `app.detail`,
+/// `app.quick_view_scroll` rather than `app.detail_scroll`).
+#[cfg(feature = "images")]
+mod quick_view_inline_images {
+    use super::*;
+    use jira_tui::app::{AppEvent, InlineImageKey};
+    use ratatui_image::picker::Picker;
+    use serde_json::json;
+
+    /// Same fixture shape as `inline_description_images::gradient_image` —
+    /// kept as its own copy rather than shared, since `tests/render.rs` has
+    /// no shared-fixtures module and hoisting a ~15-line helper out to
+    /// share it with one sibling module is more churn than it's worth.
+    fn gradient_image() -> image::DynamicImage {
+        let (width, height) = (2000u32, 100u32);
+        let mut img = image::RgbImage::new(width, height);
+        let denom = f64::from(height.saturating_sub(1).max(1));
+        for y in 0..height {
+            let shade = ((f64::from(y) * 255.0) / denom).round() as u8;
+            for x in 0..width {
+                img.put_pixel(x, y, image::Rgb([shade, 0, 255 - shade]));
+            }
+        }
+        image::DynamicImage::ImageRgb8(img)
+    }
+
+    /// Opens quick view on the first demo issue and swaps its *cached*
+    /// detail's description for a single `mediaSingle` block whose `alt`
+    /// matches the demo `accordion-mockup.png` attachment (id `10001`,
+    /// shared by every demo issue — see `domain::demo::demo_attachments`) —
+    /// mirrors `inline_description_images::open_issue_with_a_media_description`,
+    /// just landing in `app.detail_cache` (quick view's own store, keyed by
+    /// issue) instead of `app.detail` (Detail's single slot).
+    fn open_quick_view_with_a_media_description(app: &mut App) {
+        app.screen = Screen::Home;
+        app.quick_view = true;
+        app.selected = 0;
+        app.ensure_quick_view_loaded();
+        let key = app.issues[0].key.clone();
+        let mut detail = app.quick_view_detail().unwrap().clone();
+        detail.description = json!({
+            "type": "doc", "version": 1,
+            "content": [ { "type": "mediaSingle", "content": [
+                { "type": "media", "attrs": {
+                    "id": "x", "type": "file", "alt": "accordion-mockup.png"
+                } }
+            ] } ]
+        });
+        app.detail_cache.insert(key, detail);
+    }
+
+    #[test]
+    fn a_decoded_image_renders_as_halfblock_cells_when_visible() {
+        let mut app = demo_app();
+        open_quick_view_with_a_media_description(&mut app);
+        app.image_picker = Some(Picker::halfblocks());
+        app.inline_images
+            .get_mut()
+            .insert(InlineImageKey::Attachment("10001".into()), gradient_image());
+
+        let text = render_at(&app, 120, 40);
+        assert!(
+            text.contains('▀') || text.contains('▄'),
+            "a decoded, on-screen inline image should paint halfblock cells in \
+             quick view, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn an_image_scrolled_fully_out_of_view_paints_nothing() {
+        let mut app = demo_app();
+        open_quick_view_with_a_media_description(&mut app);
+        app.image_picker = Some(Picker::halfblocks());
+        app.inline_images
+            .get_mut()
+            .insert(InlineImageKey::Attachment("10001".into()), gradient_image());
+
+        // Comfortably past whatever quick view's own (tighter than
+        // Detail's) row budget clamps to — see `App::quick_view_max_image_rows`.
+        app.quick_view_scroll = 500;
+        let text = render_at(&app, 120, 40);
+        assert!(
+            !text.contains('▀') && !text.contains('▄'),
+            "an image scrolled fully out of view must not paint any cells, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn an_undecoded_attachment_still_shows_the_placeholder() {
+        let mut app = demo_app();
+        open_quick_view_with_a_media_description(&mut app);
+        app.image_picker = Some(Picker::halfblocks());
+        // Deliberately never populated: `app.inline_images` stays empty,
+        // mirroring "still fetching, failed, or never eligible".
+
+        let text = render_at(&app, 120, 40);
+        assert!(
+            text.contains("[image: accordion-mockup.png]"),
+            "an undecoded image must keep showing its placeholder in quick view, got:\n{text}"
+        );
+        assert!(
+            !text.contains('▀') && !text.contains('▄'),
+            "nothing should be painted for an image that was never decoded"
+        );
+    }
+
+    /// Issue #130 phase 5's own row-budget note: `ui::quick_view::draw_with_overflow`
+    /// has to shrink the area it paints an image into once the trailing
+    /// "… ↓ N more lines" fade row is showing, painting against the same
+    /// shrunk area the `Paragraph` itself was rendered into — otherwise a
+    /// reserved image row could land on top of (or past) the fade row. A
+    /// short pane plus a deliberately long description forces the fade row
+    /// to appear; the image (placed first in the document, so it's always
+    /// within the visible prefix) must still paint alongside it.
+    #[test]
+    fn an_image_still_paints_alongside_the_overflow_fade_row() {
+        let mut app = demo_app();
+        app.screen = Screen::List;
+        app.quick_view = true;
+        app.selected = 0;
+        app.ensure_quick_view_loaded();
+        app.image_picker = Some(Picker::halfblocks());
+        app.inline_images
+            .get_mut()
+            .insert(InlineImageKey::Attachment("10001".into()), gradient_image());
+
+        let key = app.issues[0].key.clone();
+        let mut detail = app.quick_view_detail().unwrap().clone();
+        let mut content = vec![json!({
+            "type": "mediaSingle", "content": [
+                { "type": "media", "attrs": {
+                    "id": "x", "type": "file", "alt": "accordion-mockup.png"
+                } }
+            ]
+        })];
+        content.extend((0..80).map(|i| {
+            json!({
+                "type": "paragraph",
+                "content": [{"type": "text", "text": format!("Line {i} of a deliberately long description.")}]
+            })
+        }));
+        detail.description = json!({"type": "doc", "version": 1, "content": content});
+        app.detail_cache.insert(key, detail);
+
+        let text = render_at(&app, 110, 16);
+        assert!(
+            text.contains("more line"),
+            "the overflow fade row should show once the description exceeds the panel, got:\n{text}"
+        );
+        assert!(
+            text.contains('▀') || text.contains('▄'),
+            "the image reserved at the top of the description should still paint \
+             alongside the overflow fade row, got:\n{text}"
+        );
+    }
+
+    /// The idempotent-fetch/bounded-retention design at the core of issue
+    /// #130 phase 5: quick view's own trigger (`App::refresh_quick_view_inline_images`,
+    /// reached indirectly here through the same public entry points the run
+    /// loop and async event pipeline actually use — `ensure_quick_view_loaded`
+    /// and `apply_event`) must not pile up duplicate fetches as the
+    /// selection churns across several issues that happen to share the same
+    /// underlying attachment (every demo issue shares the `accordion-mockup.png`
+    /// attachment, id `10001` — see `domain::demo::demo_attachments`), and
+    /// revisiting an already-cached issue must not re-dispatch at all.
+    ///
+    /// Isolates `Config::load()` from any real credentials on this machine
+    /// (mirrors `src/app/tests/support.rs`'s `live_app()`, which this
+    /// integration-test crate can't reach — that helper is crate-internal —
+    /// so the essential bits are inlined here for this one test) and only
+    /// resolves `Attachment`-keyed images, whose blocking fetch bails out
+    /// immediately on a missing `Config` with no network attempt at all
+    /// (see `fetch_attachment_preview_blocking`), keeping this fully
+    /// offline and fast.
+    #[tokio::test]
+    async fn selection_churn_across_issues_sharing_an_attachment_does_not_redispatch() {
+        let base = std::env::temp_dir().join(format!(
+            "jira-tui-quickview-churn-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::env::set_var("XDG_CONFIG_HOME", &base);
+        for var in [
+            "JIRA_BASE_URL",
+            "JIRA_EMAIL",
+            "JIRA_API_TOKEN",
+            "JIRA_TOKEN_FILE",
+        ] {
+            std::env::remove_var(var);
+        }
+
+        let mut app = demo_app();
+        app.source = Source::Live {
+            site: "demo.atlassian.net".into(),
+            user: "me".into(),
+        };
+        app.quick_view = true;
+        app.image_picker = Some(Picker::halfblocks());
+
+        let media_key = InlineImageKey::Attachment("10001".into());
+        let media_description = json!({
+            "type": "doc", "version": 1,
+            "content": [ { "type": "mediaSingle", "content": [
+                { "type": "media", "attrs": {
+                    "id": "x", "type": "file", "alt": "accordion-mockup.png"
+                } }
+            ] } ]
+        });
+
+        // Visit the first three issues in turn — each landing dispatches a
+        // `DetailLoaded` fetch (drained and re-applied here with a
+        // resolvable media node substituted in, standing in for whatever a
+        // real Jira response would have contained) which, per this phase's
+        // hook in `apply_detail_loaded`, should itself trigger exactly one
+        // inline-image dispatch the first time, and none of the following
+        // times — every issue resolves to the *same* `InlineImageKey` since
+        // they all share the one demo attachment. `DetailLoaded` and
+        // `InlineImageLoaded` are dispatched from independent spawned tasks
+        // with no ordering guarantee relative to each other, so any
+        // `InlineImageLoaded` seen while waiting for the next `DetailLoaded`
+        // is stashed rather than assumed away.
+        let mut inline_image_events = Vec::new();
+        for i in 0..3 {
+            app.selected = i;
+            app.ensure_quick_view_loaded();
+            let (generation, key, status) = loop {
+                let event =
+                    tokio::time::timeout(std::time::Duration::from_secs(5), app.events_rx.recv())
+                        .await
+                        .expect("detail fetch did not complete in time")
+                        .expect("events_tx dropped unexpectedly");
+                match event {
+                    AppEvent::DetailLoaded {
+                        generation,
+                        key,
+                        status,
+                        ..
+                    } => break (generation, key, status),
+                    img @ AppEvent::InlineImageLoaded { .. } => inline_image_events.push(img),
+                    _ => panic!("expected DetailLoaded or InlineImageLoaded"),
+                }
+            };
+            let mut resolved_detail = jira_tui::domain::demo_detail(&key);
+            resolved_detail.description = media_description.clone();
+            app.apply_event(AppEvent::DetailLoaded {
+                generation,
+                key,
+                detail: Box::new(resolved_detail),
+                status,
+            });
+        }
+
+        // The one dispatch from the loop above may still be in flight (it's
+        // a real, if instantaneous, spawned task) — give it a bounded
+        // window to land rather than assuming it's already queued.
+        while let Ok(Some(event)) =
+            tokio::time::timeout(std::time::Duration::from_millis(500), app.events_rx.recv()).await
+        {
+            inline_image_events.push(event);
+        }
+
+        // Across all three (distinct-issue, shared-attachment) visits above,
+        // exactly one inline-image fetch should have been dispatched for the
+        // shared key — the second and third visits' `refresh_quick_view_inline_images`
+        // call must have found it already pending and skipped it.
+        assert_eq!(
+            inline_image_events.len(),
+            1,
+            "expected exactly one inline-image dispatch across three visits sharing the \
+             same attachment, got {} events",
+            inline_image_events.len()
+        );
+        match &inline_image_events[0] {
+            AppEvent::InlineImageLoaded { key, .. } => assert_eq!(key, &media_key),
+            _ => panic!("expected InlineImageLoaded"),
+        }
+
+        // Revisiting the first issue again — already cached — must be a
+        // complete no-op: no new `DetailLoaded` dispatch, and therefore no
+        // chance of a redundant inline-image dispatch either.
+        app.selected = 0;
+        app.ensure_quick_view_loaded();
+        assert!(
+            app.events_rx.try_recv().is_err(),
+            "revisiting an already-cached issue must not dispatch anything at all"
+        );
+    }
+}
+
 #[test]
 fn attachment_upload_input_renders_the_typed_path() {
     let mut app = demo_app();

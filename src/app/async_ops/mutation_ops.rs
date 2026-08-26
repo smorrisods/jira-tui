@@ -1028,13 +1028,21 @@ impl App {
 
     /// Applies `AppEvent::InlineImageLoaded` (`images` feature only) — see
     /// `App::refresh_inline_images`/`dispatch_inline_image` above. Only the
-    /// usual generation check guards this, unlike
-    /// `apply_attachment_preview_loaded`'s extra "still the highlighted
-    /// attachment" recheck: there's no single currently-selected slot this
-    /// cache tracks, every resolved key is independently valid for as long
-    /// as the generation matches, since `App::invalidate_inline_images`
+    /// usual generation check guards whether the response is *applied*,
+    /// unlike `apply_attachment_preview_loaded`'s extra "still the
+    /// highlighted attachment" recheck: there's no single currently-selected
+    /// slot this cache tracks, every resolved key is independently valid for
+    /// as long as the generation matches, since `App::invalidate_inline_images`
     /// clears the whole map on invalidation rather than one slot getting
     /// overwritten out from under a stale response.
+    ///
+    /// `key` is freed from `inline_images_pending` unconditionally, before
+    /// the generation check — even a since-superseded response means this
+    /// particular fetch is no longer in flight, and leaving the key marked
+    /// pending forever would permanently block `refresh_inline_images`/
+    /// `refresh_quick_view_inline_images` from ever retrying it (Phase 5 of
+    /// issue #130's idempotency design — see either function's own doc
+    /// comment).
     #[cfg(feature = "images")]
     pub(super) fn apply_inline_image_loaded(
         &mut self,
@@ -1042,6 +1050,7 @@ impl App {
         key: super::super::InlineImageKey,
         image: Option<image::DynamicImage>,
     ) {
+        self.inline_images_pending.remove(&key);
         if generation != self.inline_image_generation {
             return;
         }

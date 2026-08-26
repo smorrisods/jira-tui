@@ -11,6 +11,7 @@
 //! (`App::inline_images`) rather than one overwritable slot.
 
 use std::cell::Ref;
+use std::collections::{HashMap, VecDeque};
 
 use ratatui::layout::Size;
 use ratatui_image::sliced::SlicedProtocol;
@@ -56,6 +57,89 @@ pub enum InlineImageKey {
 /// concurrent fetches on every detail load.
 pub(crate) const MAX_INLINE_IMAGES: usize = 6;
 
+/// Cap for both `App::inline_images` (decoded `DynamicImage`s) and
+/// `App::inline_image_protocols` (encoded `SlicedProtocol`s) — Phase 5 of
+/// issue #130. Detail alone never approaches this (it fully clears both
+/// caches on every navigate, per `App::invalidate_inline_images`, and a
+/// single issue resolves at most `MAX_INLINE_IMAGES` = 6 anyway), but quick
+/// view's own trigger (`App::refresh_quick_view_inline_images`) deliberately
+/// does *not* clear on every selection change — a user scrolling `j`/`k`
+/// back and forth over a handful of issues should keep seeing their already
+/// -decoded images rather than re-fetching on every pass. Without a cap,
+/// unbounded quick-view churn across a long session would grow both maps
+/// forever; 24 entries comfortably covers several recently-viewed issues'
+/// worth of images (each capped at 6) while staying well short of the
+/// multi-issue combinations that would actually matter memory-wise.
+pub(super) const INLINE_IMAGE_CACHE_CAP: usize = 24;
+
+/// A capacity-bounded cache that evicts the oldest-*inserted* entry once
+/// full, rather than true LRU (Phase 5 of issue #130 — see
+/// `INLINE_IMAGE_CACHE_CAP`'s doc comment for which two caches use this).
+/// Insertion order, not access order: both caches are read through borrowed
+/// `Ref`s at paint time (`App::decoded_inline_image`/
+/// `App::sliced_inline_image_protocol`), which only ever need `&self` — bumping
+/// recency on every read would mean either taking `&mut self` on the
+/// render-thread's hot path just to reorder a queue, or adding `Cell`-based
+/// access-order bookkeeping purely to make eviction marginally smarter. For
+/// a cache whose job is "bound quick-view's churn without defeating
+/// retention across a few recently-visited issues," not "squeeze out every
+/// last cache hit," FIFO is the simpler, still-correct choice: a working set
+/// that fits within the cap is fully retained either way, and eviction only
+/// ever discards the least-recently-*fetched* entry, which in practice
+/// tracks "least recently viewed" closely enough.
+pub struct BoundedCache<K, V> {
+    map: HashMap<K, V>,
+    order: VecDeque<K>,
+    cap: usize,
+}
+
+impl<K: Eq + std::hash::Hash + Clone, V> BoundedCache<K, V> {
+    pub(super) fn new(cap: usize) -> Self {
+        Self {
+            map: HashMap::new(),
+            order: VecDeque::new(),
+            cap: cap.max(1),
+        }
+    }
+
+    pub fn get(&self, key: &K) -> Option<&V> {
+        self.map.get(key)
+    }
+
+    pub fn contains_key(&self, key: &K) -> bool {
+        self.map.contains_key(key)
+    }
+
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+
+    /// Insert `value` under `key`, evicting the oldest-inserted entry (if
+    /// any) once the cache grows past `cap`. Overwriting an already-present
+    /// key updates the value in place without touching its position in the
+    /// eviction order — it's not "new" for eviction purposes.
+    pub fn insert(&mut self, key: K, value: V) {
+        if !self.map.contains_key(&key) {
+            self.order.push_back(key.clone());
+            while self.order.len() > self.cap {
+                if let Some(oldest) = self.order.pop_front() {
+                    self.map.remove(&oldest);
+                }
+            }
+        }
+        self.map.insert(key, value);
+    }
+
+    pub fn clear(&mut self) {
+        self.map.clear();
+        self.order.clear();
+    }
+}
+
 impl App {
     /// Drops every cached/in-flight inline image and bumps
     /// `inline_image_generation` — called alongside
@@ -81,6 +165,16 @@ impl App {
     pub(crate) fn invalidate_inline_images(&mut self) {
         self.inline_images.get_mut().clear();
         self.inline_image_protocols.get_mut().clear();
+        // Also drop any keys `refresh_inline_images`/
+        // `refresh_quick_view_inline_images` believe are still in flight —
+        // a fetch dispatched under the generation this bump just retired
+        // will still land eventually (see `apply_inline_image_loaded`), but
+        // its response will be dropped for the stale generation, so nothing
+        // will ever clear its `pending` entry otherwise. Leaving it behind
+        // would permanently block a future re-resolution of the same key
+        // under the new generation, since `refresh_*` skips anything
+        // already marked pending.
+        self.inline_images_pending.clear();
         self.inline_image_generation += 1;
     }
 
@@ -100,17 +194,75 @@ impl App {
     /// candidate, since `resolve_inline_images` already filtered to image
     /// mimes during resolution.
     pub(crate) fn refresh_inline_images(&mut self) {
-        let Some(detail) = self.detail.as_ref() else {
-            return;
-        };
         if !super::attachments::images_eligible(self.image_picker.as_ref(), &self.source) {
             return;
         }
+        let Some(detail) = self.detail.as_ref() else {
+            return;
+        };
         let generation = self.inline_image_generation;
         for (key, url) in resolve_inline_images(detail) {
-            if self.inline_images.borrow().contains_key(&key) {
+            if self.inline_images.borrow().contains_key(&key)
+                || self.inline_images_pending.contains(&key)
+            {
                 continue;
             }
+            self.inline_images_pending.insert(key.clone());
+            let tx = self.events_tx.clone();
+            async_ops::dispatch_inline_image(tx, generation, key, url);
+        }
+    }
+
+    /// The quick-view panel's counterpart to `refresh_inline_images` (Phase
+    /// 5 of issue #130) — resolves and eagerly fetches images for whichever
+    /// issue is *currently* selected, reading `self.quick_view_detail()`
+    /// fresh each call rather than trusting a caller-supplied key, so a
+    /// selection change between dispatch and this call landing (e.g. a
+    /// stale-by-the-time-it-runs async completion) always targets whatever
+    /// is actually on screen right now.
+    ///
+    /// Deliberately does **not** call `invalidate_inline_images` first,
+    /// unlike every Detail "a detail just landed" site — that's the crux of
+    /// this phase's design difference from Detail. Detail only "lands" a
+    /// handful of times per session, so a full clear-and-refetch on every
+    /// navigate is cheap and simple. Quick view can churn across a dozen
+    /// issues a minute as the user holds `j`/`k`; clearing the whole shared
+    /// `inline_images`/`inline_image_protocols` cache on every single
+    /// selection change would mean scrolling back to an already-visited
+    /// issue always re-fetches its images from scratch, defeating caching
+    /// entirely. Instead this leans on two things already in place: the
+    /// per-key `contains_key`/`inline_images_pending` dedup below (so
+    /// revisiting a still-cached or still-in-flight issue is a no-op, not a
+    /// duplicate fetch), and `INLINE_IMAGE_CACHE_CAP`'s bounded eviction (so
+    /// the shared cache can't grow without limit as the user churns through
+    /// many issues over a long session). The one accepted trade-off: a
+    /// Detail-side navigate still fully clears this cache (out of this
+    /// phase's scope to change), so returning to quick view on a
+    /// previously-cached issue right after visiting Detail on something
+    /// else will still re-fetch — a rarer path than plain list scrolling,
+    /// and not worth entangling Detail's own invalidation semantics with
+    /// quick view's to avoid.
+    pub(crate) fn refresh_quick_view_inline_images(&mut self) {
+        if !self.quick_view {
+            return;
+        }
+        if !super::attachments::images_eligible(self.image_picker.as_ref(), &self.source) {
+            return;
+        }
+        let Some(issue_key) = self.selected_issue().map(|i| i.key.clone()) else {
+            return;
+        };
+        let Some(detail) = self.detail_cache.get(&issue_key) else {
+            return;
+        };
+        let generation = self.inline_image_generation;
+        for (key, url) in resolve_inline_images(detail) {
+            if self.inline_images.borrow().contains_key(&key)
+                || self.inline_images_pending.contains(&key)
+            {
+                continue;
+            }
+            self.inline_images_pending.insert(key.clone());
             let tx = self.events_tx.clone();
             async_ops::dispatch_inline_image(tx, generation, key, url);
         }
@@ -138,25 +290,99 @@ impl App {
         width: u16,
         f: impl FnOnce(&adf::MediaSizing) -> R,
     ) -> R {
+        self.with_media_sizing_for(self.detail.as_ref(), width, MAX_INLINE_IMAGE_ROWS, f)
+    }
+
+    /// The quick-view panel's counterpart to `with_detail_media_sizing`
+    /// (Phase 5 of issue #130) — same CPS shape and same purpose (agreement
+    /// between whatever sizing `render::quick_view_wide`/`quick_view_narrow`
+    /// used and whatever `ui::quick_view`'s paint pass, `app::links`'
+    /// click/cycle mapping, etc. use), just sourced from
+    /// `self.quick_view_detail()` (the currently-selected issue's cached
+    /// detail) instead of `self.detail`. Also clamps the row band tighter
+    /// than Detail's: quick view is typically only ~40-50% of the body
+    /// height (`quick_view_max_image_rows`), so Detail's flat 3-14 row band
+    /// can be taller than the whole panel.
+    pub(crate) fn with_quick_view_media_sizing<R>(
+        &self,
+        width: u16,
+        f: impl FnOnce(&adf::MediaSizing) -> R,
+    ) -> R {
+        self.with_media_sizing_for(
+            self.quick_view_detail(),
+            width,
+            self.quick_view_max_image_rows(),
+            f,
+        )
+    }
+
+    /// Shared body of `with_detail_media_sizing`/`with_quick_view_media_sizing`
+    /// — `detail` is whichever `IssueDetail` the caller's document was built
+    /// from (Detail's `self.detail`, or quick view's `self.quick_view_detail()`),
+    /// and `max_rows` is the ceiling `rows_cols_for` clamps against (see its
+    /// own doc comment).
+    fn with_media_sizing_for<R>(
+        &self,
+        detail: Option<&IssueDetail>,
+        width: u16,
+        max_rows: u16,
+        f: impl FnOnce(&adf::MediaSizing) -> R,
+    ) -> R {
         if self.image_picker.is_none() {
             return f(&adf::MediaSizing::Disabled);
         }
-        let sizing_fn = |media: &InlineMediaRef| self.sized_inline_image(media, width);
+        let sizing_fn =
+            |media: &InlineMediaRef| self.sized_inline_image(detail, media, width, max_rows);
         f(&adf::MediaSizing::Ready(&sizing_fn))
+    }
+
+    /// Quick view's row-budget ceiling for `rows_cols_for` (Phase 5 of issue
+    /// #130) — the plan's row-budget note: quick view's pane
+    /// (`quick_view_area`, set at paint time by `ui::quick_view::draw_quick_view`)
+    /// is often only 10-20 rows total, well short of Detail's own scrollable
+    /// column, so clamping to the same flat `MAX_INLINE_IMAGE_ROWS` (14)
+    /// could let a single image occupy nearly the whole panel. Reserves 4
+    /// rows for whatever always surrounds the description (chips/kv lines in
+    /// the narrow layout, the trailing "… ↓ N more lines" fade row in either
+    /// layout once content overflows) before clamping into the same
+    /// `MIN_INLINE_IMAGE_ROWS..=MAX_INLINE_IMAGE_ROWS` band Detail uses —
+    /// never *wider* than Detail's own ceiling, only ever tighter. A pane
+    /// that's somehow shorter than the reserve still gets at least
+    /// `MIN_INLINE_IMAGE_ROWS`; the paint pass's own off-screen skip
+    /// (`ui::detail::paint_inline_images`, reused by quick view) is what
+    /// actually keeps that from overflowing the panel, the same way it
+    /// already does for Detail.
+    fn quick_view_max_image_rows(&self) -> u16 {
+        self.quick_view_area
+            .get()
+            .height
+            .saturating_sub(4)
+            .clamp(MIN_INLINE_IMAGE_ROWS, MAX_INLINE_IMAGE_ROWS)
     }
 
     /// `MediaSizing::Ready`'s callback body: alt -> attachment -> decoded
     /// image (via `decoded_inline_image`, mirroring `resolve_inline_images`'
     /// own matching), then a `(rows, cols)` pair preserving the image's
-    /// aspect ratio within `pane_width` columns and the 3-14 row band. Only
-    /// ever reached with `image_picker` known `Some` (see
-    /// `with_detail_media_sizing`), but re-checked here anyway rather than
+    /// aspect ratio within `pane_width` columns and clamped to `max_rows`.
+    /// Only ever reached with `image_picker` known `Some` (see
+    /// `with_media_sizing_for`), but re-checked here anyway rather than
     /// threading the `Picker` through as a parameter — this is the only
     /// caller, and `Option`-chaining past a second `None` costs nothing.
-    fn sized_inline_image(&self, media: &InlineMediaRef, pane_width: u16) -> Option<(u16, u16)> {
+    fn sized_inline_image(
+        &self,
+        detail: Option<&IssueDetail>,
+        media: &InlineMediaRef,
+        pane_width: u16,
+        max_rows: u16,
+    ) -> Option<(u16, u16)> {
         let picker = self.image_picker.as_ref()?;
-        let img = self.decoded_inline_image(media)?;
-        Some(rows_cols_for(&img, picker.font_size(), pane_width))
+        let img = self.decoded_inline_image(detail, media)?;
+        Some(rows_cols_for(
+            &img,
+            picker.font_size(),
+            pane_width,
+            max_rows,
+        ))
     }
 
     /// Resolve `media` (an ADF node reference from `render_with_media`'s
@@ -165,14 +391,19 @@ impl App {
     /// mirroring how `resolve_inline_images` resolves one; an
     /// attachment-backed node (`media.url` is `None`) still needs its `alt`
     /// matched against `detail.attachments` the way it always did, since the
-    /// cache is keyed by attachment id, not by `alt` itself.
-    fn inline_image_key_for(&self, media: &InlineMediaRef) -> Option<InlineImageKey> {
+    /// cache is keyed by attachment id, not by `alt` itself. `detail` is
+    /// whichever issue's document `media` actually came from (see
+    /// `with_media_sizing_for`'s doc comment) — this no longer reads
+    /// `self.detail` directly so the same lookup serves both Detail and
+    /// quick view.
+    fn inline_image_key_for(
+        detail: Option<&IssueDetail>,
+        media: &InlineMediaRef,
+    ) -> Option<InlineImageKey> {
         if let Some(url) = media.url.as_ref() {
             return Some(InlineImageKey::External(url.clone()));
         }
-        let attachment = self
-            .detail
-            .as_ref()?
+        let attachment = detail?
             .attachments
             .iter()
             .find(|a| a.filename == media.alt)?;
@@ -180,27 +411,37 @@ impl App {
     }
 
     /// Look up whichever decoded inline image (if any) corresponds to
-    /// `media` — resolves the same key `refresh_inline_images` fetched under
+    /// `media` — resolves the same key `refresh_inline_images`/
+    /// `refresh_quick_view_inline_images` fetched under
     /// (`inline_image_key_for`), then keys into the `inline_images` cache.
     /// Returns a `Ref` (rather than a bare `&DynamicImage`) since the cache
     /// lives behind a `RefCell` and a borrow guard can't be shortened to
     /// `&self`'s lifetime without one.
-    fn decoded_inline_image(&self, media: &InlineMediaRef) -> Option<Ref<'_, image::DynamicImage>> {
-        let key = self.inline_image_key_for(media)?;
+    fn decoded_inline_image(
+        &self,
+        detail: Option<&IssueDetail>,
+        media: &InlineMediaRef,
+    ) -> Option<Ref<'_, image::DynamicImage>> {
+        let key = Self::inline_image_key_for(detail, media)?;
         Ref::filter_map(self.inline_images.borrow(), |cache| cache.get(&key)).ok()
     }
 
     /// Get-or-build the cached `SlicedProtocol` for one `ImagePlacement`
-    /// (`ui::detail`'s paint pass, Phase 3 of issue #130), rebuilding it
-    /// from the still-cached `DynamicImage` whenever the cached protocol's
-    /// own size no longer matches `placement`'s current `(cols, rows)` —
-    /// covers both a first-ever render (nothing cached yet) and a terminal
-    /// resize that changed the pane width since the protocol was last
-    /// built. `None` if there's no picker, or the backing decoded image was
-    /// evicted from `inline_images` since sizing was computed (a same-frame
-    /// race that shouldn't normally happen, guarded rather than panicking).
+    /// (`ui::detail`'s paint pass, Phase 3 of issue #130; reused as-is by
+    /// `ui::quick_view`'s own paint pass in Phase 5), rebuilding it from the
+    /// still-cached `DynamicImage` whenever the cached protocol's own size
+    /// no longer matches `placement`'s current `(cols, rows)` — covers both
+    /// a first-ever render (nothing cached yet) and a terminal resize that
+    /// changed the pane width since the protocol was last built. `detail` is
+    /// whichever issue's document `placement` came from (Detail's
+    /// `self.detail`, or quick view's `self.quick_view_detail()`) — needed
+    /// by `decoded_inline_image`'s attachment-id lookup on a cache miss.
+    /// `None` if there's no picker, or the backing decoded image was evicted
+    /// from `inline_images` since sizing was computed (a same-frame race
+    /// that shouldn't normally happen, guarded rather than panicking).
     pub(crate) fn sliced_inline_image_protocol(
         &self,
+        detail: Option<&IssueDetail>,
         placement: &adf::ImagePlacement,
     ) -> Option<Ref<'_, SlicedProtocol>> {
         let picker = self.image_picker.as_ref()?;
@@ -211,7 +452,7 @@ impl App {
             .get(&placement.media)
             .is_some_and(|p| p.size() == target);
         if !up_to_date {
-            let img = self.decoded_inline_image(&placement.media)?.clone();
+            let img = self.decoded_inline_image(detail, &placement.media)?.clone();
             let protocol =
                 SlicedProtocol::new_with_resize(picker, img, target, Resize::Fit(None)).ok()?;
             self.inline_image_protocols
@@ -230,25 +471,30 @@ impl App {
 /// (`font`), find the largest `cols` up to both `pane_width` and the
 /// image's own natural (1:1 pixel) column count, then derive `rows` to
 /// match the image's aspect ratio at that width. If that first-pass `rows`
-/// falls outside `MIN_INLINE_IMAGE_ROWS..=MAX_INLINE_IMAGE_ROWS`, it's
-/// clamped and `cols` is re-derived from the *clamped* row count instead —
-/// otherwise a very tall or very short image would render squashed or
-/// stretched at the row count it actually gets.
+/// falls outside `MIN_INLINE_IMAGE_ROWS..=max_rows`, it's clamped and `cols`
+/// is re-derived from the *clamped* row count instead — otherwise a very
+/// tall or very short image would render squashed or stretched at the row
+/// count it actually gets. `max_rows` is `MAX_INLINE_IMAGE_ROWS` for Detail,
+/// or `App::quick_view_max_image_rows`'s tighter ceiling for quick view
+/// (Phase 5 of issue #130); always `>= MIN_INLINE_IMAGE_ROWS` at the call
+/// site so the final `.clamp` below never panics on an inverted range.
 fn rows_cols_for(
     img: &image::DynamicImage,
     font: ratatui_image::FontSize,
     pane_width: u16,
+    max_rows: u16,
 ) -> (u16, u16) {
     let px_w = img.width().max(1) as f64;
     let px_h = img.height().max(1) as f64;
     let font_w = font.width.max(1) as f64;
     let font_h = font.height.max(1) as f64;
     let max_cols = (pane_width.max(1)) as f64;
+    let max_rows = max_rows.max(MIN_INLINE_IMAGE_ROWS);
 
     let natural_cols = (px_w / font_w).ceil().max(1.0);
     let cols = natural_cols.min(max_cols);
     let rows = ((px_h * cols * font_w) / (px_w * font_h)).round().max(1.0);
-    let rows = (rows as u16).clamp(MIN_INLINE_IMAGE_ROWS, MAX_INLINE_IMAGE_ROWS);
+    let rows = (rows as u16).clamp(MIN_INLINE_IMAGE_ROWS, max_rows);
 
     let cols = ((rows as f64 * font_h * px_w) / (px_h * font_w))
         .round()
@@ -348,5 +594,86 @@ fn find_media_nodes<'a>(value: &'a Value, out: &mut Vec<&'a Value>) {
         for child in content {
             find_media_nodes(child, out);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The core eviction contract `App::inline_images`/`inline_image_protocols`
+    /// lean on (Phase 5 of issue #130): once `cap` distinct keys have been
+    /// inserted, the *oldest-inserted* one is evicted to make room for a new
+    /// one — proven directly against `BoundedCache` rather than through a
+    /// full `App`/rendering round trip, since the eviction policy itself is
+    /// pure bookkeeping with no dependency on `App` at all.
+    #[test]
+    fn inserting_past_capacity_evicts_the_oldest_inserted_key() {
+        let mut cache: BoundedCache<u32, &'static str> = BoundedCache::new(2);
+        cache.insert(1, "a");
+        cache.insert(2, "b");
+        assert_eq!(cache.len(), 2);
+
+        cache.insert(3, "c");
+
+        assert_eq!(
+            cache.len(),
+            2,
+            "cache must stay at its cap, not grow past it"
+        );
+        assert!(
+            !cache.contains_key(&1),
+            "the oldest-inserted key must be evicted"
+        );
+        assert!(cache.contains_key(&2));
+        assert!(cache.contains_key(&3));
+    }
+
+    /// Overwriting an already-present key updates its value in place without
+    /// pushing a second entry onto the eviction queue for it — not doing so
+    /// would let repeatedly re-inserting the same key (e.g. a `SlicedProtocol`
+    /// rebuilt on every resize) silently inflate the queue past `cap`, and
+    /// evict some unrelated key early even though the cache never actually
+    /// held more than `cap` distinct keys at once. Since this is FIFO by
+    /// *original* insertion order rather than true LRU (see `BoundedCache`'s
+    /// own doc comment for why), the update itself doesn't protect key 1 from
+    /// eviction either — it's still the first-ever-inserted key, so it's
+    /// still the one evicted once a third distinct key arrives.
+    #[test]
+    fn overwriting_an_existing_key_updates_its_value_without_inflating_the_eviction_queue() {
+        let mut cache: BoundedCache<u32, &'static str> = BoundedCache::new(2);
+        cache.insert(1, "a");
+        cache.insert(2, "b");
+
+        cache.insert(1, "a-updated");
+        assert_eq!(cache.len(), 2, "overwriting a key must not grow the cache");
+        assert_eq!(cache.get(&1), Some(&"a-updated"));
+
+        cache.insert(3, "c");
+
+        assert!(
+            !cache.contains_key(&1),
+            "key 1 was still the first ever inserted, so it's still the one evicted"
+        );
+        assert!(cache.contains_key(&2));
+        assert!(cache.contains_key(&3));
+    }
+
+    #[test]
+    fn clear_empties_both_the_map_and_the_eviction_order() {
+        let mut cache: BoundedCache<u32, &'static str> = BoundedCache::new(2);
+        cache.insert(1, "a");
+        cache.insert(2, "b");
+
+        cache.clear();
+
+        assert!(cache.is_empty());
+        // Re-filling past the original cap after a clear must evict again
+        // from a clean slate, not carry over any leftover order bookkeeping.
+        cache.insert(3, "c");
+        cache.insert(4, "d");
+        cache.insert(5, "e");
+        assert_eq!(cache.len(), 2);
+        assert!(!cache.contains_key(&3));
     }
 }

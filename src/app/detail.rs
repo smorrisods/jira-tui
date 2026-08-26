@@ -123,6 +123,18 @@ impl App {
                     self.invalidate_inline_images();
                     self.refresh_inline_images();
                 }
+            } else {
+                // `key` is guaranteed the quick-viewed issue here (see this
+                // function's own `key` match above) — deliberately doesn't
+                // call `invalidate_inline_images`, matching
+                // `refresh_quick_view_inline_images`'s own no-clear-on-selection
+                // design (Phase 5 of issue #130); a manual quick-view refresh
+                // is rare enough that leaving the rest of the shared cache
+                // untouched is worth more than forcing a re-decode of an
+                // attachment/URL whose content almost certainly didn't
+                // change.
+                #[cfg(feature = "images")]
+                self.refresh_quick_view_inline_images();
             }
             self.status = format!("refreshed {key}");
             self.flash(format!("↻ refreshed {key}"));

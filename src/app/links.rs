@@ -35,16 +35,23 @@ impl App {
         if self.screen != Screen::Detail {
             let updated = self.issue_updated(&detail.key).to_string();
             let width = self.quick_view_description_width();
-            return match quick_view_layout_for_width(self.quick_view_area.get().width) {
-                QuickViewLayout::Wide => {
-                    render::quick_view_wide_links(&render::quick_view_wide(detail, &updated, width))
+            // Same `MediaSizing` `ui::quick_view` actually painted with, so a
+            // link target's recorded line always matches what's really on
+            // screen — see `App::with_quick_view_media_sizing` and
+            // `active_links`'s Detail branch below for why this has to
+            // agree.
+            return self.with_quick_view_media_sizing(width as u16, |media| {
+                match quick_view_layout_for_width(self.quick_view_area.get().width) {
+                    QuickViewLayout::Wide => render::quick_view_wide_links(
+                        &render::quick_view_wide(detail, &updated, width, media),
+                    ),
+                    QuickViewLayout::Narrow => {
+                        render::quick_view_narrow(detail, &updated, width, media)
+                            .panel
+                            .links
+                    }
                 }
-                QuickViewLayout::Narrow => {
-                    render::quick_view_narrow(detail, &updated, width)
-                        .panel
-                        .links
-                }
-            };
+            });
         }
         let current_user = self.current_user_display();
         let updated = self.issue_updated(&detail.key).to_string();
@@ -91,24 +98,29 @@ impl App {
             // Quick view only ever has Main (description) and Meta panes.
             let updated = self.issue_updated(&detail.key).to_string();
             let width = self.quick_view_description_width();
-            return match quick_view_layout_for_width(self.quick_view_area.get().width) {
-                QuickViewLayout::Wide => {
-                    let wide = render::quick_view_wide(detail, &updated, width);
-                    match pane {
-                        DetailPane::Main => Some(wide.description.lines),
-                        DetailPane::Meta => Some(wide.meta.lines),
-                        _ => None,
+            // As `active_links` above — the same `MediaSizing`
+            // `ui::quick_view` actually painted with, so wrap-aware
+            // click-to-line mapping agrees with what's really on screen.
+            return self.with_quick_view_media_sizing(width as u16, |media| {
+                match quick_view_layout_for_width(self.quick_view_area.get().width) {
+                    QuickViewLayout::Wide => {
+                        let wide = render::quick_view_wide(detail, &updated, width, media);
+                        match pane {
+                            DetailPane::Main => Some(wide.description.lines),
+                            DetailPane::Meta => Some(wide.meta.lines),
+                            _ => None,
+                        }
                     }
+                    QuickViewLayout::Narrow => match pane {
+                        DetailPane::Main => Some(
+                            render::quick_view_narrow(detail, &updated, width, media)
+                                .panel
+                                .lines,
+                        ),
+                        _ => None,
+                    },
                 }
-                QuickViewLayout::Narrow => match pane {
-                    DetailPane::Main => Some(
-                        render::quick_view_narrow(detail, &updated, width)
-                            .panel
-                            .lines,
-                    ),
-                    _ => None,
-                },
-            };
+            });
         }
         let current_user = self.current_user_display();
         let updated = self.issue_updated(&detail.key).to_string();

@@ -12,6 +12,8 @@ use std::cell::Cell;
 #[cfg(feature = "images")]
 use std::cell::RefCell;
 use std::collections::HashMap;
+#[cfg(feature = "images")]
+use std::collections::HashSet;
 
 use ratatui::layout::Rect;
 
@@ -64,7 +66,7 @@ pub use edit::{EditTarget, EditorState};
 pub use field_mapping::{FieldMappingOutcome, FieldMappingState};
 pub(crate) use history::{NavEntry, NavHistory};
 #[cfg(feature = "images")]
-pub use inline_images::InlineImageKey;
+pub use inline_images::{BoundedCache, InlineImageKey};
 pub use mouse::{ListFocus, MouseState, SelectionSpan};
 pub(crate) use new_issue::LocallyCreatedIssue;
 pub use new_issue::{NewIssueField, NewIssueState};
@@ -343,29 +345,49 @@ pub struct App {
     /// `tests/render.rs` integration suite (a separate crate) needs to seed
     /// a decoded image directly, bypassing the async fetch, to exercise the
     /// Detail screen's inline-image paint pass headlessly.
+    /// Bounded (Phase 5 of issue #130 — see `inline_images::BoundedCache`'s
+    /// own doc comment for why: Detail's own three "detail landed" sites
+    /// still fully clear this on every navigate via
+    /// `invalidate_inline_images`, so the bound only ever matters for quick
+    /// view's higher-churn, no-clear-on-selection trigger,
+    /// `refresh_quick_view_inline_images`).
     #[cfg(feature = "images")]
-    pub inline_images: RefCell<HashMap<InlineImageKey, image::DynamicImage>>,
+    pub inline_images: RefCell<BoundedCache<InlineImageKey, image::DynamicImage>>,
     /// Bumped whenever the viewed issue changes (mirrors
     /// `attachment_preview_generation`) — a completed fetch whose generation
     /// no longer matches this belongs to an issue that's no longer showing
     /// and is dropped instead of populating the cache for the wrong issue.
     #[cfg(feature = "images")]
     pub(crate) inline_image_generation: u64,
-    /// Encoded `SlicedProtocol`s for the Detail screen's inline description
-    /// images (`images` feature only, Phase 3 of issue #130) — keyed by
-    /// `InlineMediaRef` (the same "media node's alt text" key
-    /// `adf::ImagePlacement` already carries), separate from `inline_images`
-    /// (the *decoded* `DynamicImage` cache) because encoding a
-    /// `SlicedProtocol` is real work (resizing + protocol-specific
-    /// encoding) that should only happen once per target size, not on every
-    /// frame. `ui::detail`'s paint pass rebuilds an entry from the
-    /// still-cached `DynamicImage` in `inline_images` whenever the cached
-    /// protocol's own `.size()` no longer matches the placement's current
-    /// `(cols, rows)` (e.g. a terminal resize changed the pane width),
-    /// rather than tracking the target size in a second field alongside it.
+    /// Keys with a fetch currently in flight (dispatched by
+    /// `refresh_inline_images`/`refresh_quick_view_inline_images` but not
+    /// yet answered by `apply_inline_image_loaded`) — Phase 5 of issue #130.
+    /// Without this, quick view's higher selection-churn rate could
+    /// re-dispatch a fetch for the same key on every revisit before the
+    /// first one resolves (the cache-membership check alone only catches an
+    /// *already-completed* fetch, not one still in flight). Cleared
+    /// alongside the cache itself in `invalidate_inline_images`, and per-key
+    /// in `apply_inline_image_loaded` once that key's response lands (or
+    /// fails to decode), so a later re-resolution of the same key can retry.
+    #[cfg(feature = "images")]
+    pub(crate) inline_images_pending: HashSet<InlineImageKey>,
+    /// Encoded `SlicedProtocol`s for the Detail screen's and quick-view
+    /// panel's inline description images (`images` feature only, Phase 3 of
+    /// issue #130; quick view added in Phase 5) — keyed by `InlineMediaRef`
+    /// (the same "media node's alt text" key `adf::ImagePlacement` already
+    /// carries), separate from `inline_images` (the *decoded* `DynamicImage`
+    /// cache) because encoding a `SlicedProtocol` is real work (resizing +
+    /// protocol-specific encoding) that should only happen once per target
+    /// size, not on every frame. `ui::detail`'s (and `ui::quick_view`'s)
+    /// paint pass rebuilds an entry from the still-cached `DynamicImage` in
+    /// `inline_images` whenever the cached protocol's own `.size()` no
+    /// longer matches the placement's current `(cols, rows)` (e.g. a
+    /// terminal resize changed the pane width), rather than tracking the
+    /// target size in a second field alongside it. Bounded the same way and
+    /// for the same reason as `inline_images` (see its own doc comment).
     #[cfg(feature = "images")]
     pub(crate) inline_image_protocols:
-        RefCell<HashMap<adf::InlineMediaRef, ratatui_image::sliced::SlicedProtocol>>,
+        RefCell<BoundedCache<adf::InlineMediaRef, ratatui_image::sliced::SlicedProtocol>>,
 
     /// The screen `a` was pressed from, so backing out of About (see #38)
     /// restores it instead of always landing on Home.
@@ -614,11 +636,15 @@ impl App {
             #[cfg(feature = "images")]
             attachment_preview_generation: 0,
             #[cfg(feature = "images")]
-            inline_images: RefCell::new(HashMap::new()),
+            inline_images: RefCell::new(BoundedCache::new(inline_images::INLINE_IMAGE_CACHE_CAP)),
             #[cfg(feature = "images")]
             inline_image_generation: 0,
             #[cfg(feature = "images")]
-            inline_image_protocols: RefCell::new(HashMap::new()),
+            inline_images_pending: HashSet::new(),
+            #[cfg(feature = "images")]
+            inline_image_protocols: RefCell::new(BoundedCache::new(
+                inline_images::INLINE_IMAGE_CACHE_CAP,
+            )),
             about_return_screen: Screen::Home,
             field_mapping: FieldMappingState::default(),
             current_view: ViewKind::default(),
@@ -703,6 +729,17 @@ impl App {
 #[cfg(not(feature = "images"))]
 impl App {
     pub(crate) fn with_detail_media_sizing<R>(
+        &self,
+        _width: u16,
+        f: impl FnOnce(&adf::MediaSizing) -> R,
+    ) -> R {
+        f(&adf::MediaSizing::Disabled)
+    }
+
+    /// Non-`images`-build stand-in for `inline_images::App::with_quick_view_media_sizing`
+    /// (Phase 5 of issue #130) — see `with_detail_media_sizing` above for why
+    /// this always hands the callback `MediaSizing::Disabled`.
+    pub(crate) fn with_quick_view_media_sizing<R>(
         &self,
         _width: u16,
         f: impl FnOnce(&adf::MediaSizing) -> R,

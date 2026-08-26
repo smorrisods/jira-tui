@@ -115,7 +115,7 @@ fn draw_wide(
         main_rows[1],
     );
     #[cfg(feature = "images")]
-    paint_inline_images(f, app, main_rows[1], image_paints);
+    paint_inline_images(f, app, main_rows[1], image_paints, Some(detail));
 
     let workflow_title = "workflow · t to change".to_string();
     let meta_title = "people & meta".to_string();
@@ -248,7 +248,7 @@ fn draw_narrow(
         .scroll((app.detail_scroll, 0));
     f.render_widget(para, area);
     #[cfg(feature = "images")]
-    paint_inline_images(f, app, area, image_paints);
+    paint_inline_images(f, app, area, image_paints, Some(detail));
 }
 
 /// Convert each `ImagePlacement`'s logical `line_start` into a *visual*
@@ -263,8 +263,14 @@ fn draw_narrow(
 /// about to move them — since this needs the actual line content wrapping
 /// was computed against, the same constraint `app::mouse::link_at`'s own
 /// wrap-aware click mapping already has.
+///
+/// `pub(super)` (rather than file-private) since `ui::quick_view`'s own
+/// paint pass reuses this verbatim (Phase 5 of issue #130) — the maths here
+/// never touched `App`/Detail-specific state to begin with, just line
+/// content and placements, so quick view's own `Panel`/scroll shape needs
+/// nothing different.
 #[cfg(feature = "images")]
-fn image_paint_offsets(
+pub(super) fn image_paint_offsets(
     lines: &[ratatui::text::Line<'static>],
     placements: &[crate::adf::ImagePlacement],
     width: u16,
@@ -291,18 +297,26 @@ fn image_paint_offsets(
 /// cache since sizing was computed) just leaves that reservation's rows
 /// blank — never a panic, never a fallback placeholder drawn over already
 /// -rendered blank rows.
+///
+/// `pub(super)`, and takes `detail` explicitly (rather than reading
+/// `app.detail` itself) since `ui::quick_view` reuses this too (Phase 5 of
+/// issue #130) — its own images come from `app.quick_view_detail()`, not
+/// `app.detail`. `None` is a legitimate value here (no picker, or a document
+/// whose images all resolve without ever needing an attachment-id lookup),
+/// not just a placeholder for "unavailable."
 #[cfg(feature = "images")]
-fn paint_inline_images(
+pub(super) fn paint_inline_images(
     f: &mut Frame,
     app: &App,
     pane: Rect,
     offsets: Vec<(crate::adf::ImagePlacement, i32)>,
+    detail: Option<&IssueDetail>,
 ) {
     for (placement, y) in offsets {
         if y + i32::from(placement.rows) <= 0 || y >= i32::from(pane.height) {
             continue;
         }
-        let Some(protocol) = app.sliced_inline_image_protocol(&placement) else {
+        let Some(protocol) = app.sliced_inline_image_protocol(detail, &placement) else {
             continue;
         };
         let y = y.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;

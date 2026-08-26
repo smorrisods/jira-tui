@@ -464,12 +464,11 @@ fn linked_panel_title(detail: &IssueDetail) -> Line<'static> {
 /// to (see `adf::render`'s doc comment) — needed so a blockquote/code-block
 /// bar can be pre-wrapped to survive line wrapping instead of vanishing on
 /// continuation rows. `media` is forwarded to `adf::render_with_media`
-/// as-is — every call site here passes `MediaSizing::Disabled` for now (see
-/// `adf::MediaSizing`'s doc comment for why), so this always returns an
-/// empty placement vec today; the returned placements are already rebased
-/// to be relative to the *combined* description+acceptance-criteria lines
-/// this function returns, the same way `comment_starts` is rebased by its
-/// own callers.
+/// as-is — a real `MediaSizing::Ready` yields a non-empty placement vec
+/// (Detail since Phase 3, quick view since Phase 5 of issue #130); the
+/// returned placements are already rebased to be relative to the *combined*
+/// description+acceptance-criteria lines this function returns, the same
+/// way `comment_starts` is rebased by its own callers.
 pub(crate) fn description_lines(
     detail: &IssueDetail,
     width: usize,
@@ -797,9 +796,10 @@ pub fn quick_view_wide(
     detail: &IssueDetail,
     updated: &str,
     description_width: usize,
+    media: &adf::MediaSizing,
 ) -> QuickViewWide {
     let (description_lines_vec, image_placements) =
-        description_lines(detail, description_width, &adf::MediaSizing::Disabled);
+        description_lines(detail, description_width, media);
     QuickViewWide {
         description: linkify_panel(description_lines_vec, DetailPane::Main),
         meta: linkify_panel(quick_view_meta_lines(detail, updated), DetailPane::Meta),
@@ -832,7 +832,12 @@ pub struct QuickViewNarrow {
     pub image_placements: Vec<adf::ImagePlacement>,
 }
 
-pub fn quick_view_narrow(detail: &IssueDetail, updated: &str, width: usize) -> QuickViewNarrow {
+pub fn quick_view_narrow(
+    detail: &IssueDetail,
+    updated: &str,
+    width: usize,
+    media: &adf::MediaSizing,
+) -> QuickViewNarrow {
     let mut lines = vec![
         quick_view_chip_line(detail),
         Line::default(),
@@ -840,7 +845,7 @@ pub fn quick_view_narrow(detail: &IssueDetail, updated: &str, width: usize) -> Q
         Line::default(),
     ];
     let description_base = lines.len();
-    let (description, placements) = description_lines(detail, width, &adf::MediaSizing::Disabled);
+    let (description, placements) = description_lines(detail, width, media);
     lines.extend(description);
     let image_placements = placements
         .into_iter()
@@ -1255,7 +1260,7 @@ mod link_tests {
     #[test]
     fn quick_view_narrow_finds_parent_and_link_and_body_keys() {
         let detail = demo_detail(&demo_issues()[1].key);
-        let rendered = quick_view_narrow(&detail, "12m ago", 120);
+        let rendered = quick_view_narrow(&detail, "12m ago", 120, &adf::MediaSizing::Disabled);
         assert!(!rendered.panel.links.is_empty());
         // Every recorded target actually points at text within its line's
         // bounds.
@@ -1270,7 +1275,7 @@ mod link_tests {
     #[test]
     fn quick_view_wide_meta_shows_only_the_seven_spec_fields() {
         let detail = demo_detail(&demo_issues()[1].key);
-        let wide = quick_view_wide(&detail, "12m ago", 120);
+        let wide = quick_view_wide(&detail, "12m ago", 120, &adf::MediaSizing::Disabled);
         let meta_text: String = wide
             .meta
             .lines
@@ -1293,7 +1298,7 @@ mod link_tests {
     #[test]
     fn quick_view_wide_links_reads_description_before_meta() {
         let detail = demo_detail(&demo_issues()[1].key);
-        let wide = quick_view_wide(&detail, "12m ago", 120);
+        let wide = quick_view_wide(&detail, "12m ago", 120, &adf::MediaSizing::Disabled);
         let combined = quick_view_wide_links(&wide);
         assert_eq!(
             combined.len(),
@@ -1445,9 +1450,9 @@ mod link_tests {
             &adf::MediaSizing::Disabled,
         );
         assert!(narrow.image_placements.is_empty());
-        let qvw = quick_view_wide(&detail, "12m ago", 120);
+        let qvw = quick_view_wide(&detail, "12m ago", 120, &adf::MediaSizing::Disabled);
         assert!(qvw.image_placements.is_empty());
-        let qvn = quick_view_narrow(&detail, "12m ago", 120);
+        let qvn = quick_view_narrow(&detail, "12m ago", 120, &adf::MediaSizing::Disabled);
         assert!(qvn.image_placements.is_empty());
     }
 
