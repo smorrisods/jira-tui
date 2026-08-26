@@ -33,6 +33,9 @@ pub(crate) fn handle_mouse(app: &mut App, me: MouseEvent) {
         || app.confirm_discard
         || app.attachments_open
         || app.attachment_upload.is_some()
+        || app.new_issue_type_picker_open
+        || app.project_picker_open
+        || app.sprint_picker_open
     {
         return;
     }
@@ -301,6 +304,19 @@ mod tests {
                 app.selected = 0;
                 app.open_detail();
                 app.open_attachment_upload();
+            }),
+            // Regression: `new_issue_type_picker_open`/`project_picker_open`
+            // were genuine overlays (see `ui::mod`'s draw dispatch) missing
+            // from this guard entirely — a plain click would have reached
+            // the screen underneath while either was open.
+            ("new_issue_type_picker_open", |app| {
+                app.new_issue_type_picker_open = true
+            }),
+            ("project_picker_open", |app| app.project_picker_open = true),
+            ("sprint_picker_open", |app| {
+                app.selected = 0;
+                app.open_detail();
+                app.open_sprint_picker();
             }),
         ];
 
