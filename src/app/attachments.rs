@@ -103,9 +103,18 @@ impl App {
         if idx >= len as isize {
             idx = len as isize - 1;
         }
-        self.attachment_index = idx as usize;
+        let idx = idx as usize;
+        // A clamped move that lands back on the same row (e.g. holding Down
+        // at the last attachment) isn't a real selection change — refreshing
+        // the preview anyway would flicker the already-shown image and
+        // re-dispatch a redundant fetch/decode on every repeated keypress.
         #[cfg(feature = "images")]
-        self.refresh_attachment_preview();
+        let changed = idx != self.attachment_index;
+        self.attachment_index = idx;
+        #[cfg(feature = "images")]
+        if changed {
+            self.refresh_attachment_preview();
+        }
     }
 
     /// Recompute the attachment picker's image preview for whichever
