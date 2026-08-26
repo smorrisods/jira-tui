@@ -64,8 +64,21 @@ impl App {
     /// surviving a refresh could have a genuinely different image now, and a
     /// generation bump alone wouldn't evict the stale entry sitting under
     /// that same key.
+    ///
+    /// Also clears `inline_image_protocols` (the *encoded* `SlicedProtocol`
+    /// cache — see its own field doc comment): that cache is keyed purely by
+    /// `InlineMediaRef` (a media node's `alt` text), with no issue/generation
+    /// component and no link back to `inline_images`' generation-guarded
+    /// entries. `sliced_inline_image_protocol`'s only staleness check is
+    /// whether the cached protocol's target size still matches — so leaving
+    /// a stale entry behind here means a different issue's inline image that
+    /// happens to share the same `alt` (e.g. a common filename like
+    /// "screenshot.png") and lands on the same target size would render the
+    /// *previous* issue's picture, without ever re-checking
+    /// `inline_images`/`self.detail` at all.
     pub(crate) fn invalidate_inline_images(&mut self) {
         self.inline_images.get_mut().clear();
+        self.inline_image_protocols.get_mut().clear();
         self.inline_image_generation += 1;
     }
 

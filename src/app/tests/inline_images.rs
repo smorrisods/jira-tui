@@ -349,3 +349,43 @@ fn refresh_detail_clears_the_inline_image_cache_and_bumps_the_generation() {
         "refreshing the open issue must drop any cached inline images, not just its generation"
     );
 }
+
+/// Regression test for a code-review finding: `invalidate_inline_images`
+/// used to clear `inline_images` (the decoded-image cache) but leave
+/// `inline_image_protocols` (the *encoded* `SlicedProtocol` cache) behind.
+/// That cache is keyed only by a media node's `alt` text, with no
+/// issue/generation component — so a stale entry left over from a
+/// previously-viewed issue whose inline image happened to share the same
+/// `alt` (e.g. a common filename like "screenshot.png") would be returned
+/// unchanged for the new issue by `App::sliced_inline_image_protocol`'s
+/// size-only staleness check, silently rendering the wrong picture. This
+/// confirms both caches are cleared together.
+#[test]
+fn refresh_detail_also_clears_the_stale_sliced_protocol_cache() {
+    let mut app = demo_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    app.open_detail();
+    let media = crate::adf::InlineMediaRef {
+        alt: "shared-filename.png".into(),
+    };
+    let picker = app.image_picker.as_ref().unwrap();
+    let protocol = ratatui_image::sliced::SlicedProtocol::new_with_resize(
+        picker,
+        image::DynamicImage::new_rgb8(1, 1),
+        ratatui::layout::Size::new(10, 4),
+        ratatui_image::Resize::Fit(None),
+    )
+    .unwrap();
+    app.inline_image_protocols
+        .get_mut()
+        .insert(media.clone(), protocol);
+
+    app.refresh_detail();
+
+    assert!(
+        app.inline_image_protocols.borrow().is_empty(),
+        "a stale encoded protocol from a previous issue must not survive a detail refresh, \
+         or a different issue's same-alt image could render the old picture"
+    );
+}

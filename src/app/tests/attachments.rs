@@ -415,3 +415,86 @@ fn refresh_detail_invalidates_a_cached_attachment_preview() {
         "refreshing the open issue must drop any cached preview, not just its generation"
     );
 }
+
+/// Regression test for a code-review finding: `invalidate_attachment_preview`
+/// used to have no matching re-fetch, unlike the parallel `invalidate_inline_
+/// images`/`refresh_inline_images` pair — so a live refresh landing while the
+/// attachment picker was still open (e.g. `r` pressed on bare Detail, then
+/// `a` before that fetch resolved) permanently blanked the preview until the
+/// user happened to move the selection. `App::refresh_detail`'s live branch
+/// must now re-dispatch a preview fetch (a second generation bump) whenever
+/// `attachments_open` is still true once the refreshed detail lands.
+///
+/// Injects a synthetic `DetailLoaded` (mirroring the generation/key
+/// `App::refresh_detail` itself just set up) rather than draining
+/// `events_rx` — `open_attachments()` above is itself eligible to dispatch a
+/// real preview fetch (this demo detail's first attachment is an image, and
+/// `live_app()` + a detected picker make it eligible), so the channel may
+/// already hold an unrelated event; every other stale/current-response test
+/// in this file sidesteps that the same way.
+#[cfg(feature = "images")]
+#[tokio::test]
+async fn refresh_detail_redispatches_the_attachment_preview_while_the_picker_is_still_open() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+    // A live session's detail load is asynchronous (see `App::open_detail`),
+    // so this sets `app.detail` directly rather than waiting on a fetch —
+    // same shortcut `transitions.rs`'s `live_app()` tests take.
+    app.detail = Some(crate::domain::demo_detail(&key));
+    app.screen = Screen::Detail;
+    app.open_attachments();
+    let generation_after_open = app.attachment_preview_generation;
+
+    app.refresh_detail();
+    app.apply_event(AppEvent::DetailLoaded {
+        generation: app.detail_generation,
+        key,
+        detail: Box::new(app.detail.as_ref().unwrap().clone()),
+        status: None,
+    });
+
+    assert_eq!(
+        app.attachment_preview_generation,
+        generation_after_open + 2,
+        "invalidate bumps the generation once; since the picker is still open, the \
+         re-dispatched refresh must bump it a second time rather than leaving the \
+         picker's preview permanently blank until the user happens to move the selection"
+    );
+}
+
+/// The counterpart to the test above: when the picker is *not* open at
+/// refresh time, nothing should eagerly dispatch a preview fetch the user
+/// isn't looking at — `invalidate_attachment_preview` alone (one generation
+/// bump) is correct in that case.
+#[cfg(feature = "images")]
+#[tokio::test]
+async fn refresh_detail_does_not_redispatch_the_attachment_preview_when_the_picker_is_closed() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+    app.detail = Some(crate::domain::demo_detail(&key));
+    app.screen = Screen::Detail;
+    app.open_attachments();
+    app.close_attachments();
+    let generation_after_close = app.attachment_preview_generation;
+
+    app.refresh_detail();
+    app.apply_event(AppEvent::DetailLoaded {
+        generation: app.detail_generation,
+        key,
+        detail: Box::new(app.detail.as_ref().unwrap().clone()),
+        status: None,
+    });
+
+    assert_eq!(
+        app.attachment_preview_generation,
+        generation_after_close + 1,
+        "with the picker closed, only invalidate's own generation bump should happen — \
+         no fetch should be dispatched for a preview nothing is currently showing"
+    );
+}

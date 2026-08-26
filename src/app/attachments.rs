@@ -119,15 +119,19 @@ impl App {
 
     /// Recompute the attachment picker's image preview for whichever
     /// attachment is now highlighted (`images` feature only) — called after
-    /// opening the picker or moving the selection. Always clears the
-    /// previous preview first and bumps `attachment_preview_generation`, so
-    /// every ineligible case (no detected terminal capability, a demo/cache
-    /// session with nothing real to fetch, a non-image attachment) falls
-    /// through to "no preview" without any special-casing at the call
-    /// sites — `ui::attachment_picker` already renders its normal
-    /// placeholder path whenever there's nothing here.
+    /// opening the picker or moving the selection, and (guarded on
+    /// `attachments_open`) after `App::invalidate_attachment_preview` too,
+    /// so a detail refresh while the picker is already open re-dispatches a
+    /// fetch instead of leaving the picker blank until the user moves the
+    /// selection. Always clears the previous preview first and bumps
+    /// `attachment_preview_generation`, so every ineligible case (no
+    /// detected terminal capability, a demo/cache session with nothing real
+    /// to fetch, a non-image attachment) falls through to "no preview"
+    /// without any special-casing at the call sites — `ui::attachment_picker`
+    /// already renders its normal placeholder path whenever there's nothing
+    /// here.
     #[cfg(feature = "images")]
-    fn refresh_attachment_preview(&mut self) {
+    pub(crate) fn refresh_attachment_preview(&mut self) {
         *self.attachment_preview.get_mut() = None;
         self.attachment_preview_generation += 1;
         let generation = self.attachment_preview_generation;
@@ -155,9 +159,13 @@ impl App {
     /// navigate branch) rather than a fresh picker open/move. Bumping the
     /// generation alone would drop a same-attachment-id response too (the
     /// image itself may have changed); clearing the cached preview here
-    /// means the picker falls back to its placeholder until the user moves
-    /// the selection and a fresh fetch dispatches, rather than risking a
-    /// stale image surviving a refresh.
+    /// means the picker falls back to its placeholder rather than risking a
+    /// stale image surviving a refresh. Every caller pairs this with a
+    /// `self.attachments_open`-guarded `refresh_attachment_preview()` right
+    /// after, so a refresh that lands while the picker is already open
+    /// re-dispatches a fetch for whatever's still highlighted instead of
+    /// leaving the picker permanently blank until the user happens to move
+    /// the selection.
     #[cfg(feature = "images")]
     pub(crate) fn invalidate_attachment_preview(&mut self) {
         *self.attachment_preview.get_mut() = None;

@@ -427,6 +427,9 @@ impl App {
             #[cfg(feature = "images")]
             {
                 self.invalidate_attachment_preview();
+                if self.attachments_open {
+                    self.refresh_attachment_preview();
+                }
                 self.invalidate_inline_images();
                 self.refresh_inline_images();
             }
