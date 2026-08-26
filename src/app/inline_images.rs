@@ -25,11 +25,17 @@ use super::{async_ops, App};
 
 /// Row-count bounds for a rendered inline image (Phase 3 of issue #130) —
 /// `sized_inline_image`'s aspect-ratio math is clamped to this band so an
-/// image is never so short it's unrecognizable nor so tall it swallows the
-/// whole scrollable pane, per the plan referenced in this module's own doc
-/// comment.
+/// image is never so short it's unrecognizable nor so tall it swallows an
+/// unreasonable number of scrolled rows, per the plan referenced in this
+/// module's own doc comment. Raised from an original 14 once `rows_cols_for`
+/// switched to filling the full pane width by default (see its own doc
+/// comment) — a wide/tall image at full width can legitimately need more
+/// than 14 rows, and `SlicedImage`'s whole reason for existing (Phase 3) is
+/// that partial scroll visibility is already handled correctly, so a large
+/// reservation isn't the layout hazard a fixed-`StatefulImage` render would
+/// have made it.
 pub(crate) const MIN_INLINE_IMAGE_ROWS: u16 = 3;
-pub(crate) const MAX_INLINE_IMAGE_ROWS: u16 = 14;
+pub(crate) const MAX_INLINE_IMAGE_ROWS: u16 = 45;
 
 /// Identifies one inline image's decoded cache entry (`App::inline_images`).
 /// `Attachment(id)` is a resolved `media` node whose `alt` matched an
@@ -463,8 +469,17 @@ impl App {
             .is_some_and(|p| p.size() == target);
         if !up_to_date {
             let img = self.decoded_inline_image(detail, &placement.media)?.clone();
+            // `Resize::Fit` leaves an image at its native size whenever that
+            // native size already fits inside `target` — for a small source
+            // (particularly a Jira-generated thumbnail, well below a
+            // typical panel's pixel width), that means it never actually
+            // fills the reserved space at all. `Scale` always resizes to
+            // exactly `target`, growing as well as shrinking, which is what
+            // "size the image to the panel width" (the reason `target`
+            // itself is now computed to fill `pane_width`, see
+            // `rows_cols_for`) actually requires.
             let protocol =
-                SlicedProtocol::new_with_resize(picker, img, target, Resize::Fit(None)).ok()?;
+                SlicedProtocol::new_with_resize(picker, img, target, Resize::Scale(None)).ok()?;
             self.inline_image_protocols
                 .borrow_mut()
                 .insert(key.clone(), protocol);
@@ -473,18 +488,22 @@ impl App {
     }
 }
 
-/// The aspect-ratio math behind `App::sized_inline_image`: given the
-/// image's own pixel dimensions and the terminal's cell-to-pixel ratio
-/// (`font`), find the largest `cols` up to both `pane_width` and the
-/// image's own natural (1:1 pixel) column count, then derive `rows` to
-/// match the image's aspect ratio at that width. If that first-pass `rows`
-/// falls outside `MIN_INLINE_IMAGE_ROWS..=max_rows`, it's clamped and `cols`
-/// is re-derived from the *clamped* row count instead — otherwise a very
-/// tall or very short image would render squashed or stretched at the row
-/// count it actually gets. `max_rows` is `MAX_INLINE_IMAGE_ROWS` for Detail,
-/// or `App::quick_view_max_image_rows`'s tighter ceiling for quick view
-/// (Phase 5 of issue #130); always `>= MIN_INLINE_IMAGE_ROWS` at the call
-/// site so the final `.clamp` below never panics on an inverted range.
+/// The aspect-ratio math behind `App::sized_inline_image`: fills the *full*
+/// `pane_width` by default (not the image's own native pixel width) — the
+/// point of an inline preview is to actually be visible at a useful size,
+/// not to sit at whatever size a Jira-generated thumbnail's native
+/// resolution happens to natively occupy in cells (`Resize::Scale`, not
+/// `Fit`, is what actually stretches the source to this target — see
+/// `App::sliced_inline_image_protocol`). `rows` is then derived to match
+/// the image's aspect ratio at that width. If that first-pass `rows` falls
+/// outside `MIN_INLINE_IMAGE_ROWS..=max_rows`, it's clamped and `cols` is
+/// re-derived from the *clamped* row count instead — so a very tall or very
+/// short image gets shrunk from full width rather than rendering squashed
+/// or stretched at a mismatched aspect ratio. `max_rows` is
+/// `MAX_INLINE_IMAGE_ROWS` for Detail, or `App::quick_view_max_image_rows`'s
+/// tighter ceiling for quick view (Phase 5 of issue #130); always `>=
+/// MIN_INLINE_IMAGE_ROWS` at the call site so the final `.clamp` below never
+/// panics on an inverted range.
 fn rows_cols_for(
     img: &image::DynamicImage,
     font: ratatui_image::FontSize,
@@ -495,11 +514,9 @@ fn rows_cols_for(
     let px_h = img.height().max(1) as f64;
     let font_w = font.width.max(1) as f64;
     let font_h = font.height.max(1) as f64;
-    let max_cols = (pane_width.max(1)) as f64;
     let max_rows = max_rows.max(MIN_INLINE_IMAGE_ROWS);
 
-    let natural_cols = (px_w / font_w).ceil().max(1.0);
-    let cols = natural_cols.min(max_cols);
+    let cols = pane_width.max(1) as f64;
     let rows = ((px_h * cols * font_w) / (px_w * font_h)).round().max(1.0);
     let rows = (rows as u16).clamp(MIN_INLINE_IMAGE_ROWS, max_rows);
 

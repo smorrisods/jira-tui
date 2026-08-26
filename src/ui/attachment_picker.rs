@@ -72,8 +72,14 @@ pub(crate) fn draw_attachment_picker(f: &mut Frame, app: &App, area: Rect) {
     if let Some(preview_area) = preview_area {
         let mut preview = app.attachment_preview.borrow_mut();
         if let Some(p) = preview.as_mut() {
+            // `StatefulImage`'s default resize (`Resize::Fit`) leaves an
+            // image at its native size whenever that's already smaller than
+            // `preview_area` — for `Attachment::image_preview_url`'s source,
+            // that used to mean rendering at whatever tiny size the source
+            // happened to natively occupy. `Scale` always resizes to fill
+            // `preview_area`.
             f.render_stateful_widget(
-                ratatui_image::StatefulImage::default(),
+                ratatui_image::StatefulImage::default().resize(ratatui_image::Resize::Scale(None)),
                 preview_area,
                 &mut p.protocol,
             );

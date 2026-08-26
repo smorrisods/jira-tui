@@ -141,19 +141,27 @@ impl Attachment {
     /// The URL to fetch for an in-app preview of this attachment, or `None`
     /// if it isn't an image at all — shared by `app::attachments`' picker
     /// preview and `app::inline_images`' description-embedded preview, which
-    /// both used to hand-roll this same "image mime, prefer the cheaper
-    /// thumbnail, fall back to the full content" rule independently (issue
-    /// #130). Prefers `thumbnail_url` since it's cheaper to fetch/decode than
-    /// `content_url`, but not every image attachment has one.
+    /// both used to hand-roll this same rule independently (issue #130).
+    ///
+    /// Prefers `content_url` (the real image) over `thumbnail_url`: Jira
+    /// generates its `thumbnail` deliberately small (aimed at a gallery-style
+    /// small preview), which — combined with `Resize::Scale` now stretching
+    /// the source to fill the reserved panel width (see
+    /// `app::inline_images::rows_cols_for`) — would otherwise render
+    /// visibly blurry/pixelated once genuinely sized to the panel rather
+    /// than left at its own tiny native resolution. The memory-bounding
+    /// downscale already applied at decode time (`downscale_for_preview`,
+    /// issue #130 phase 4) keeps this safe regardless of how large the
+    /// original attachment is. Falls back to `thumbnail_url` only if
+    /// `content_url` is somehow absent, which shouldn't normally happen for
+    /// a real attachment.
     pub fn image_preview_url(&self) -> Option<String> {
         if !self.mime_type.starts_with("image/") {
             return None;
         }
-        Some(
-            self.thumbnail_url
-                .clone()
-                .unwrap_or_else(|| self.content_url.clone()),
-        )
+        Some(self.content_url.clone())
+            .filter(|u| !u.is_empty())
+            .or_else(|| self.thumbnail_url.clone())
     }
 }
 

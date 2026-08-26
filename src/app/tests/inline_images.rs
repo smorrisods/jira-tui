@@ -48,6 +48,7 @@ fn resolves_a_media_node_whose_alt_matches_an_attachment_filename() {
         "image/png",
         Some("https://example.atlassian.net/secure/thumbnail/10001/mockup.png"),
     );
+    let content_url = attachment.content_url.clone();
     let description = json!({
         "type": "doc", "version": 1,
         "content": [ { "type": "mediaSingle", "content": [ media_node("mockup.png") ] } ]
@@ -58,16 +59,14 @@ fn resolves_a_media_node_whose_alt_matches_an_attachment_filename() {
 
     assert_eq!(
         resolved,
-        vec![(
-            InlineImageKey::Attachment("10001".into()),
-            "https://example.atlassian.net/secure/thumbnail/10001/mockup.png".into()
-        )],
-        "thumbnail_url must be preferred over content_url when both are present"
+        vec![(InlineImageKey::Attachment("10001".into()), content_url)],
+        "content_url must be preferred over thumbnail_url — an inline preview should show the \
+         real image, not Jira's deliberately-small thumbnail (see Attachment::image_preview_url)"
     );
 }
 
 #[test]
-fn falls_back_to_content_url_when_there_is_no_thumbnail() {
+fn resolves_to_content_url_when_there_is_no_thumbnail_either() {
     let attachment = image_attachment("10001", "mockup.png", "image/png", None);
     let content_url = attachment.content_url.clone();
     let description = json!({

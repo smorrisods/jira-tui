@@ -518,19 +518,25 @@ mod tests {
 
     #[test]
     #[cfg(feature = "images")]
-    fn attachment_preview_url_prefers_the_thumbnail_and_falls_back_to_content() {
+    fn attachment_preview_url_prefers_content_over_the_thumbnail() {
         let picker = ratatui_image::picker::Picker::halfblocks();
         let source = Source::Live {
             site: "example".into(),
             user: "me".into(),
         };
+        // content_url is preferred regardless of whether a thumbnail_url is
+        // also present — see Attachment::image_preview_url's own doc
+        // comment: the whole point of an in-app preview is to actually be
+        // visible at a useful size, and Jira's own thumbnail is
+        // deliberately too small a source for that once `Resize::Scale`
+        // stretches it to fill the reserved area.
         let with_thumb = test_attachment(
             "image/png",
             Some("https://example.atlassian.net/secure/thumbnail/10001/mockup.png"),
         );
         assert_eq!(
             attachment_preview_url(Some(&picker), &source, &with_thumb).as_deref(),
-            Some("https://example.atlassian.net/secure/thumbnail/10001/mockup.png")
+            Some(with_thumb.content_url.as_str())
         );
 
         let without_thumb = test_attachment("image/png", None);
