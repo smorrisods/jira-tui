@@ -1,9 +1,10 @@
 //! The "nerd info" popup: a small diagnostics panel showing this build's
-//! version, the terminal it thinks it's running in (from environment
-//! variables terminals commonly self-report), and — on an `images`-feature
-//! build — exactly what graphics capability was detected at startup
-//! (protocol, cell pixel size, and the raw capability list
-//! `ratatui-image`'s startup probe reported). Reachable only from the
+//! version, whether `crate::debug`'s opt-in tracing is currently on, the
+//! terminal it thinks it's running in (from environment variables
+//! terminals commonly self-report), and — on an `images`-feature build —
+//! exactly what graphics capability was detected at startup (protocol,
+//! cell pixel size, and the raw capability list `ratatui-image`'s startup
+//! probe reported). Reachable only from the
 //! command palette (no dedicated key, same "palette-only" precedent as
 //! `PaletteAction::OpenInBrowser`) — this is a debugging aid, not a core
 //! workflow action.
@@ -57,6 +58,14 @@ pub(crate) fn draw_nerd_info(f: &mut Frame, app: &App, area: Rect) {
             "compiled in"
         } else {
             "not compiled in (cargo build --features images)"
+        },
+    ));
+    lines.push(kv(
+        "debug logging",
+        if crate::debug::is_enabled() {
+            "on — traced to stderr (toggle from the command palette)"
+        } else {
+            "off (JIRA_TUI_DEBUG env var, or toggle from the command palette)"
         },
     ));
     lines.push(Line::from(""));

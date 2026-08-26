@@ -32,6 +32,7 @@ type Term = Terminal<CrosstermBackend<Stdout>>;
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    jira_tui::debug::init_from_env();
 
     if cli.init {
         return init_config();

@@ -9,6 +9,10 @@ pub mod app;
 #[cfg(feature = "live")]
 pub mod cache;
 pub mod config;
+/// Opt-in `eprintln!`-based debug tracing (`debug_trace!`), toggleable via
+/// the `JIRA_TUI_DEBUG` env var or the command palette — see the module
+/// doc comment.
+pub mod debug;
 pub mod domain;
 pub mod git;
 pub mod infra;

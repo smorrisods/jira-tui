@@ -683,13 +683,13 @@ pub(crate) fn dispatch_uuid_resolve(
 /// drops that attachment from the map — one attachment Jira won't redirect
 /// for shouldn't block resolving the rest.
 ///
-/// Temporary diagnostic: with `JIRA_TUI_DEBUG_MEDIA` set to anything, every
-/// step (candidates in, each attachment's probe outcome, the resulting
-/// uuid map, final match count) is traced to stderr — every failure mode
+/// Traced via `crate::debug_trace!` (see `crate::debug`'s own doc comment)
+/// every step of the way — candidates in, each attachment's probe outcome,
+/// the resulting uuid map, final match count — since every failure mode
 /// here otherwise collapses silently to "no match" by design (a failed
-/// preview fetch is never worth surfacing to the user), which makes a
-/// live-only mismatch like issue #130's DS-1880 follow-up otherwise
-/// unobservable without this.
+/// preview fetch is never worth surfacing to the user), which made
+/// diagnosing a live-only mismatch like issue #130's DS-1880 follow-up
+/// otherwise impossible.
 #[cfg(feature = "images")]
 #[allow(unused_variables)]
 fn resolve_uuids_blocking(
@@ -698,18 +698,13 @@ fn resolve_uuids_blocking(
 ) -> Vec<(String, super::super::InlineImageKey, String)> {
     #[cfg(feature = "live")]
     {
-        let debug = std::env::var_os("JIRA_TUI_DEBUG_MEDIA").is_some();
-        if debug {
-            eprintln!(
-                "[jira-tui] uuid-probe: {} candidate(s) {candidates:?}, {} attachment(s)",
-                candidates.len(),
-                attachments.len()
-            );
-        }
+        crate::debug_trace!(
+            "uuid-probe: {} candidate(s) {candidates:?}, {} attachment(s)",
+            candidates.len(),
+            attachments.len()
+        );
         let Some(cfg) = crate::jira::Config::load() else {
-            if debug {
-                eprintln!("[jira-tui] uuid-probe: no Config loaded, aborting");
-            }
+            crate::debug_trace!("uuid-probe: no Config loaded, aborting");
             return Vec::new();
         };
         let mut uuid_map: std::collections::HashMap<String, &Attachment> =
@@ -720,40 +715,35 @@ fn resolve_uuids_blocking(
             }
             match crate::jira::media_uuid_for(&cfg, &attachment.content_url) {
                 Ok(Some(uuid)) => {
-                    if debug {
-                        eprintln!(
-                            "[jira-tui] uuid-probe: {:?} ({}) -> uuid {uuid}",
-                            attachment.filename, attachment.content_url
-                        );
-                    }
+                    crate::debug_trace!(
+                        "uuid-probe: {:?} ({}) -> uuid {uuid}",
+                        attachment.filename,
+                        attachment.content_url
+                    );
                     uuid_map.insert(uuid, attachment);
                 }
                 Ok(None) => {
-                    if debug {
-                        eprintln!(
-                            "[jira-tui] uuid-probe: {:?} ({}) -> no redirect (not a 3xx, or no Location header)",
-                            attachment.filename, attachment.content_url
-                        );
-                    }
+                    crate::debug_trace!(
+                        "uuid-probe: {:?} ({}) -> no redirect (not a 3xx, or no Location header)",
+                        attachment.filename,
+                        attachment.content_url
+                    );
                 }
                 Err(e) => {
-                    if debug {
-                        eprintln!(
-                            "[jira-tui] uuid-probe: {:?} ({}) -> error: {e}",
-                            attachment.filename, attachment.content_url
-                        );
-                    }
+                    crate::debug_trace!(
+                        "uuid-probe: {:?} ({}) -> error: {e}",
+                        attachment.filename,
+                        attachment.content_url
+                    );
                 }
             }
         }
-        if debug {
-            eprintln!(
-                "[jira-tui] uuid-probe: uuid map has {} entr{}: {:?}",
-                uuid_map.len(),
-                if uuid_map.len() == 1 { "y" } else { "ies" },
-                uuid_map.keys().collect::<Vec<_>>()
-            );
-        }
+        crate::debug_trace!(
+            "uuid-probe: uuid map has {} entr{}: {:?}",
+            uuid_map.len(),
+            if uuid_map.len() == 1 { "y" } else { "ies" },
+            uuid_map.keys().collect::<Vec<_>>()
+        );
         let resolved: Vec<_> = candidates
             .iter()
             .filter_map(|candidate| {
@@ -766,13 +756,11 @@ fn resolve_uuids_blocking(
                 ))
             })
             .collect();
-        if debug {
-            eprintln!(
-                "[jira-tui] uuid-probe: matched {}/{} candidate(s)",
-                resolved.len(),
-                candidates.len()
-            );
-        }
+        crate::debug_trace!(
+            "uuid-probe: matched {}/{} candidate(s)",
+            resolved.len(),
+            candidates.len()
+        );
         resolved
     }
     #[cfg(not(feature = "live"))]

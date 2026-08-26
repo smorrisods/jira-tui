@@ -63,6 +63,7 @@ pub enum PaletteAction {
     OpenAbout,
     OpenHelp,
     OpenNerdInfo,
+    ToggleDebugLogging,
     NewIssue,
 }
 
@@ -303,6 +304,16 @@ impl App {
                 hint: "",
                 group: PaletteGroup::App,
                 action: PaletteAction::OpenNerdInfo,
+            },
+            PaletteRow {
+                label: if crate::debug::is_enabled() {
+                    "turn off debug logging".into()
+                } else {
+                    "turn on debug logging".into()
+                },
+                hint: "",
+                group: PaletteGroup::App,
+                action: PaletteAction::ToggleDebugLogging,
             },
         ]);
         // The direct `F` key is Home/List-only (mapping a custom field only

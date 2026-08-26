@@ -786,6 +786,14 @@ fn run_palette_action(app: &mut App, action: &PaletteAction) {
         PaletteAction::OpenAbout => app.open_about(),
         PaletteAction::OpenHelp => app.show_help = true,
         PaletteAction::OpenNerdInfo => app.nerd_info_open = true,
+        PaletteAction::ToggleDebugLogging => {
+            let on = jira_tui::debug::toggle();
+            app.status = if on {
+                "debug logging on — traced to stderr".into()
+            } else {
+                "debug logging off".into()
+            };
+        }
         PaletteAction::NewIssue => app.open_new_issue(),
     }
 }

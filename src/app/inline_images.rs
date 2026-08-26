@@ -226,13 +226,10 @@ impl App {
             async_ops::dispatch_inline_image(tx, generation, key, url);
         }
         let has_image_attachment = attachments.iter().any(|a| a.image_preview_url().is_some());
-        if std::env::var_os("JIRA_TUI_DEBUG_MEDIA").is_some() {
-            eprintln!(
-                "[jira-tui] refresh_inline_images: {} candidate(s) {candidates:?}, \
-                 has_image_attachment={has_image_attachment}",
-                candidates.len()
-            );
-        }
+        crate::debug_trace!(
+            "refresh_inline_images: {} candidate(s) {candidates:?}, has_image_attachment={has_image_attachment}",
+            candidates.len()
+        );
         if !candidates.is_empty() && has_image_attachment {
             let tx = self.events_tx.clone();
             async_ops::dispatch_uuid_resolve(tx, generation, candidates, attachments);
@@ -295,13 +292,10 @@ impl App {
             async_ops::dispatch_inline_image(tx, generation, key, url);
         }
         let has_image_attachment = attachments.iter().any(|a| a.image_preview_url().is_some());
-        if std::env::var_os("JIRA_TUI_DEBUG_MEDIA").is_some() {
-            eprintln!(
-                "[jira-tui] refresh_inline_images: {} candidate(s) {candidates:?}, \
-                 has_image_attachment={has_image_attachment}",
-                candidates.len()
-            );
-        }
+        crate::debug_trace!(
+            "refresh_inline_images: {} candidate(s) {candidates:?}, has_image_attachment={has_image_attachment}",
+            candidates.len()
+        );
         if !candidates.is_empty() && has_image_attachment {
             let tx = self.events_tx.clone();
             async_ops::dispatch_uuid_resolve(tx, generation, candidates, attachments);
