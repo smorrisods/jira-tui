@@ -57,6 +57,15 @@ async fn main() -> Result<()> {
     }
 
     let mut terminal = setup_terminal()?;
+    // Strictly before `run()`'s `crossterm::EventStream` starts polling
+    // stdin: `Picker::from_query_stdio` writes an escape-sequence query and
+    // synchronously reads stdin for the terminal's response, which a
+    // concurrently polling event stream would otherwise consume as a stray
+    // input event, losing the response.
+    #[cfg(feature = "images")]
+    {
+        app.image_picker = detect_image_picker();
+    }
     install_panic_hook();
     if app.mouse.enabled {
         let _ = execute!(io::stdout(), EnableMouseCapture);
@@ -186,6 +195,21 @@ fn init_config() -> Result<()> {
         println!("Cache directory: {}", cache.display());
     }
     Ok(())
+}
+
+/// Query the terminal for image-graphics support (Kitty/Sixel/iTerm2, with a
+/// Unicode half-block fallback) — see issue #130. `None` whenever there's no
+/// point asking: not a real interactive tty (a pipe, CI, `cargo test`'s
+/// captured stdio), or the query itself failed. Every other code path treats
+/// a `None` picker exactly like the `images` feature being absent: fall back
+/// to the `[image: alt]` placeholder.
+#[cfg(feature = "images")]
+fn detect_image_picker() -> Option<ratatui_image::picker::Picker> {
+    use std::io::IsTerminal;
+    if !io::stdout().is_terminal() || !io::stdin().is_terminal() {
+        return None;
+    }
+    ratatui_image::picker::Picker::from_query_stdio().ok()
 }
 
 // ── Terminal lifecycle ───────────────────────────────────────────────────────

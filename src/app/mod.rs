@@ -9,6 +9,8 @@
 //! helpers (selection, window title, toasts, at-a-glance counts).
 
 use std::cell::Cell;
+#[cfg(feature = "images")]
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 use ratatui::layout::Rect;
@@ -51,6 +53,8 @@ mod tests;
 
 pub use assign::{AssigneePickerState, AssigneeRow};
 pub use async_ops::AppEvent;
+#[cfg(feature = "images")]
+pub use attachments::AttachmentPreview;
 pub use attachments::AttachmentUpload;
 pub use board::BoardSelection;
 pub use edit::{EditTarget, EditorState};
@@ -289,6 +293,36 @@ pub struct App {
     /// mandatory preview before the actual multipart POST — see
     /// `App::open_attachment_upload`. `None` when the flow isn't active.
     pub attachment_upload: Option<AttachmentUpload>,
+    /// Runtime-detected terminal image capability (`images` feature only) —
+    /// see `main::detect_image_picker`, called once at startup strictly
+    /// before `crossterm::EventStream` starts polling stdin (the detection
+    /// query reads a synchronous response off stdin, which a concurrently
+    /// polling event stream would otherwise steal). `None` whenever the
+    /// terminal wasn't queried, the query failed, or stdin/stdout isn't a
+    /// real tty — every other code path treats that exactly like the
+    /// `images` feature being absent: fall back to the `[image: alt]`
+    /// placeholder.
+    #[cfg(feature = "images")]
+    pub image_picker: Option<ratatui_image::picker::Picker>,
+    /// The attachment picker's fetched-and-decoded preview for the
+    /// currently-highlighted attachment (`images` feature only) — see
+    /// `App::refresh_attachment_preview`/`AppEvent::AttachmentPreviewLoaded`.
+    /// Wrapped in a `RefCell` (rather than a plain field, like every other
+    /// `attachment_*` field above) because rendering it needs a `&mut
+    /// StatefulProtocol` (ratatui-image resizes/re-encodes at render time),
+    /// while `ui::draw` only ever holds `&App` — the same "interior
+    /// mutability so render-time code can still update itself" shape as
+    /// this struct's `Cell<Rect>` hit-test fields, just for a type that
+    /// isn't `Copy`.
+    #[cfg(feature = "images")]
+    pub attachment_preview: RefCell<Option<AttachmentPreview>>,
+    /// Bumped on every attachment-picker open/move; a completed preview
+    /// fetch whose generation no longer matches this has been superseded by
+    /// a newer selection and is dropped instead of overwriting a preview
+    /// for a different attachment. Mirrors every other `*_generation`
+    /// counter on `App`.
+    #[cfg(feature = "images")]
+    pub(crate) attachment_preview_generation: u64,
 
     /// The screen `a` was pressed from, so backing out of About (see #38)
     /// restores it instead of always landing on Home.
@@ -530,6 +564,12 @@ impl App {
             attachments_open: false,
             attachment_index: 0,
             attachment_upload: None,
+            #[cfg(feature = "images")]
+            image_picker: None,
+            #[cfg(feature = "images")]
+            attachment_preview: RefCell::new(None),
+            #[cfg(feature = "images")]
+            attachment_preview_generation: 0,
             about_return_screen: Screen::Home,
             field_mapping: FieldMappingState::default(),
             current_view: ViewKind::default(),

@@ -237,6 +237,40 @@ fn attachment_picker_overlay_renders_when_open() {
     );
 }
 
+/// Bullet 1 of issue #130's required test coverage: a `Picker` built with
+/// the explicit, terminal-query-free `Halfblocks` constructor plus a tiny
+/// in-memory image successfully produces a `StatefulProtocol` and renders
+/// through a `TestBackend` without panicking — the actual assertion here is
+/// mostly "this returns at all", since `StatefulImage`'s `StatefulWidget`
+/// impl does the resize/encode work at render time.
+#[test]
+#[cfg(feature = "images")]
+fn attachment_picker_renders_a_halfblocks_preview_image() {
+    use jira_tui::app::AttachmentPreview;
+    use ratatui_image::picker::Picker;
+
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.open_by_key("DS-2722");
+    app.open_attachments();
+    assert!(app.attachments_open);
+    let attachment_id = app.detail.as_ref().unwrap().attachments[0].id.clone();
+
+    let picker = Picker::halfblocks();
+    let protocol = picker.new_resize_protocol(image::DynamicImage::new_rgb8(4, 4));
+    app.image_picker = Some(picker);
+    *app.attachment_preview.get_mut() = Some(AttachmentPreview {
+        attachment_id,
+        protocol,
+    });
+
+    let text = render(&app);
+    assert!(
+        text.contains("attachments"),
+        "the picker should still show its title alongside the image preview"
+    );
+}
+
 #[test]
 fn attachment_upload_input_renders_the_typed_path() {
     let mut app = demo_app();

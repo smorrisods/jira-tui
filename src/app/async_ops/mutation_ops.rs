@@ -488,6 +488,59 @@ fn upload_attachment_blocking(
     Err("this build has no live support".to_string())
 }
 
+/// Spawn an attachment preview image fetch+decode off the render thread
+/// (`images` feature only), sending the result back as
+/// `AppEvent::AttachmentPreviewLoaded`. Mirrors `dispatch_attachment_download`'s
+/// shape — the network fetch runs inside `spawn_blocking` since the Jira
+/// client is synchronous `ureq` — but the CPU-bound `image::load_from_memory`
+/// decode step is folded into the same blocking closure too, rather than
+/// happening back on the event/render thread. The resulting
+/// `StatefulProtocol` is deliberately *not* constructed here: that needs
+/// `App::image_picker`, which only exists on the render thread's `App`, so
+/// construction happens at apply-time instead (see
+/// `App::apply_attachment_preview_loaded`).
+#[cfg(feature = "images")]
+pub(crate) fn dispatch_attachment_preview(
+    tx: UnboundedSender<AppEvent>,
+    generation: u64,
+    attachment_id: String,
+    url: String,
+) {
+    tokio::spawn(async move {
+        let id_for_result = attachment_id.clone();
+        let image = tokio::task::spawn_blocking(move || fetch_attachment_preview_blocking(&url))
+            .await
+            .unwrap_or(None);
+        let _ = tx.send(AppEvent::AttachmentPreviewLoaded {
+            generation,
+            attachment_id: id_for_result,
+            image,
+        });
+    });
+}
+
+/// Downloads `url`'s bytes (`crate::jira::download_attachment`, which is
+/// really just a thin wrapper over the same `get_bytes` helper
+/// `download_attachment_blocking` above uses — it happens to already accept
+/// any absolute URL, not just a `content_url`, so it works unchanged for a
+/// `thumbnail_url` too) and decodes them. Any failure — no credentials, a
+/// network error, or bytes that don't decode as a supported image format —
+/// collapses to `None` rather than propagating an error: a failed preview
+/// fetch is never worth surfacing to the user, it just means the picker
+/// falls back to its normal metadata + placeholder rendering.
+#[cfg(feature = "images")]
+#[allow(unused_variables)]
+fn fetch_attachment_preview_blocking(url: &str) -> Option<image::DynamicImage> {
+    #[cfg(feature = "live")]
+    {
+        let cfg = crate::jira::Config::load()?;
+        let bytes = crate::jira::download_attachment(&cfg, url).ok()?;
+        image::load_from_memory(&bytes).ok()
+    }
+    #[cfg(not(feature = "live"))]
+    None
+}
+
 /// Merge `uploaded` (Jira's response to a successful `upload_attachment`
 /// call) into `existing`: replacing any attachment that already shares an
 /// id (re-uploading to an existing entry, which Jira allows) and appending
@@ -823,5 +876,44 @@ impl App {
         }
         self.status = format!("{key}: uploaded {filename}");
         self.flash(format!("✓ uploaded {filename}"));
+    }
+
+    /// Applies `AppEvent::AttachmentPreviewLoaded` (`images` feature only) —
+    /// see `dispatch_attachment_preview`/`App::refresh_attachment_preview`
+    /// above. Guarded two ways against a stale response: the usual
+    /// generation check (a newer picker move bumped
+    /// `attachment_preview_generation` since this fetch was dispatched), and
+    /// — belt-and-suspenders, since a generation mismatch alone already
+    /// covers every case that matters — confirming the highlighted
+    /// attachment's id still matches the one this preview was fetched for.
+    #[cfg(feature = "images")]
+    pub(super) fn apply_attachment_preview_loaded(
+        &mut self,
+        generation: u64,
+        attachment_id: String,
+        image: Option<image::DynamicImage>,
+    ) {
+        if generation != self.attachment_preview_generation {
+            return;
+        }
+        let Some(image) = image else {
+            return;
+        };
+        let still_current = self
+            .detail
+            .as_ref()
+            .and_then(|d| d.attachments.get(self.attachment_index))
+            .is_some_and(|a| a.id == attachment_id);
+        if !still_current {
+            return;
+        }
+        let Some(picker) = self.image_picker.as_ref() else {
+            return;
+        };
+        let protocol = picker.new_resize_protocol(image);
+        *self.attachment_preview.get_mut() = Some(super::super::attachments::AttachmentPreview {
+            attachment_id,
+            protocol,
+        });
     }
 }

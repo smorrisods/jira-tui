@@ -226,6 +226,21 @@ pub enum AppEvent {
         filename: String,
         result: Result<Vec<Attachment>, String>,
     },
+    /// The attachment picker's image-preview fetch+decode resolved
+    /// (`images` feature only) — see
+    /// `App::refresh_attachment_preview`/`dispatch_attachment_preview`.
+    /// `image` is `None` for every fallback reason (network error, decode
+    /// failure, or the request was never eligible in the first place —
+    /// though in practice `refresh_attachment_preview` only ever dispatches
+    /// when there's a real chance of success), in which case the apply arm
+    /// leaves the preview absent so the UI falls back to its normal
+    /// placeholder path.
+    #[cfg(feature = "images")]
+    AttachmentPreviewLoaded {
+        generation: u64,
+        attachment_id: String,
+        image: Option<image::DynamicImage>,
+    },
 }
 
 impl App {
@@ -361,6 +376,12 @@ impl App {
                 filename,
                 result,
             } => self.apply_attachment_uploaded(key, filename, result),
+            #[cfg(feature = "images")]
+            AppEvent::AttachmentPreviewLoaded {
+                generation,
+                attachment_id,
+                image,
+            } => self.apply_attachment_preview_loaded(generation, attachment_id, image),
         }
     }
 }
