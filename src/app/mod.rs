@@ -55,7 +55,7 @@ pub use async_ops::AppEvent;
 pub use attachments::AttachmentUpload;
 pub use board::BoardSelection;
 pub use edit::{EditTarget, EditorState};
-pub use field_mapping::{FieldMappingOutcome, FieldMappingState};
+pub use field_mapping::{FieldMappingOutcome, FieldMappingState, FieldMappingTarget};
 pub(crate) use history::{NavEntry, NavHistory};
 pub use mouse::{ListFocus, MouseState, SelectionSpan};
 pub(crate) use new_issue::LocallyCreatedIssue;

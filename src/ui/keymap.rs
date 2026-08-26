@@ -168,7 +168,7 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
     },
     KeyHint {
         key: "F",
-        desc: "map a custom field (e.g. Acceptance Criteria)",
+        desc: "map a custom field (Acceptance Criteria, Sprint — Tab to switch)",
     },
     KeyHint {
         key: "a",

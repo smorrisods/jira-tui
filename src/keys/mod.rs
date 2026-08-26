@@ -369,11 +369,13 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
     }
 
     // The field-mapping screen: type to search custom fields, pick one to
-    // map "Acceptance Criteria" to (or the leading "none" entry to clear it).
+    // map the current target (Tab switches it) to — or the leading "none"
+    // entry to clear it.
     if app.screen == Screen::FieldMapping {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => app.close_field_mapping(),
             KeyCode::Enter => app.confirm_field_mapping(),
+            KeyCode::Tab => app.cycle_field_mapping_target(),
             KeyCode::Up => app.field_mapping_move(-1),
             KeyCode::Down => app.field_mapping_move(1),
             KeyCode::Backspace => app.field_mapping_backspace(),

@@ -119,9 +119,9 @@ mouse = false   # start with mouse mode on/off
 Custom field IDs (`customfield_10001`, etc.) are assigned per Jira site, so there's no single correct default to ship. Rather than hunting for yours in Jira's admin settings, jira-tui can look it up for you:
 
 - After verifying credentials during onboarding, you're dropped straight into a searchable list of your site's custom fields — type to filter by name (e.g. "acceptance"), then `⏎` to map it, or pick the leading **— none —** entry to skip.
-- Press **`F`** at any time (from the work list) to reopen that screen and change or clear the mapping.
+- Press **`F`** at any time (from the work list) to reopen that screen and change or clear the mapping. **`Tab`** switches which field you're mapping (Acceptance Criteria, Sprint) — the same fetched list of custom fields serves both, so switching is instant, no re-fetch.
 
-Currently only "Acceptance Criteria" is wired up to that lookup screen, shown on the issue detail screen when configured. Sprint is the same kind of instance-specific custom field, but is configured directly via `sprint_field`/`sprint_board_id` (env var or `config.toml`, above) rather than through the `F` lookup screen — once set, it shows on the issue detail screen, and **`S`** opens a picker to move the issue into a sprint or back to the backlog.
+Sprint also needs a board ID (`sprint_board_id`, env var or `config.toml`, above) to offer a choice of sprints — unlike a custom field, there's no reliable auto-discovery for that (a project can have several boards), so it's config-only for now. Once both are set, Sprint shows on the issue detail screen, and **`S`** opens a picker to move the issue into a sprint or back to the backlog.
 
 Missing or invalid credentials never crash the app — it falls back to the last cached list, then to demo data.
 

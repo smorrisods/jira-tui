@@ -13,17 +13,26 @@ use super::AppEvent;
 /// back as `AppEvent::FieldsLoaded`. Only dispatched by
 /// `App::dispatch_field_mapping` once it's already confirmed a live source
 /// and loaded credentials — this always makes the real network call.
+///
+/// `target` only affects which of `jira::Config`'s fields
+/// `list_fields_blocking` reads back as "currently mapped" — the catalog
+/// itself (every custom field on the site) is identical regardless of
+/// target, which is exactly why `App::cycle_field_mapping_target` (switching
+/// target *after* this fetch already landed) never needs to re-dispatch
+/// this at all.
 pub(crate) fn dispatch_field_mapping(
     tx: UnboundedSender<AppEvent>,
     generation: u64,
+    target: super::super::field_mapping::FieldMappingTarget,
     origin: super::super::field_mapping::FieldMappingOrigin,
 ) {
     tokio::spawn(async move {
-        let result = tokio::task::spawn_blocking(list_fields_blocking)
+        let result = tokio::task::spawn_blocking(move || list_fields_blocking(target))
             .await
             .unwrap_or_else(|_| Err("internal error: task panicked".into()));
         let _ = tx.send(AppEvent::FieldsLoaded {
             generation,
+            target,
             origin,
             result,
         });
@@ -31,7 +40,7 @@ pub(crate) fn dispatch_field_mapping(
 }
 
 /// A field-mapping fetch's result: the catalog as `(id, name)` pairs
-/// alongside the field currently mapped in `config.toml` (if any).
+/// alongside `target`'s field currently mapped in `config.toml` (if any).
 pub(super) type FieldsFetchResult = Result<(Vec<(String, String)>, Option<String>), String>;
 
 /// Mirrors the live branch of the old synchronous `open_field_mapping`,
@@ -39,15 +48,22 @@ pub(super) type FieldsFetchResult = Result<(Vec<(String, String)>, Option<String
 /// applied via `AppEvent::FieldsLoaded` instead of a synchronous
 /// `NotAvailable` return (see `field_mapping.rs`'s module docs).
 #[allow(unused_variables)]
-fn list_fields_blocking() -> FieldsFetchResult {
+fn list_fields_blocking(
+    target: super::super::field_mapping::FieldMappingTarget,
+) -> FieldsFetchResult {
     #[cfg(feature = "live")]
     {
+        use super::super::field_mapping::FieldMappingTarget;
+
         let Some(cfg) = crate::jira::Config::load() else {
             return Err("No live credentials configured.".into());
         };
         crate::jira::list_fields(&cfg)
             .map(|fields| {
-                let current_mapping = cfg.acceptance_criteria_field.clone();
+                let current_mapping = match target {
+                    FieldMappingTarget::AcceptanceCriteria => cfg.acceptance_criteria_field.clone(),
+                    FieldMappingTarget::Sprint => cfg.sprint_field.clone(),
+                };
                 (
                     fields.into_iter().map(|f| (f.id, f.name)).collect(),
                     current_mapping,
@@ -95,6 +111,7 @@ impl App {
     pub(super) fn apply_fields_loaded(
         &mut self,
         generation: u64,
+        target: super::super::field_mapping::FieldMappingTarget,
         origin: super::super::field_mapping::FieldMappingOrigin,
         result: FieldsFetchResult,
     ) {
@@ -106,6 +123,7 @@ impl App {
         }
         self.loading = false;
         self.field_mapping_pending = false;
+        self.field_mapping.target = target;
 
         let connected_status = match &origin {
             FieldMappingOrigin::Direct => None,
@@ -130,7 +148,7 @@ impl App {
                 // message).
                 let count = fields.len();
                 let (catalog, selected) =
-                    build_catalog_and_selection(fields, current_mapping.as_deref());
+                    build_catalog_and_selection(fields, target, current_mapping.as_deref());
                 self.field_mapping.catalog = catalog;
                 self.field_mapping.query.clear();
                 self.field_mapping.selected = selected;

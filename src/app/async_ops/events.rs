@@ -77,6 +77,11 @@ pub enum AppEvent {
     /// fetch itself loads), used to pre-select the catalog.
     FieldsLoaded {
         generation: u64,
+        /// Which config-gated custom field this fetch was for — see
+        /// `dispatch_field_mapping`'s own doc comment for why the catalog
+        /// itself doesn't vary by target, only `result`'s "currently
+        /// mapped" half does.
+        target: super::super::field_mapping::FieldMappingTarget,
         origin: super::super::field_mapping::FieldMappingOrigin,
         result: FieldsFetchResult,
     },
@@ -299,9 +304,10 @@ impl App {
             } => self.apply_comment_added(generation, key, result, return_screen),
             AppEvent::FieldsLoaded {
                 generation,
+                target,
                 origin,
                 result,
-            } => self.apply_fields_loaded(generation, origin, result),
+            } => self.apply_fields_loaded(generation, target, origin, result),
             AppEvent::CredentialsVerified {
                 generation,
                 issues,

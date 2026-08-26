@@ -1,17 +1,97 @@
-//! Field discovery: browse a live Jira site's custom fields and map
-//! "Acceptance Criteria" to one of them.
+//! Field discovery: browse a live Jira site's custom fields and map one to
+//! whichever instance-specific slot (`FieldMappingTarget`) is currently
+//! selected.
 //!
 //! Custom field IDs (`customfield_NNNNN`) are assigned per Jira instance, so
 //! there's no single correct value to hardcode. `GET /rest/api/3/field`
 //! returns every field's name alongside its ID, so this screen just lets you
-//! search that list by name instead of hunting for the ID yourself.
+//! search that list by name instead of hunting for the ID yourself — the
+//! same catalog serves every target, so switching targets (`Tab`) never
+//! needs a re-fetch, just a different "what's currently mapped" lookup
+//! against the config key already sitting in `FieldMappingTarget::config_key`.
+//!
+//! Originally hardcoded to Acceptance Criteria alone; generalized once
+//! Sprint (issue #123-adjacent work) needed the exact same "search this
+//! site's custom fields, remember the choice in config.toml" flow — the
+//! underlying persistence (`config::save_field_mapping`) was already
+//! field-agnostic, only this module's own API and the UI's copy were narrow.
 
 use super::{async_ops, App, Screen};
 use crate::config;
 
 /// Sentinel entry meaning "don't map a custom field" — always present (when
 /// the query is empty) so a mapping can be cleared as easily as it's set.
-const NONE_SENTINEL: (&str, &str) = ("", "— none — don't track acceptance criteria —");
+/// The trailing "don't track …" half of the label is filled in per-target
+/// at render time (see `ui::field_mapping`), since "don't track acceptance
+/// criteria" doesn't read right for a different target.
+const NONE_SENTINEL: (&str, &str) = ("", "— none —");
+
+/// Which instance-specific custom field the field-mapping screen (`F`) is
+/// currently editing. Add a new variant here (plus its three match arms) to
+/// wire up another config-gated custom field the same way — the screen,
+/// catalog fetch/cache, and persistence all generalize automatically; only
+/// the field's own config key/env var and read/write call sites (Sprint's
+/// are `src/jira/live/detail.rs`'s conditional `fields=` append and
+/// `App::sprint_field_configured`) are target-specific.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FieldMappingTarget {
+    #[default]
+    AcceptanceCriteria,
+    Sprint,
+}
+
+impl FieldMappingTarget {
+    /// Human-readable name for the screen's title/status messages.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::AcceptanceCriteria => "Acceptance Criteria",
+            Self::Sprint => "Sprint",
+        }
+    }
+
+    /// The `config.toml` key this target reads/writes — must match the
+    /// field name on `jira::Config` this target corresponds to
+    /// (`acceptance_criteria_field`/`sprint_field`).
+    pub fn config_key(self) -> &'static str {
+        match self {
+            Self::AcceptanceCriteria => "acceptance_criteria_field",
+            Self::Sprint => "sprint_field",
+        }
+    }
+
+    /// The env var override for this target's config key, checked first —
+    /// same "env wins over config.toml" precedence every other setting in
+    /// this app already follows.
+    pub fn env_var(self) -> &'static str {
+        match self {
+            Self::AcceptanceCriteria => "JIRA_ACCEPTANCE_CRITERIA_FIELD",
+            Self::Sprint => "JIRA_SPRINT_FIELD",
+        }
+    }
+
+    /// The next target in the `Tab` cycle order — wraps around. Add new
+    /// variants to this cycle as they're added to the enum itself.
+    pub fn next(self) -> Self {
+        match self {
+            Self::AcceptanceCriteria => Self::Sprint,
+            Self::Sprint => Self::AcceptanceCriteria,
+        }
+    }
+
+    /// The currently mapped field id for this target, checking the env var
+    /// override first then `config.toml` — same precedence
+    /// `jira::Config::load` uses for every other setting, but a direct,
+    /// synchronous, network-free read (unlike the *catalog*, which does
+    /// need a live fetch) so `App::cycle_field_mapping_target` can re-derive
+    /// "what's currently mapped" on every `Tab` without waiting on
+    /// anything.
+    fn current_mapping(self) -> Option<String> {
+        std::env::var(self.env_var())
+            .ok()
+            .or_else(|| config::read_kv().get(self.config_key()).cloned())
+            .filter(|s| !s.trim().is_empty())
+    }
+}
 
 /// Index of the catalog entry matching `mapped` (or the leading sentinel at
 /// index 0 if there's no mapping, or it's no longer in the catalog).
@@ -25,14 +105,21 @@ fn index_of_mapping(catalog: &[(String, String)], mapped: Option<&str>) -> usize
 /// Field discovery/mapping screen state.
 #[derive(Clone, Debug, Default)]
 pub struct FieldMappingState {
+    /// Which config-gated custom field this screen is currently editing.
+    /// Deliberately *not* reset on every `App::open_field_mapping` — the
+    /// screen remembers whichever target you last worked with, the same way
+    /// `current_mapping` already gets re-read fresh rather than reset, so
+    /// re-opening to tweak the same field doesn't lose your place.
+    pub target: FieldMappingTarget,
     /// Discovered custom fields as (id, name), sorted by name, with a
     /// leading `("", "— none —")` sentinel so mappings can be cleared.
     pub catalog: Vec<(String, String)>,
     pub query: String,
     pub selected: usize,
-    /// The field ID currently mapped in `config.toml`, if any — read fresh
-    /// each time the screen opens so re-editing shows (and pre-selects)
-    /// what's already configured, rather than starting blank.
+    /// `target`'s field ID currently mapped in `config.toml`, if any — read
+    /// fresh each time the screen opens (or `Tab` switches target) so
+    /// re-editing shows (and pre-selects) what's already configured, rather
+    /// than starting blank.
     pub current_mapping: Option<String>,
 }
 
@@ -84,11 +171,20 @@ impl App {
     /// post-resolution branching differs from the `F` key. Only called from
     /// `onboarding.rs`'s live-gated verification flow, so it's dead code in
     /// a no-live build.
+    /// Same lookup, but always targets Acceptance Criteria regardless of
+    /// whichever target the screen was last left on — onboarding's
+    /// credential-verification handoff is specifically about getting a new
+    /// user's Acceptance Criteria field set up, not whatever `F` happened
+    /// to be showing last time it was open. See `FieldMappingOrigin::Onboarding`
+    /// for how the post-resolution branching differs from the `F` key.
+    /// Only called from `onboarding.rs`'s live-gated verification flow, so
+    /// it's dead code in a no-live build.
     #[cfg_attr(not(feature = "live"), allow(dead_code))]
     pub(crate) fn open_field_mapping_for_onboarding(
         &mut self,
         connected_status: String,
     ) -> FieldMappingOutcome {
+        self.field_mapping.target = FieldMappingTarget::AcceptanceCriteria;
         self.dispatch_field_mapping(FieldMappingOrigin::Onboarding { connected_status })
     }
 
@@ -110,12 +206,42 @@ impl App {
         self.loading = true;
         self.status = "↻ looking up custom fields…".into();
         let tx = self.events_tx.clone();
-        async_ops::dispatch_field_mapping(tx, generation, origin);
+        async_ops::dispatch_field_mapping(tx, generation, self.field_mapping.target, origin);
         FieldMappingOutcome::Pending
     }
 
     pub fn close_field_mapping(&mut self) {
         self.screen = Screen::Home;
+    }
+
+    /// `Tab` on the field-mapping screen: switch which custom field slot
+    /// you're mapping. Reuses the already-fetched catalog (the same
+    /// `GET /rest/api/3/field` list serves every target — see this module's
+    /// doc comment) and just re-derives "what's currently mapped"/the
+    /// pre-selected row for the new target, synchronously — no network
+    /// round-trip needed, unlike the initial open. A no-op before the
+    /// catalog has loaded (nothing to re-derive against yet).
+    pub fn cycle_field_mapping_target(&mut self) {
+        if self.field_mapping.catalog.is_empty() {
+            return;
+        }
+        self.field_mapping.target = self.field_mapping.target.next();
+        self.field_mapping.query.clear();
+        // The catalog's leading "none" row names the *previous* target
+        // ("don't track Acceptance Criteria") — rewrite it in place rather
+        // than refetching just to relabel one row.
+        if let Some(sentinel) = self.field_mapping.catalog.first_mut() {
+            sentinel.1 = format!(
+                "{} — don't track {}",
+                NONE_SENTINEL.1,
+                self.field_mapping.target.label()
+            );
+        }
+        self.field_mapping.current_mapping = self.field_mapping.target.current_mapping();
+        self.field_mapping.selected = index_of_mapping(
+            &self.field_mapping.catalog,
+            self.field_mapping.current_mapping.as_deref(),
+        );
     }
 
     pub fn field_mapping_input_char(&mut self, c: char) {
@@ -171,22 +297,23 @@ impl App {
             return;
         };
 
+        let target = self.field_mapping.target;
         let saved = if id.is_empty() {
-            config::save_field_mapping(None)
+            config::save_field_mapping(target.config_key(), None)
         } else {
-            config::save_field_mapping(Some(&id))
+            config::save_field_mapping(target.config_key(), Some(&id))
         };
 
         match saved {
             Ok(_) if id.is_empty() => {
-                std::env::remove_var("JIRA_ACCEPTANCE_CRITERIA_FIELD");
+                std::env::remove_var(target.env_var());
                 self.field_mapping.current_mapping = None;
-                self.status = "Cleared the acceptance criteria field mapping.".into();
+                self.status = format!("Cleared the {} field mapping.", target.label());
             }
             Ok(_) => {
-                std::env::set_var("JIRA_ACCEPTANCE_CRITERIA_FIELD", &id);
+                std::env::set_var(target.env_var(), &id);
                 self.field_mapping.current_mapping = Some(id.clone());
-                self.status = format!("Mapped Acceptance Criteria → {name} ({id})");
+                self.status = format!("Mapped {} → {name} ({id})", target.label());
                 self.flash(format!("✓ mapped {name}"));
             }
             Err(e) => {
@@ -197,21 +324,22 @@ impl App {
     }
 }
 
-/// Build the catalog (with the leading "none" sentinel) and the pre-selected
-/// index from a resolved fetch. Used by `AppEvent::FieldsLoaded`'s handler
-/// once the async lookup completes — factored out here purely so it sits
-/// next to `index_of_mapping` and the sentinel it uses. Takes plain
-/// `(id, name)` pairs rather than `jira::FieldInfo` so this (and the
-/// always-compiled `apply_event` that calls it) don't need to be gated
-/// behind the `live` feature.
+/// Build the catalog (with a leading "none" sentinel naming `target`) and
+/// the pre-selected index from a resolved fetch. Used by
+/// `AppEvent::FieldsLoaded`'s handler once the async lookup completes —
+/// factored out here purely so it sits next to `index_of_mapping` and the
+/// sentinel it uses. Takes plain `(id, name)` pairs rather than
+/// `jira::FieldInfo` so this (and the always-compiled `apply_event` that
+/// calls it) don't need to be gated behind the `live` feature.
 pub(crate) fn build_catalog_and_selection(
     fields: Vec<(String, String)>,
+    target: FieldMappingTarget,
     current_mapping: Option<&str>,
 ) -> (Vec<(String, String)>, usize) {
-    let catalog: Vec<(String, String)> =
-        std::iter::once((NONE_SENTINEL.0.to_string(), NONE_SENTINEL.1.to_string()))
-            .chain(fields)
-            .collect();
+    let none_label = format!("{} — don't track {}", NONE_SENTINEL.1, target.label());
+    let catalog: Vec<(String, String)> = std::iter::once((NONE_SENTINEL.0.to_string(), none_label))
+        .chain(fields)
+        .collect();
     let selected = index_of_mapping(&catalog, current_mapping);
     (catalog, selected)
 }
