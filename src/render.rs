@@ -118,12 +118,21 @@ pub struct WideDetail {
     pub links: Panel,
     pub children: Panel,
     pub attachments: Panel,
+    /// Line reservations for any description `media` node
+    /// `description_lines` was told is ready to render (see
+    /// `adf::MediaSizing`) — indices into `main.lines`. Always empty today:
+    /// every call site here still passes `MediaSizing::Disabled`.
+    pub image_placements: Vec<adf::ImagePlacement>,
 }
 
 /// The Detail screen's narrow (< ~90 cols) layout: one scrollable document,
 /// identity → facts → description → linked → activity.
 pub struct NarrowDetail {
     pub lines: IssueLines,
+    /// As `WideDetail::image_placements`, rebased into `lines.lines` (the
+    /// description section doesn't start at index 0 here — identity/facts
+    /// come first).
+    pub image_placements: Vec<adf::ImagePlacement>,
 }
 
 fn identity_lines(detail: &IssueDetail) -> Vec<Line<'static>> {
@@ -451,18 +460,34 @@ fn linked_panel_title(detail: &IssueDetail) -> Line<'static> {
 /// `width` is the column width this description will actually be wrapped
 /// to (see `adf::render`'s doc comment) — needed so a blockquote/code-block
 /// bar can be pre-wrapped to survive line wrapping instead of vanishing on
-/// continuation rows.
-pub(crate) fn description_lines(detail: &IssueDetail, width: usize) -> Vec<Line<'static>> {
-    let mut lines = adf::render(&detail.description, width).lines;
+/// continuation rows. `media` is forwarded to `adf::render_with_media`
+/// as-is — every call site here passes `MediaSizing::Disabled` for now (see
+/// `adf::MediaSizing`'s doc comment for why), so this always returns an
+/// empty placement vec today; the returned placements are already rebased
+/// to be relative to the *combined* description+acceptance-criteria lines
+/// this function returns, the same way `comment_starts` is rebased by its
+/// own callers.
+pub(crate) fn description_lines(
+    detail: &IssueDetail,
+    width: usize,
+    media: &adf::MediaSizing,
+) -> (Vec<Line<'static>>, Vec<adf::ImagePlacement>) {
+    let (mut lines, mut placements) = adf::render_with_media(&detail.description, width, media);
     if let Some(ac) = &detail.acceptance_criteria {
         lines.push(divider());
         lines.push(Line::from(Span::styled(
             "Acceptance Criteria",
             Style::default().fg(accent()).add_modifier(Modifier::BOLD),
         )));
-        lines.extend(adf::render(ac, width).lines);
+        let base = lines.len();
+        let (ac_lines, ac_placements) = adf::render_with_media(ac, width, media);
+        lines.extend(ac_lines);
+        placements.extend(ac_placements.into_iter().map(|p| adf::ImagePlacement {
+            line_start: p.line_start + base,
+            ..p
+        }));
     }
-    lines
+    (lines, placements)
 }
 
 /// The wide/narrow layouts' comment-card rendering (SPEC.md §6): a 2-cell
@@ -628,7 +653,8 @@ pub fn wide_detail(
     let children = linkify_panel(children_lines(detail), DetailPane::Children);
     let attachments = linkify_panel(attachments_lines(detail), DetailPane::Attachments);
 
-    let mut main_lines = description_lines(detail, main_width);
+    let (mut main_lines, image_placements) =
+        description_lines(detail, main_width, &adf::MediaSizing::Disabled);
     let (activity, header, starts) =
         activity_lines_cards(&detail.comments, current_user, main_width);
     if !activity.is_empty() {
@@ -653,6 +679,7 @@ pub fn wide_detail(
         links,
         children,
         attachments,
+        image_placements,
     }
 }
 
@@ -697,7 +724,16 @@ pub fn narrow_detail(
         lines.extend(workflow_lines(detail));
     }
     lines.push(divider());
-    lines.extend(description_lines(detail, width));
+    let description_base = lines.len();
+    let (description, placements) = description_lines(detail, width, &adf::MediaSizing::Disabled);
+    lines.extend(description);
+    let image_placements = placements
+        .into_iter()
+        .map(|p| adf::ImagePlacement {
+            line_start: p.line_start + description_base,
+            ..p
+        })
+        .collect();
 
     let linked = linked_lines(detail);
     if !linked.is_empty() {
@@ -730,6 +766,7 @@ pub fn narrow_detail(
             comment_starts,
             links,
         },
+        image_placements,
     }
 }
 
@@ -741,6 +778,10 @@ pub fn narrow_detail(
 pub struct QuickViewWide {
     pub description: Panel,
     pub meta: Panel,
+    /// As `WideDetail::image_placements` — indices into
+    /// `description.lines` (the description panel starts at index 0, so no
+    /// rebasing is needed here).
+    pub image_placements: Vec<adf::ImagePlacement>,
 }
 
 pub fn quick_view_wide(
@@ -748,12 +789,12 @@ pub fn quick_view_wide(
     updated: &str,
     description_width: usize,
 ) -> QuickViewWide {
+    let (description_lines_vec, image_placements) =
+        description_lines(detail, description_width, &adf::MediaSizing::Disabled);
     QuickViewWide {
-        description: linkify_panel(
-            description_lines(detail, description_width),
-            DetailPane::Main,
-        ),
+        description: linkify_panel(description_lines_vec, DetailPane::Main),
         meta: linkify_panel(quick_view_meta_lines(detail, updated), DetailPane::Meta),
+        image_placements,
     }
 }
 
@@ -776,6 +817,10 @@ pub fn quick_view_wide_links(wide: &QuickViewWide) -> Vec<LinkTarget> {
 /// `comment_starts` would always be empty here).
 pub struct QuickViewNarrow {
     pub panel: Panel,
+    /// As `WideDetail::image_placements`, rebased into `panel.lines` (the
+    /// description section doesn't start at index 0 here — the chip and kv
+    /// lines come first).
+    pub image_placements: Vec<adf::ImagePlacement>,
 }
 
 pub fn quick_view_narrow(detail: &IssueDetail, updated: &str, width: usize) -> QuickViewNarrow {
@@ -785,10 +830,20 @@ pub fn quick_view_narrow(detail: &IssueDetail, updated: &str, width: usize) -> Q
         quick_view_inline_kv_line(detail, updated),
         Line::default(),
     ];
-    lines.extend(description_lines(detail, width));
+    let description_base = lines.len();
+    let (description, placements) = description_lines(detail, width, &adf::MediaSizing::Disabled);
+    lines.extend(description);
+    let image_placements = placements
+        .into_iter()
+        .map(|p| adf::ImagePlacement {
+            line_start: p.line_start + description_base,
+            ..p
+        })
+        .collect();
     let links = linkify(&mut lines, DetailPane::Main);
     QuickViewNarrow {
         panel: Panel { lines, links },
+        image_placements,
     }
 }
 
@@ -1320,6 +1375,49 @@ mod link_tests {
         let folded = narrow_detail(&detail, "you", "12m ago", true, 120);
         let unfolded = narrow_detail(&detail, "you", "12m ago", false, 120);
         assert!(folded.lines.lines.len() < unfolded.lines.lines.len());
+    }
+
+    /// Phase 2 (issue #130) success criterion: with `MediaSizing::Disabled`
+    /// (the only mode any call site actually passes this phase),
+    /// `description_lines` must produce output byte-identical to what it
+    /// produced before it grew a `media` parameter — reconstructed here as
+    /// plain `adf::render` calls concatenated the same way the old
+    /// implementation did, since there's no pre-existing golden fixture to
+    /// diff against.
+    #[test]
+    fn description_lines_disabled_matches_pre_phase_2_concatenation() {
+        let detail = demo_detail(&demo_issues()[1].key);
+        let width = 100;
+        let (lines, placements) = description_lines(&detail, width, &adf::MediaSizing::Disabled);
+        assert!(placements.is_empty());
+
+        let mut expected = adf::render(&detail.description, width).lines;
+        if let Some(ac) = &detail.acceptance_criteria {
+            expected.push(divider());
+            expected.push(Line::from(Span::styled(
+                "Acceptance Criteria",
+                Style::default().fg(accent()).add_modifier(Modifier::BOLD),
+            )));
+            expected.extend(adf::render(ac, width).lines);
+        }
+        assert_eq!(lines, expected);
+    }
+
+    /// Every one of the four description-rendering call sites still passes
+    /// `MediaSizing::Disabled` this phase (wiring real readiness through
+    /// from `App::inline_images` is a later phase's job) — so every one of
+    /// them must come back with an empty placement vec, not just compile.
+    #[test]
+    fn image_placements_are_empty_since_every_call_site_still_passes_disabled() {
+        let detail = demo_detail(&demo_issues()[1].key);
+        let wide = wide_detail(&detail, "you", "12m ago", 120);
+        assert!(wide.image_placements.is_empty());
+        let narrow = narrow_detail(&detail, "you", "12m ago", false, 120);
+        assert!(narrow.image_placements.is_empty());
+        let qvw = quick_view_wide(&detail, "12m ago", 120);
+        assert!(qvw.image_placements.is_empty());
+        let qvn = quick_view_narrow(&detail, "12m ago", 120);
+        assert!(qvn.image_placements.is_empty());
     }
 
     /// Regression test: a comment's left rule (`▌ `) used to be added once

@@ -34,17 +34,118 @@ const TABLE_MAX_COL_WIDTH: usize = 28;
 /// avoids that.
 const TABLE_MIN_COL_WIDTH: usize = 6;
 
+/// Tells `render_with_media` whether a `media` node's image is already
+/// decoded and ready to have terminal rows reserved for it, or whether it
+/// should keep emitting today's `[image: alt]`/`[embedded media]`
+/// placeholder text.
+///
+/// `Disabled` is today's behaviour and this phase's only production
+/// caller — `description_lines`'s four call sites (`wide_detail`,
+/// `narrow_detail`, `quick_view_wide`, `quick_view_narrow`) all pass it,
+/// since nothing yet computes real readiness: that requires knowing which
+/// images are actually decoded, which lives on `App::inline_images` (an
+/// `App`-specific, `image`-crate-typed cache) — wiring a real `Ready`
+/// context through from there is a later phase's job, not this one's.
+///
+/// A borrowed callback rather than an owned `HashMap<InlineMediaRef, (u16,
+/// u16)>`: `render_block` recurses through arbitrarily nested containers
+/// (lists, blockquotes, `mediaGroup`) via `&mut RenderCtx`, so a borrowed
+/// `sizing` threads through that recursion exactly the way `width` already
+/// does, with nothing to clone at each call — and it leaves a future
+/// caller free to back the callback with a `HashMap` lookup, an `App`
+/// method call, or anything else, without this module caring which.
+pub enum MediaSizing<'a> {
+    Disabled,
+    /// `Some((rows, cols))` if this media node's image is decoded and
+    /// ready to reserve space for; `None` to keep the placeholder (e.g.
+    /// still fetching, failed to decode, or past the eager-fetch cap).
+    Ready(&'a dyn Fn(&InlineMediaRef) -> Option<(u16, u16)>),
+}
+
+/// Identifies one `media` node for `MediaSizing::Ready`'s callback, and for
+/// the `ImagePlacement` recorded when it reports readiness — carrying
+/// enough for a caller to look the node back up in whatever readiness
+/// source it built, without `adf` needing to re-parse the node itself.
+///
+/// Deliberately narrower than `app::inline_images::InlineImageKey` (which
+/// is keyed by a resolved attachment id): this module has no
+/// `IssueDetail`/attachment list to resolve against, only the ADF node in
+/// front of it, so it's keyed the same way `resolve_inline_images` itself
+/// matches a media node in the first place — its (non-empty) `alt` text.
+/// External (`type: "external"`) media nodes are never offered readiness
+/// at all — Phase 1 deliberately never resolves them (fetching a
+/// third-party URL through the authenticated attachment pipeline would
+/// leak the auth header), so `alt` alone stays unambiguous for every node
+/// this can actually reserve space for. A later phase adding external-media
+/// support would need to extend this (e.g. a `Url` variant) rather than
+/// overload `alt`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct InlineMediaRef {
+    pub alt: String,
+}
+
+/// One media node's reserved space, recorded by `render_with_media`
+/// whenever `MediaSizing::Ready` reports a node decoded and ready — in
+/// place of its usual placeholder line, `rows` blank `Line`s are emitted
+/// instead (so wrapped-text-based scroll math still counts them as real
+/// lines) and this records where. `line_start` is an index into the
+/// `Vec<Line>` returned alongside it from the *same* `render_with_media`
+/// call — a caller that concatenates multiple line-producing sections
+/// (e.g. `description_lines` composing with activity/comments) must rebase
+/// it, the same way `comment_starts`/`comments_header` already get rebased
+/// by their own callers.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImagePlacement {
+    pub media: InlineMediaRef,
+    pub line_start: usize,
+    pub rows: u16,
+    pub cols: u16,
+}
+
+/// The width/sizing-context/placement-accumulator threaded through
+/// `render_block`'s recursion, bundled into one struct rather than three
+/// separate parameters growing every call site. `depth` stays its own
+/// parameter (it varies per call, e.g. `depth + 1` for a nested list);
+/// everything in here is constant for a whole `render_with_media` call
+/// except `placements`, which only ever grows.
+struct RenderCtx<'a, 'b> {
+    width: usize,
+    sizing: &'a MediaSizing<'b>,
+    placements: Vec<ImagePlacement>,
+}
+
 /// Render an ADF document into styled lines. `width` is the column width
 /// the caller is about to hand these lines to a `Paragraph::wrap(Wrap {
 /// trim: false })` at — needed so blockquote/code-block content can be
 /// pre-wrapped ourselves (see `crate::render::wrap_with_bar`) rather than
 /// left to ratatui's own wrap, which has no way to repeat a left-margin bar
 /// span on a line's wrapped continuation rows.
+///
+/// Exactly `render_with_media(doc, width, &MediaSizing::Disabled).0` —
+/// the two share every bit of block-walking logic; `Disabled` guarantees
+/// this keeps producing byte-identical output to before `render_with_media`
+/// existed (see the `media_sizing_disabled_matches_render` test).
 pub fn render(doc: &Value, width: usize) -> Text<'static> {
+    Text::from(render_with_media(doc, width, &MediaSizing::Disabled).0)
+}
+
+/// As `render`, but reserves blank rows for any `media` node `sizing`
+/// reports ready instead of emitting its usual `[image: alt]` placeholder,
+/// and returns where each reservation landed alongside the lines.
+pub fn render_with_media(
+    doc: &Value,
+    width: usize,
+    sizing: &MediaSizing<'_>,
+) -> (Vec<Line<'static>>, Vec<ImagePlacement>) {
     let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut ctx = RenderCtx {
+        width,
+        sizing,
+        placements: Vec::new(),
+    };
     if let Some(content) = doc.get("content").and_then(|c| c.as_array()) {
         for (i, node) in content.iter().enumerate() {
-            render_block(node, &mut lines, 0, width);
+            render_block(node, &mut lines, 0, &mut ctx);
             // breathing room between top-level blocks
             if i + 1 < content.len() {
                 lines.push(Line::from(""));
@@ -57,14 +158,14 @@ pub fn render(doc: &Value, width: usize) -> Text<'static> {
             Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
         )));
     }
-    Text::from(lines)
+    (lines, ctx.placements)
 }
 
 fn indent(depth: usize) -> String {
     "  ".repeat(depth)
 }
 
-fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize, width: usize) {
+fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize, ctx: &mut RenderCtx) {
     let ty = node.get("type").and_then(|t| t.as_str()).unwrap_or("");
     match ty {
         "heading" => {
@@ -98,7 +199,7 @@ fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize, width:
                     } else {
                         "• ".to_string()
                     };
-                    render_list_item(item, out, depth, &marker, width);
+                    render_list_item(item, out, depth, &marker, ctx);
                 }
             }
         }
@@ -145,7 +246,7 @@ fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize, width:
             let text = collect_text(node.get("content"));
             for raw in text.split('\n') {
                 let line = Line::from(Span::styled(raw.to_string(), Style::default().fg(CODE_FG)));
-                out.extend(crate::render::wrap_with_bar(&line, width, "│ ", MUTED));
+                out.extend(crate::render::wrap_with_bar(&line, ctx.width, "│ ", MUTED));
             }
             out.push(Line::from(Span::styled("```", Style::default().fg(MUTED))));
         }
@@ -159,18 +260,18 @@ fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize, width:
             let mut inner: Vec<Line<'static>> = Vec::new();
             if let Some(content) = node.get("content").and_then(|c| c.as_array()) {
                 for child in content {
-                    render_block(child, &mut inner, depth, width);
+                    render_block(child, &mut inner, depth, ctx);
                 }
             }
             for line in inner {
-                out.extend(crate::render::wrap_with_bar(&line, width, "┃ ", MUTED));
+                out.extend(crate::render::wrap_with_bar(&line, ctx.width, "┃ ", MUTED));
             }
         }
-        "table" => render_table(node, out, width),
+        "table" => render_table(node, out, ctx.width),
         "mediaSingle" | "mediaGroup" => {
             if let Some(content) = node.get("content").and_then(|c| c.as_array()) {
                 for child in content {
-                    render_block(child, out, depth, width);
+                    render_block(child, out, depth, ctx);
                 }
             }
         }
@@ -183,6 +284,28 @@ fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize, width:
             let external_url =
                 attrs.and_then(|a| a.get("type")).and_then(|t| t.as_str()) == Some("external");
             let url = attrs.and_then(|a| a.get("url")).and_then(|u| u.as_str());
+
+            if let Some(alt) = alt {
+                if let MediaSizing::Ready(ready) = ctx.sizing {
+                    let media_ref = InlineMediaRef {
+                        alt: alt.to_string(),
+                    };
+                    if let Some((rows, cols)) = ready(&media_ref) {
+                        let line_start = out.len();
+                        for _ in 0..rows {
+                            out.push(Line::default());
+                        }
+                        ctx.placements.push(ImagePlacement {
+                            media: media_ref,
+                            line_start,
+                            rows,
+                            cols,
+                        });
+                        return;
+                    }
+                }
+            }
+
             let text = if let Some(alt) = alt {
                 format!("[image: {alt}]")
             } else if external_url {
@@ -207,7 +330,7 @@ fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize, width:
             // generic container: descend if possible
             if let Some(content) = node.get("content").and_then(|c| c.as_array()) {
                 for child in content {
-                    render_block(child, out, depth, width);
+                    render_block(child, out, depth, ctx);
                 }
             }
         }
@@ -219,7 +342,7 @@ fn render_list_item(
     out: &mut Vec<Line<'static>>,
     depth: usize,
     marker: &str,
-    width: usize,
+    ctx: &mut RenderCtx,
 ) {
     let content = match item.get("content").and_then(|c| c.as_array()) {
         Some(c) => c,
@@ -229,7 +352,7 @@ fn render_list_item(
     for child in content {
         let ty = child.get("type").and_then(|t| t.as_str()).unwrap_or("");
         if ty == "bulletList" || ty == "orderedList" || ty == "taskList" {
-            render_block(child, out, depth + 1, width);
+            render_block(child, out, depth + 1, ctx);
             continue;
         }
         let mut spans = vec![
@@ -591,6 +714,113 @@ mod tests {
         let s = flat(&doc);
         assert!(s.contains("[image: first]"));
         assert!(s.contains("[image: second]"));
+    }
+
+    fn single_media_doc(alt: &str) -> serde_json::Value {
+        json!({
+            "type": "doc",
+            "content": [
+                { "type": "mediaSingle", "content": [
+                    { "type": "media", "attrs": { "id": "abc-123", "type": "file", "alt": alt } }
+                ] }
+            ]
+        })
+    }
+
+    /// Locks in this phase's success criterion: `Disabled` must produce
+    /// output byte-identical to plain `render`, for a doc containing a
+    /// media node — the only sizing mode any production call site actually
+    /// uses this phase.
+    #[test]
+    fn media_sizing_disabled_matches_render() {
+        let doc = single_media_doc("a screenshot");
+        let plain = render(&doc, 120);
+        let (with_media_lines, placements) = render_with_media(&doc, 120, &MediaSizing::Disabled);
+        assert_eq!(plain.lines, with_media_lines);
+        assert!(placements.is_empty());
+    }
+
+    /// A `Ready` context reporting readiness for the doc's one media node:
+    /// the placeholder line is replaced by the reported number of blank
+    /// lines, and the returned placement correctly identifies the node and
+    /// its line range.
+    #[test]
+    fn media_sizing_ready_reserves_blank_lines_and_records_a_placement() {
+        let doc = single_media_doc("a screenshot");
+        let ready = |media: &InlineMediaRef| -> Option<(u16, u16)> {
+            (media.alt == "a screenshot").then_some((3, 40))
+        };
+        let sizing = MediaSizing::Ready(&ready);
+        let (lines, placements) = render_with_media(&doc, 120, &sizing);
+
+        assert_eq!(placements.len(), 1);
+        let placement = &placements[0];
+        assert_eq!(
+            placement.media,
+            InlineMediaRef {
+                alt: "a screenshot".into()
+            }
+        );
+        assert_eq!(placement.rows, 3);
+        assert_eq!(placement.cols, 40);
+        assert_eq!(placement.line_start, 0);
+
+        assert_eq!(lines.len(), 3, "exactly the reserved rows, nothing else");
+        for line in &lines {
+            assert!(
+                line.spans.is_empty() || line.spans.iter().all(|s| s.content.is_empty()),
+                "a reserved row should be blank, got {line:?}"
+            );
+        }
+        let s: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(!s.contains("[image:"), "placeholder must not appear");
+    }
+
+    /// A `mediaGroup` with two children, only one reported ready: the ready
+    /// one gets blank rows + a placement, the other still shows its
+    /// placeholder text, and line-index bookkeeping stays correct for both
+    /// (the placement's `line_start` must land on the reserved rows, not
+    /// wherever the still-placeholder sibling ended up).
+    #[test]
+    fn media_group_mixed_readiness_only_reserves_the_ready_child() {
+        let doc = json!({
+            "type": "doc",
+            "content": [
+                { "type": "mediaGroup", "content": [
+                    { "type": "media", "attrs": { "id": "one", "type": "file", "alt": "ready one" } },
+                    { "type": "media", "attrs": { "id": "two", "type": "file", "alt": "not ready" } }
+                ] }
+            ]
+        });
+        let ready = |media: &InlineMediaRef| -> Option<(u16, u16)> {
+            (media.alt == "ready one").then_some((2, 30))
+        };
+        let sizing = MediaSizing::Ready(&ready);
+        let (lines, placements) = render_with_media(&doc, 120, &sizing);
+
+        assert_eq!(placements.len(), 1, "only the ready child gets a placement");
+        let placement = &placements[0];
+        assert_eq!(
+            placement.media,
+            InlineMediaRef {
+                alt: "ready one".into()
+            }
+        );
+        assert_eq!(placement.line_start, 0);
+        assert_eq!(placement.rows, 2);
+        assert_eq!(placement.cols, 30);
+
+        // Lines 0..2 are the reserved blank rows for "ready one"; line 2 is
+        // "not ready"'s placeholder, still showing its alt text.
+        assert_eq!(lines.len(), 3);
+        for line in &lines[0..2] {
+            assert!(line.spans.iter().all(|s| s.content.is_empty()));
+        }
+        let placeholder_text: String = lines[2].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(placeholder_text, "[image: not ready]");
     }
 
     #[test]
