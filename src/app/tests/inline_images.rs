@@ -7,6 +7,7 @@
 
 use serde_json::json;
 
+use crate::adf;
 use crate::domain::{Attachment, Comment, IssueDetail};
 
 use super::super::inline_images::resolve_inline_images_with_candidates;
@@ -679,6 +680,57 @@ async fn an_unmatched_media_node_dispatches_a_uuid_probe_when_an_image_attachmen
         resolved: vec![],
     });
     assert!(app.inline_images.borrow().is_empty());
+}
+
+/// The other half of DS-1880's fix, once the async round trip above has
+/// landed: `App::apply_inline_image_uuids_resolved` records `uuid -> key`
+/// in `self.inline_image_uuid_matches`, and `App::inline_image_key_for`
+/// (reached via `with_detail_media_sizing`'s `Ready` callback) must
+/// actually use it — before this, a media node with no `alt` short-circuited
+/// straight to `[embedded media]` with no readiness lookup attempted at
+/// all, no matter what was cached.
+#[test]
+fn a_uuid_resolved_media_node_reports_ready_once_the_apply_lands() {
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    let mut detail = crate::domain::demo_detail(&app.issues[0].key);
+    detail.attachments = vec![image_attachment("10001", "mockup.png", "image/png", None)];
+    detail.comments = vec![];
+    app.detail = Some(detail);
+
+    // Seeded before `apply_event` so its already-cached check skips
+    // dispatching a real byte-fetch (which would need a Tokio runtime this
+    // plain `#[test]` doesn't have) — isolates the render-side lookup this
+    // test actually cares about from the fetch pipeline, which is already
+    // covered by `an_unmatched_media_node_dispatches_a_uuid_probe_when_an_image_attachment_exists`.
+    app.inline_images.borrow_mut().insert(
+        InlineImageKey::Attachment("10001".into()),
+        image::DynamicImage::new_rgb8(10, 10),
+    );
+    app.apply_event(AppEvent::InlineImageUuidsResolved {
+        generation: app.inline_image_generation,
+        resolved: vec![(
+            "some-media-uuid".into(),
+            InlineImageKey::Attachment("10001".into()),
+            "https://example.atlassian.net/secure/attachment/10001/mockup.png".into(),
+        )],
+    });
+
+    let media = adf::InlineMediaRef {
+        alt: String::new(),
+        url: None,
+        id: Some("some-media-uuid".into()),
+    };
+    let sized = app.with_detail_media_sizing(80, |sizing| match sizing {
+        adf::MediaSizing::Ready(ready) => ready(&media),
+        adf::MediaSizing::Disabled => None,
+    });
+
+    assert!(
+        sized.is_some(),
+        "a media node with no alt must still resolve via its own uuid once \
+         the redirect-probe fallback has matched it"
+    );
 }
 
 /// A demo/cache session never dispatches an inline-image fetch at all, even

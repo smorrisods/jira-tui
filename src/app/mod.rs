@@ -377,6 +377,16 @@ pub struct App {
     /// fails to decode), so a later re-resolution of the same key can retry.
     #[cfg(feature = "images")]
     pub(crate) inline_images_pending: HashSet<InlineImageKey>,
+    /// Media node uuid -> resolved `InlineImageKey`, for whatever the
+    /// redirect-probe fallback (`dispatch_uuid_resolve`) has matched so far
+    /// (issue #130's DS-1880 follow-up) — `App::inline_image_key_for` reads
+    /// this when a node's `alt` doesn't resolve, so a node with no (or a
+    /// mismatched) `alt` can still be keyed into `inline_images` by its own
+    /// `attrs.id`. Populated by `apply_inline_image_uuids_resolved`
+    /// alongside dispatching the actual byte fetch; cleared alongside every
+    /// other inline-image cache in `invalidate_inline_images`.
+    #[cfg(feature = "images")]
+    pub(crate) inline_image_uuid_matches: HashMap<String, InlineImageKey>,
     /// Encoded `SlicedProtocol`s for the Detail screen's and quick-view
     /// panel's inline description images (`images` feature only, Phase 3 of
     /// issue #130; quick view added in Phase 5) — keyed by `InlineImageKey`
@@ -649,6 +659,8 @@ impl App {
             inline_image_generation: 0,
             #[cfg(feature = "images")]
             inline_images_pending: HashSet::new(),
+            #[cfg(feature = "images")]
+            inline_image_uuid_matches: HashMap::new(),
             #[cfg(feature = "images")]
             inline_image_protocols: RefCell::new(BoundedCache::new(
                 inline_images::INLINE_IMAGE_CACHE_CAP,

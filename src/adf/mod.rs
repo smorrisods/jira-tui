@@ -76,10 +76,20 @@ pub enum MediaSizing<'a> {
 /// `url` is `None` for an attachment-backed node and `Some` for an external
 /// one; the two never collide because `render_block`'s `"media"` arm only
 /// ever sets one or the other, never both — see the callers below.
+///
+/// `id` is the node's own `attrs.id` Media Services uuid (issue #130's
+/// DS-1880 follow-up) — always `None` for an external node (nothing to
+/// probe there), and `Some` whenever a `type: "file"` node carries one,
+/// independent of whether `alt` also matched. Jira doesn't always stamp a
+/// node's `alt` to the original filename (confirmed live), so the
+/// readiness lookup this feeds (`App::inline_image_key_for`) tries `alt`
+/// first and falls back to `id` — carrying both lets a node with no (or a
+/// mismatched) `alt` still resolve.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct InlineMediaRef {
     pub alt: String,
     pub url: Option<String>,
+    pub id: Option<String>,
 }
 
 /// One media node's reserved space, recorded by `render_with_media`
@@ -306,22 +316,30 @@ fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize, ctx: &
             let external_url =
                 attrs.and_then(|a| a.get("type")).and_then(|t| t.as_str()) == Some("external");
             let url = attrs.and_then(|a| a.get("url")).and_then(|u| u.as_str());
+            let id = attrs.and_then(|a| a.get("id")).and_then(|i| i.as_str());
 
             // An attachment-backed node is identified by its (non-empty)
-            // `alt` text, matching `resolve_inline_images`'s own matching;
-            // an external node is identified by its `url` instead — its
-            // `alt` may be empty or absent, but the `url` *is* the fetch
-            // target, so it alone is enough to ask for readiness.
+            // `alt` text where possible, matching `resolve_inline_images`'s
+            // own matching, falling back to its own Media Services uuid
+            // (`id`) when there's no `alt` to go on at all — see
+            // `InlineMediaRef::id`'s own doc comment. An external node is
+            // identified by its `url` instead — its `alt` may be empty or
+            // absent, but the `url` *is* the fetch target, so it alone is
+            // enough to ask for readiness.
             let media_ref = if external_url {
                 url.map(|url| InlineMediaRef {
                     alt: alt.unwrap_or_default().to_string(),
                     url: Some(url.to_string()),
+                    id: None,
+                })
+            } else if alt.is_some() || id.is_some() {
+                Some(InlineMediaRef {
+                    alt: alt.unwrap_or_default().to_string(),
+                    url: None,
+                    id: id.map(str::to_string),
                 })
             } else {
-                alt.map(|alt| InlineMediaRef {
-                    alt: alt.to_string(),
-                    url: None,
-                })
+                None
             };
 
             if let Some(media_ref) = media_ref {
@@ -796,6 +814,7 @@ mod tests {
             InlineMediaRef {
                 alt: "a screenshot".into(),
                 url: None,
+                id: Some("abc-123".into()),
             }
         );
         assert_eq!(placement.rows, 3);
@@ -814,6 +833,49 @@ mod tests {
             .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
             .collect();
         assert!(!s.contains("[image:"), "placeholder must not appear");
+    }
+
+    /// DS-1880 follow-up: a `type: "file"` node with no `alt` at all (Jira
+    /// doesn't always stamp one, confirmed live) must still get an
+    /// `InlineMediaRef` built — carrying its `id` — so a `Ready` context
+    /// keyed off the node's own uuid (rather than its now-missing `alt`)
+    /// can still report it ready. Before this, a `None` `alt` short-circuited
+    /// `render_block`'s `"media"` arm straight to `[embedded media]` with no
+    /// `InlineMediaRef` ever built, so no readiness lookup was even
+    /// possible.
+    #[test]
+    fn a_media_node_with_no_alt_still_builds_a_ref_keyed_by_its_id() {
+        let doc = json!({
+            "type": "doc",
+            "content": [
+                { "type": "mediaSingle", "content": [
+                    { "type": "media", "attrs": { "id": "be2818ad-2e36-4d40-94f1-c6826e1def49", "type": "file" } }
+                ] }
+            ]
+        });
+        let ready = |media: &InlineMediaRef| -> Option<(u16, u16)> {
+            (media.id.as_deref() == Some("be2818ad-2e36-4d40-94f1-c6826e1def49")).then_some((3, 40))
+        };
+        let sizing = MediaSizing::Ready(&ready);
+        let (lines, placements) = render_with_media(&doc, 120, &sizing);
+
+        assert_eq!(placements.len(), 1);
+        assert_eq!(
+            placements[0].media,
+            InlineMediaRef {
+                alt: String::new(),
+                url: None,
+                id: Some("be2818ad-2e36-4d40-94f1-c6826e1def49".into()),
+            }
+        );
+        let s: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(
+            !s.contains("[embedded media]"),
+            "placeholder must not appear"
+        );
     }
 
     /// A `mediaGroup` with two children, only one reported ready: the ready
@@ -845,6 +907,7 @@ mod tests {
             InlineMediaRef {
                 alt: "ready one".into(),
                 url: None,
+                id: Some("one".into()),
             }
         );
         assert_eq!(placement.line_start, 0);
@@ -948,6 +1011,7 @@ mod tests {
             InlineMediaRef {
                 alt: String::new(),
                 url: Some("https://third-party.example.com/pic.png".into()),
+                id: None,
             }
         );
         assert_eq!(placements[0].rows, 4);

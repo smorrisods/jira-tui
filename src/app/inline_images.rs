@@ -181,6 +181,12 @@ impl App {
         // under the new generation, since `refresh_*` skips anything
         // already marked pending.
         self.inline_images_pending.clear();
+        // Same staleness reasoning as `inline_images_pending` above, but for
+        // the redirect-probe's own uuid -> key resolutions: a same-uuid
+        // media node surviving a refresh could resolve to a genuinely
+        // different attachment now, and a generation bump alone wouldn't
+        // evict a stale mapping sitting under that same uuid.
+        self.inline_image_uuid_matches.clear();
         self.inline_image_generation += 1;
     }
 
@@ -422,26 +428,33 @@ impl App {
     /// Resolve `media` (an ADF node reference from `render_with_media`'s
     /// recursion) into the `InlineImageKey` it was fetched under — an
     /// external node (`media.url` is `Some`) is keyed by that URL directly,
-    /// mirroring how `resolve_inline_images` resolves one; an
-    /// attachment-backed node (`media.url` is `None`) still needs its `alt`
-    /// matched against `detail.attachments` the way it always did, since the
-    /// cache is keyed by attachment id, not by `alt` itself. `detail` is
-    /// whichever issue's document `media` actually came from (see
-    /// `with_media_sizing_for`'s doc comment) — this no longer reads
+    /// mirroring how `resolve_inline_images_with_candidates` resolves one;
+    /// an attachment-backed node (`media.url` is `None`) tries its `alt`
+    /// against `detail.attachments` first (the common case), then falls
+    /// back to looking its own `media.id` uuid up in
+    /// `self.inline_image_uuid_matches` (issue #130's DS-1880 follow-up —
+    /// whatever the redirect-probe fallback has matched by uuid so far).
+    /// `detail` is whichever issue's document `media` actually came from
+    /// (see `with_media_sizing_for`'s doc comment) — this no longer reads
     /// `self.detail` directly so the same lookup serves both Detail and
     /// quick view.
     fn inline_image_key_for(
+        &self,
         detail: Option<&IssueDetail>,
         media: &InlineMediaRef,
     ) -> Option<InlineImageKey> {
         if let Some(url) = media.url.as_ref() {
             return Some(InlineImageKey::External(url.clone()));
         }
-        let attachment = detail?
-            .attachments
-            .iter()
-            .find(|a| a.filename == media.alt)?;
-        Some(InlineImageKey::Attachment(attachment.id.clone()))
+        if !media.alt.is_empty() {
+            if let Some(attachment) =
+                detail.and_then(|d| d.attachments.iter().find(|a| a.filename == media.alt))
+            {
+                return Some(InlineImageKey::Attachment(attachment.id.clone()));
+            }
+        }
+        let id = media.id.as_ref()?;
+        self.inline_image_uuid_matches.get(id).cloned()
     }
 
     /// Look up whichever decoded inline image (if any) corresponds to
@@ -456,7 +469,7 @@ impl App {
         detail: Option<&IssueDetail>,
         media: &InlineMediaRef,
     ) -> Option<Ref<'_, image::DynamicImage>> {
-        let key = Self::inline_image_key_for(detail, media)?;
+        let key = self.inline_image_key_for(detail, media)?;
         Ref::filter_map(self.inline_images.borrow(), |cache| cache.get(&key)).ok()
     }
 
@@ -491,7 +504,7 @@ impl App {
         // `InlineImageKey` `inline_images` itself is keyed by rules this out
         // structurally instead of relying on `invalidate_inline_images` to
         // have run recently enough.
-        let key = Self::inline_image_key_for(detail, &placement.media)?;
+        let key = self.inline_image_key_for(detail, &placement.media)?;
         let target = Size::new(placement.cols, placement.rows);
         let up_to_date = self
             .inline_image_protocols

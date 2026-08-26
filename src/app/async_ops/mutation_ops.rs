@@ -695,7 +695,7 @@ pub(crate) fn dispatch_uuid_resolve(
 fn resolve_uuids_blocking(
     candidates: &[String],
     attachments: &[Attachment],
-) -> Vec<(super::super::InlineImageKey, String)> {
+) -> Vec<(String, super::super::InlineImageKey, String)> {
     #[cfg(feature = "live")]
     {
         let debug = std::env::var_os("JIRA_TUI_DEBUG_MEDIA").is_some();
@@ -760,6 +760,7 @@ fn resolve_uuids_blocking(
                 let attachment = uuid_map.get(candidate)?;
                 let url = attachment.image_preview_url()?;
                 Some((
+                    candidate.clone(),
                     super::super::InlineImageKey::Attachment(attachment.id.clone()),
                     url,
                 ))
@@ -1194,22 +1195,30 @@ impl App {
     }
 
     /// Applies `AppEvent::InlineImageUuidsResolved` (`images` feature only)
-    /// — see `App::resolve_unmatched_media_by_uuid`/`dispatch_uuid_resolve`
-    /// above. This event only resolved *identity*, not bytes: for each
-    /// `(key, url)` pair not already cached or in flight, this marks it
-    /// pending and hands it to the same `dispatch_inline_image` the
-    /// alt-matched path already uses, so the actual fetch/decode/cache
-    /// pipeline is shared rather than duplicated.
+    /// — see `App::refresh_inline_images`/`dispatch_uuid_resolve` above.
+    /// Dropped whole under a since-superseded generation, the same as every
+    /// other apply here — `invalidate_inline_images` already cleared
+    /// `self.inline_image_uuid_matches` for the new issue, and applying a
+    /// stale response would just write a wrong uuid mapping straight back
+    /// into it. Otherwise, for each `(uuid, key, url)` triple: records
+    /// `uuid -> key` in `self.inline_image_uuid_matches` first — the
+    /// render-side lookup a media node with no (or a mismatched) `alt`
+    /// needs in order to ever find its own cached image
+    /// (`App::inline_image_key_for`) — then, if `key` isn't already cached
+    /// or in flight, marks it pending and hands it to the same
+    /// `dispatch_inline_image` the alt-matched path already uses, so the
+    /// actual fetch/decode/cache pipeline is shared rather than duplicated.
     #[cfg(feature = "images")]
     pub(super) fn apply_inline_image_uuids_resolved(
         &mut self,
         generation: u64,
-        resolved: Vec<(super::super::InlineImageKey, String)>,
+        resolved: Vec<(String, super::super::InlineImageKey, String)>,
     ) {
         if generation != self.inline_image_generation {
             return;
         }
-        for (key, url) in resolved {
+        for (uuid, key, url) in resolved {
+            self.inline_image_uuid_matches.insert(uuid, key.clone());
             if self.inline_images.borrow().contains_key(&key)
                 || self.inline_images_pending.contains(&key)
             {

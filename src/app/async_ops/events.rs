@@ -257,14 +257,20 @@ pub enum AppEvent {
     /// A batch of media nodes that `resolve_inline_images_with_candidates`
     /// couldn't resolve via `alt` matching were checked against a
     /// redirect-probe uuid map instead (`dispatch_uuid_resolve`, `images`
-    /// feature only) — see that fn's own doc comment. Each resolved `(key,
-    /// url)` pair still needs its own byte-fetch/decode, dispatched via the
-    /// same `dispatch_inline_image` the alt-matched path already uses —
-    /// this event only carries *identity* resolution, not image bytes.
+    /// feature only) — see that fn's own doc comment. Each resolved
+    /// `(candidate uuid, key, url)` triple still needs its own
+    /// byte-fetch/decode, dispatched via the same `dispatch_inline_image`
+    /// the alt-matched path already uses — this event only carries
+    /// *identity* resolution, not image bytes. The uuid is carried
+    /// alongside `key`/`url` (rather than just the latter two) so
+    /// `App::apply_inline_image_uuids_resolved` can also record it in
+    /// `App::inline_image_uuid_matches` — the render-side lookup a media
+    /// node with no (or a mismatched) `alt` needs in order to ever find its
+    /// own cached image again.
     #[cfg(feature = "images")]
     InlineImageUuidsResolved {
         generation: u64,
-        resolved: Vec<(super::super::InlineImageKey, String)>,
+        resolved: Vec<(String, super::super::InlineImageKey, String)>,
     },
 }
 
