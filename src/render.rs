@@ -120,8 +120,11 @@ pub struct WideDetail {
     pub attachments: Panel,
     /// Line reservations for any description `media` node
     /// `description_lines` was told is ready to render (see
-    /// `adf::MediaSizing`) — indices into `main.lines`. Always empty today:
-    /// every call site here still passes `MediaSizing::Disabled`.
+    /// `adf::MediaSizing`) — indices into `main.lines`. Populated whenever
+    /// `wide_detail`'s caller passes a `MediaSizing::Ready` (Phase 3 of
+    /// issue #130 — see `App::with_detail_media_sizing`); still always
+    /// empty for a `Disabled` caller (e.g. quick view, out of scope for
+    /// this phase).
     pub image_placements: Vec<adf::ImagePlacement>,
 }
 
@@ -640,11 +643,16 @@ fn linkify_panel(mut lines: Vec<Line<'static>>, pane: DetailPane) -> Panel {
 /// hit-testing (see `app::mouse::link_at`). `main_width` is the actual
 /// column width `main` will be rendered/wrapped at — see `adf::render`'s
 /// doc comment for why the description/comment bars need it up front.
+/// `media` is forwarded to `description_lines` as-is (see its own doc
+/// comment) — every caller of this function needs to agree on the same
+/// readiness, so `App::with_detail_media_sizing` is the one place that
+/// actually builds a real `MediaSizing::Ready`.
 pub fn wide_detail(
     detail: &IssueDetail,
     current_user: &str,
     updated: &str,
     main_width: usize,
+    media: &adf::MediaSizing,
 ) -> WideDetail {
     let identity = linkify_panel(identity_lines(detail), DetailPane::Identity);
     let workflow = linkify_panel(workflow_lines(detail), DetailPane::Workflow);
@@ -653,8 +661,7 @@ pub fn wide_detail(
     let children = linkify_panel(children_lines(detail), DetailPane::Children);
     let attachments = linkify_panel(attachments_lines(detail), DetailPane::Attachments);
 
-    let (mut main_lines, image_placements) =
-        description_lines(detail, main_width, &adf::MediaSizing::Disabled);
+    let (mut main_lines, image_placements) = description_lines(detail, main_width, media);
     let (activity, header, starts) =
         activity_lines_cards(&detail.comments, current_user, main_width);
     if !activity.is_empty() {
@@ -707,13 +714,15 @@ pub fn wide_detail_links(wide: &WideDetail) -> Vec<LinkTarget> {
 /// (foldable) → description → linked → activity, all one scrollable
 /// document (same single-pane model as `issue_detail_lines`). `width` is
 /// the actual column width this single pane will be rendered/wrapped at —
-/// see `wide_detail`'s `main_width` doc comment.
+/// see `wide_detail`'s `main_width` doc comment. `media` is forwarded to
+/// `description_lines` as-is — see `wide_detail`'s own doc comment.
 pub fn narrow_detail(
     detail: &IssueDetail,
     current_user: &str,
     updated: &str,
     facts_folded: bool,
     width: usize,
+    media: &adf::MediaSizing,
 ) -> NarrowDetail {
     let mut lines = identity_lines(detail);
     lines.push(facts_panel_title(facts_folded));
@@ -725,7 +734,7 @@ pub fn narrow_detail(
     }
     lines.push(divider());
     let description_base = lines.len();
-    let (description, placements) = description_lines(detail, width, &adf::MediaSizing::Disabled);
+    let (description, placements) = description_lines(detail, width, media);
     lines.extend(description);
     let image_placements = placements
         .into_iter()
@@ -1348,7 +1357,7 @@ mod link_tests {
     #[test]
     fn wide_detail_main_offsets_are_valid_indices() {
         let detail = demo_detail(&demo_issues()[1].key);
-        let wide = wide_detail(&detail, "you", "12m ago", 120);
+        let wide = wide_detail(&detail, "you", "12m ago", 120, &adf::MediaSizing::Disabled);
         if let Some(header) = wide.main.comments_header {
             assert!(header < wide.main.lines.len());
         }
@@ -1372,8 +1381,22 @@ mod link_tests {
     #[test]
     fn narrow_detail_folded_facts_has_fewer_lines_than_unfolded() {
         let detail = demo_detail(&demo_issues()[1].key);
-        let folded = narrow_detail(&detail, "you", "12m ago", true, 120);
-        let unfolded = narrow_detail(&detail, "you", "12m ago", false, 120);
+        let folded = narrow_detail(
+            &detail,
+            "you",
+            "12m ago",
+            true,
+            120,
+            &adf::MediaSizing::Disabled,
+        );
+        let unfolded = narrow_detail(
+            &detail,
+            "you",
+            "12m ago",
+            false,
+            120,
+            &adf::MediaSizing::Disabled,
+        );
         assert!(folded.lines.lines.len() < unfolded.lines.lines.len());
     }
 
@@ -1403,16 +1426,24 @@ mod link_tests {
         assert_eq!(lines, expected);
     }
 
-    /// Every one of the four description-rendering call sites still passes
-    /// `MediaSizing::Disabled` this phase (wiring real readiness through
-    /// from `App::inline_images` is a later phase's job) — so every one of
-    /// them must come back with an empty placement vec, not just compile.
+    /// A `Disabled` caller (quick view, still out of scope as of Phase 3 —
+    /// see issue #130) must always come back with an empty placement vec,
+    /// not just compile. `wide_detail`/`narrow_detail` themselves gained
+    /// real `Ready` support in Phase 3 (see `App::with_detail_media_sizing`
+    /// and its own tests), so only the `Disabled` path is re-asserted here.
     #[test]
     fn image_placements_are_empty_since_every_call_site_still_passes_disabled() {
         let detail = demo_detail(&demo_issues()[1].key);
-        let wide = wide_detail(&detail, "you", "12m ago", 120);
+        let wide = wide_detail(&detail, "you", "12m ago", 120, &adf::MediaSizing::Disabled);
         assert!(wide.image_placements.is_empty());
-        let narrow = narrow_detail(&detail, "you", "12m ago", false, 120);
+        let narrow = narrow_detail(
+            &detail,
+            "you",
+            "12m ago",
+            false,
+            120,
+            &adf::MediaSizing::Disabled,
+        );
         assert!(narrow.image_placements.is_empty());
         let qvw = quick_view_wide(&detail, "12m ago", 120);
         assert!(qvw.image_placements.is_empty());

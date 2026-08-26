@@ -10,11 +10,25 @@
 //! independently and simultaneously relevant, so the cache here is a map
 //! (`App::inline_images`) rather than one overwritable slot.
 
+use std::cell::Ref;
+
+use ratatui::layout::Size;
+use ratatui_image::sliced::SlicedProtocol;
+use ratatui_image::Resize;
 use serde_json::Value;
 
+use crate::adf::{self, InlineMediaRef};
 use crate::domain::IssueDetail;
 
 use super::{async_ops, App};
+
+/// Row-count bounds for a rendered inline image (Phase 3 of issue #130) —
+/// `sized_inline_image`'s aspect-ratio math is clamped to this band so an
+/// image is never so short it's unrecognizable nor so tall it swallows the
+/// whole scrollable pane, per the plan referenced in this module's own doc
+/// comment.
+pub(crate) const MIN_INLINE_IMAGE_ROWS: u16 = 3;
+pub(crate) const MAX_INLINE_IMAGE_ROWS: u16 = 14;
 
 /// Identifies one inline image's decoded cache entry (`App::inline_images`).
 /// Only `Attachment` exists so far — a resolved `media` node whose `alt`
@@ -86,6 +100,133 @@ impl App {
             async_ops::dispatch_inline_image(tx, generation, key, url);
         }
     }
+
+    /// Build a `MediaSizing` for a Detail-screen document rendered at
+    /// `width` columns and hand it to `f` — Phase 3 of issue #130's single
+    /// entry point for `ui::detail`/`app::comments`/`app::links`, all of
+    /// which need `render::wide_detail`/`narrow_detail` to agree on exactly
+    /// the same readiness so a scroll-to-comment/link-cycle offset computed
+    /// via one of those callers always lands where the other actually
+    /// painted the image. `Disabled` whenever no terminal image capability
+    /// was ever detected (`image_picker` is `None`) — the CPS shape (a
+    /// callback rather than returning `MediaSizing<'a>` directly) exists
+    /// because `MediaSizing::Ready` borrows a `&'a dyn Fn`, and that closure
+    /// has to live in *this* function's stack frame, not the caller's; `R`
+    /// stays a plain owned value (a `WideDetail`/`NarrowDetail`/link list),
+    /// so nothing about the callback's lifetime leaks into what `f` returns.
+    ///
+    /// A non-`images` build never compiles this method at all — see the
+    /// same-named stand-in in `app::mod` (always `Disabled`) that every
+    /// caller finds instead, so no call site needs its own `#[cfg]`.
+    pub(crate) fn with_detail_media_sizing<R>(
+        &self,
+        width: u16,
+        f: impl FnOnce(&adf::MediaSizing) -> R,
+    ) -> R {
+        if self.image_picker.is_none() {
+            return f(&adf::MediaSizing::Disabled);
+        }
+        let sizing_fn = |media: &InlineMediaRef| self.sized_inline_image(media, width);
+        f(&adf::MediaSizing::Ready(&sizing_fn))
+    }
+
+    /// `MediaSizing::Ready`'s callback body: alt -> attachment -> decoded
+    /// image (via `decoded_inline_image`, mirroring `resolve_inline_images`'
+    /// own matching), then a `(rows, cols)` pair preserving the image's
+    /// aspect ratio within `pane_width` columns and the 3-14 row band. Only
+    /// ever reached with `image_picker` known `Some` (see
+    /// `with_detail_media_sizing`), but re-checked here anyway rather than
+    /// threading the `Picker` through as a parameter — this is the only
+    /// caller, and `Option`-chaining past a second `None` costs nothing.
+    fn sized_inline_image(&self, media: &InlineMediaRef, pane_width: u16) -> Option<(u16, u16)> {
+        let picker = self.image_picker.as_ref()?;
+        let img = self.decoded_inline_image(&media.alt)?;
+        Some(rows_cols_for(&img, picker.font_size(), pane_width))
+    }
+
+    /// Look up whichever decoded inline image (if any) corresponds to
+    /// `alt` — mirrors `resolve_inline_images`'s own alt -> attachment
+    /// matching, then keys into the `inline_images` cache the same way
+    /// `refresh_inline_images` populated it. Returns a `Ref` (rather than a
+    /// bare `&DynamicImage`) since the cache lives behind a `RefCell` and a
+    /// borrow guard can't be shortened to `&self`'s lifetime without one.
+    fn decoded_inline_image(&self, alt: &str) -> Option<Ref<'_, image::DynamicImage>> {
+        let attachment = self
+            .detail
+            .as_ref()?
+            .attachments
+            .iter()
+            .find(|a| a.filename == alt)?;
+        let key = InlineImageKey::Attachment(attachment.id.clone());
+        Ref::filter_map(self.inline_images.borrow(), |cache| cache.get(&key)).ok()
+    }
+
+    /// Get-or-build the cached `SlicedProtocol` for one `ImagePlacement`
+    /// (`ui::detail`'s paint pass, Phase 3 of issue #130), rebuilding it
+    /// from the still-cached `DynamicImage` whenever the cached protocol's
+    /// own size no longer matches `placement`'s current `(cols, rows)` —
+    /// covers both a first-ever render (nothing cached yet) and a terminal
+    /// resize that changed the pane width since the protocol was last
+    /// built. `None` if there's no picker, or the backing decoded image was
+    /// evicted from `inline_images` since sizing was computed (a same-frame
+    /// race that shouldn't normally happen, guarded rather than panicking).
+    pub(crate) fn sliced_inline_image_protocol(
+        &self,
+        placement: &adf::ImagePlacement,
+    ) -> Option<Ref<'_, SlicedProtocol>> {
+        let picker = self.image_picker.as_ref()?;
+        let target = Size::new(placement.cols, placement.rows);
+        let up_to_date = self
+            .inline_image_protocols
+            .borrow()
+            .get(&placement.media)
+            .is_some_and(|p| p.size() == target);
+        if !up_to_date {
+            let img = self.decoded_inline_image(&placement.media.alt)?.clone();
+            let protocol =
+                SlicedProtocol::new_with_resize(picker, img, target, Resize::Fit(None)).ok()?;
+            self.inline_image_protocols
+                .borrow_mut()
+                .insert(placement.media.clone(), protocol);
+        }
+        Ref::filter_map(self.inline_image_protocols.borrow(), |m| {
+            m.get(&placement.media)
+        })
+        .ok()
+    }
+}
+
+/// The aspect-ratio math behind `App::sized_inline_image`: given the
+/// image's own pixel dimensions and the terminal's cell-to-pixel ratio
+/// (`font`), find the largest `cols` up to both `pane_width` and the
+/// image's own natural (1:1 pixel) column count, then derive `rows` to
+/// match the image's aspect ratio at that width. If that first-pass `rows`
+/// falls outside `MIN_INLINE_IMAGE_ROWS..=MAX_INLINE_IMAGE_ROWS`, it's
+/// clamped and `cols` is re-derived from the *clamped* row count instead —
+/// otherwise a very tall or very short image would render squashed or
+/// stretched at the row count it actually gets.
+fn rows_cols_for(
+    img: &image::DynamicImage,
+    font: ratatui_image::FontSize,
+    pane_width: u16,
+) -> (u16, u16) {
+    let px_w = img.width().max(1) as f64;
+    let px_h = img.height().max(1) as f64;
+    let font_w = font.width.max(1) as f64;
+    let font_h = font.height.max(1) as f64;
+    let max_cols = (pane_width.max(1)) as f64;
+
+    let natural_cols = (px_w / font_w).ceil().max(1.0);
+    let cols = natural_cols.min(max_cols);
+    let rows = ((px_h * cols * font_w) / (px_w * font_h)).round().max(1.0);
+    let rows = (rows as u16).clamp(MIN_INLINE_IMAGE_ROWS, MAX_INLINE_IMAGE_ROWS);
+
+    let cols = ((rows as f64 * font_h * px_w) / (px_h * font_w))
+        .round()
+        .max(1.0);
+    let cols = (cols as u16).min(pane_width.max(1));
+
+    (rows, cols)
 }
 
 /// Walk `detail`'s description and acceptance criteria (both raw ADF

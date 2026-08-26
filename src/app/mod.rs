@@ -15,6 +15,7 @@ use std::collections::HashMap;
 
 use ratatui::layout::Rect;
 
+use crate::adf;
 use crate::config::{self, Settings};
 use crate::domain::{
     AssignableUser, IssueDetail, IssueSummary, Project, Source, Version, ViewKind,
@@ -337,15 +338,34 @@ pub struct App {
     /// "paint-time code needs `&mut` access through `&App`" reason as
     /// `attachment_preview` — a later phase's rendering will construct a
     /// `StatefulProtocol`-adjacent value from each cached `DynamicImage` at
-    /// paint time.
+    /// paint time. `pub` (not `pub(crate)`, unlike most of this struct's
+    /// internal caches) for the same reason `attachment_preview` is: the
+    /// `tests/render.rs` integration suite (a separate crate) needs to seed
+    /// a decoded image directly, bypassing the async fetch, to exercise the
+    /// Detail screen's inline-image paint pass headlessly.
     #[cfg(feature = "images")]
-    pub(crate) inline_images: RefCell<HashMap<InlineImageKey, image::DynamicImage>>,
+    pub inline_images: RefCell<HashMap<InlineImageKey, image::DynamicImage>>,
     /// Bumped whenever the viewed issue changes (mirrors
     /// `attachment_preview_generation`) — a completed fetch whose generation
     /// no longer matches this belongs to an issue that's no longer showing
     /// and is dropped instead of populating the cache for the wrong issue.
     #[cfg(feature = "images")]
     pub(crate) inline_image_generation: u64,
+    /// Encoded `SlicedProtocol`s for the Detail screen's inline description
+    /// images (`images` feature only, Phase 3 of issue #130) — keyed by
+    /// `InlineMediaRef` (the same "media node's alt text" key
+    /// `adf::ImagePlacement` already carries), separate from `inline_images`
+    /// (the *decoded* `DynamicImage` cache) because encoding a
+    /// `SlicedProtocol` is real work (resizing + protocol-specific
+    /// encoding) that should only happen once per target size, not on every
+    /// frame. `ui::detail`'s paint pass rebuilds an entry from the
+    /// still-cached `DynamicImage` in `inline_images` whenever the cached
+    /// protocol's own `.size()` no longer matches the placement's current
+    /// `(cols, rows)` (e.g. a terminal resize changed the pane width),
+    /// rather than tracking the target size in a second field alongside it.
+    #[cfg(feature = "images")]
+    pub(crate) inline_image_protocols:
+        RefCell<HashMap<adf::InlineMediaRef, ratatui_image::sliced::SlicedProtocol>>,
 
     /// The screen `a` was pressed from, so backing out of About (see #38)
     /// restores it instead of always landing on Home.
@@ -597,6 +617,8 @@ impl App {
             inline_images: RefCell::new(HashMap::new()),
             #[cfg(feature = "images")]
             inline_image_generation: 0,
+            #[cfg(feature = "images")]
+            inline_image_protocols: RefCell::new(HashMap::new()),
             about_return_screen: Screen::Home,
             field_mapping: FieldMappingState::default(),
             current_view: ViewKind::default(),
@@ -667,5 +689,24 @@ impl App {
         }
 
         app
+    }
+}
+
+/// A non-`images`-build stand-in for `inline_images`'s own
+/// `App::with_detail_media_sizing` (Phase 3 of issue #130) — always hands
+/// the callback `MediaSizing::Disabled`, so `ui::detail`/`app::comments`/
+/// `app::links` can call this same method name unconditionally rather than
+/// `#[cfg]`-branching at every call site. `adf::MediaSizing` itself isn't
+/// feature-gated (Phase 2 already made every mode compile regardless of
+/// `images`), only the machinery that ever produces a real `Ready` closure
+/// is.
+#[cfg(not(feature = "images"))]
+impl App {
+    pub(crate) fn with_detail_media_sizing<R>(
+        &self,
+        _width: u16,
+        f: impl FnOnce(&adf::MediaSizing) -> R,
+    ) -> R {
+        f(&adf::MediaSizing::Disabled)
     }
 }

@@ -271,6 +271,194 @@ fn attachment_picker_renders_a_halfblocks_preview_image() {
     );
 }
 
+/// Issue #130 Phase 3: the Detail screen's inline description-image paint
+/// pass (`ui::detail`'s `image_paint_offsets`/`paint_inline_images`) — a
+/// `SlicedImage` painted over the description's already-rendered, already
+/// -scrolled `Paragraph`. Uses the same `Picker::halfblocks()` +
+/// direct-cache-injection shortcut as
+/// `attachment_picker_renders_a_halfblocks_preview_image` above (bypassing
+/// the async fetch entirely) to seed `App::inline_images`.
+#[cfg(feature = "images")]
+mod inline_description_images {
+    use super::*;
+    use jira_tui::app::InlineImageKey;
+    use ratatui_image::picker::Picker;
+    use serde_json::json;
+
+    /// A wide, short image with a strong top-to-bottom colour ramp:
+    /// - Wide relative to any realistic pane width, so the sizing
+    ///   function's `cols` is pane-width-bound rather than image-bound —
+    ///   `a_terminal_resize_rebuilds_the_protocol_without_panicking` relies
+    ///   on this to get a genuinely different `(rows, cols)` at two
+    ///   different pane widths, actually exercising the cached
+    ///   `SlicedProtocol`'s rebuild-on-size-change path.
+    /// - Ramped rather than a flat colour, so downscaling never leaves two
+    ///   adjacent halfblock rows with an identical colour —
+    ///   `HalfBlock::pick_side` (in `ratatui_image`) renders an "upper ==
+    ///   lower" cell as a plain space, which would make a uniform test
+    ///   image indistinguishable from "nothing painted" and defeat the
+    ///   non-space assertions below.
+    fn gradient_image() -> image::DynamicImage {
+        let (width, height) = (2000u32, 100u32);
+        let mut img = image::RgbImage::new(width, height);
+        let denom = f64::from(height.saturating_sub(1).max(1));
+        for y in 0..height {
+            let shade = ((f64::from(y) * 255.0) / denom).round() as u8;
+            for x in 0..width {
+                img.put_pixel(x, y, image::Rgb([shade, 0, 255 - shade]));
+            }
+        }
+        image::DynamicImage::ImageRgb8(img)
+    }
+
+    /// DS-2722's demo detail, with its own description swapped for a
+    /// single `mediaSingle` block whose `alt` matches the demo
+    /// `accordion-mockup.png` attachment (id `10001`, `image/png` — see
+    /// `domain::demo::demo_attachments`, shared by every demo issue) — the
+    /// description's only block, so it lands at `line_start == 0` in the
+    /// wide layout's `main.lines`: visible at scroll position 0 with
+    /// nothing else pushing it down.
+    fn open_issue_with_a_media_description(app: &mut App) {
+        app.screen = Screen::Home;
+        app.open_by_key("DS-2722");
+        let mut detail = app.detail.clone().unwrap();
+        detail.description = json!({
+            "type": "doc", "version": 1,
+            "content": [ { "type": "mediaSingle", "content": [
+                { "type": "media", "attrs": {
+                    "id": "x", "type": "file", "alt": "accordion-mockup.png"
+                } }
+            ] } ]
+        });
+        app.detail = Some(detail);
+    }
+
+    #[test]
+    fn a_decoded_image_renders_as_halfblock_cells_when_visible() {
+        let mut app = demo_app();
+        open_issue_with_a_media_description(&mut app);
+        app.image_picker = Some(Picker::halfblocks());
+        app.inline_images
+            .get_mut()
+            .insert(InlineImageKey::Attachment("10001".into()), gradient_image());
+
+        let text = render_at(&app, 120, 40);
+        assert!(
+            text.contains('▀') || text.contains('▄'),
+            "a decoded, on-screen inline image should paint halfblock cells, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn an_image_scrolled_fully_out_of_view_paints_nothing() {
+        let mut app = demo_app();
+        open_issue_with_a_media_description(&mut app);
+        app.image_picker = Some(Picker::halfblocks());
+        app.inline_images
+            .get_mut()
+            .insert(InlineImageKey::Attachment("10001".into()), gradient_image());
+
+        // Comfortably past the reserved rows (capped at 14) plus the rest
+        // of the description/activity below it — nothing should be
+        // visible at all, so no halfblock glyph should appear anywhere in
+        // the rendered screen.
+        app.detail_scroll = 500;
+        let text = render_at(&app, 120, 40);
+        assert!(
+            !text.contains('▀') && !text.contains('▄'),
+            "an image scrolled fully out of view must not paint any cells, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn an_image_partially_scrolled_into_view_does_not_panic() {
+        let mut app = demo_app();
+        open_issue_with_a_media_description(&mut app);
+        app.image_picker = Some(Picker::halfblocks());
+        app.inline_images
+            .get_mut()
+            .insert(InlineImageKey::Attachment("10001".into()), gradient_image());
+
+        // Somewhere inside the reserved (3-14) rows: exactly the
+        // partial-visibility case `SlicedProtocol` exists to handle. The
+        // only hard requirement is "doesn't panic" — per issue #130's
+        // plan, halfblocks' coarse resolution makes exact pixel assertions
+        // here more trouble than they're worth.
+        app.detail_scroll = 1;
+        let _ = render_at(&app, 120, 40);
+    }
+
+    #[test]
+    fn an_undecoded_attachment_still_shows_the_placeholder() {
+        let mut app = demo_app();
+        open_issue_with_a_media_description(&mut app);
+        app.image_picker = Some(Picker::halfblocks());
+        // Deliberately never populated: `app.inline_images` stays empty,
+        // mirroring "still fetching, failed, or never eligible".
+
+        let text = render_at(&app, 120, 40);
+        assert!(
+            text.contains("[image: accordion-mockup.png]"),
+            "an undecoded image must keep showing its placeholder, got:\n{text}"
+        );
+        assert!(
+            !text.contains('▀') && !text.contains('▄'),
+            "nothing should be painted for an image that was never decoded"
+        );
+    }
+
+    #[test]
+    fn no_detected_picker_shows_the_placeholder_exactly_as_without_the_images_feature() {
+        let mut app = demo_app();
+        open_issue_with_a_media_description(&mut app);
+        // `image_picker` stays `None` — mirrors a terminal with no
+        // detected image capability. A non-`images` build never even
+        // compiles a real `MediaSizing::Ready` path at all (see
+        // `App::with_detail_media_sizing`'s non-`images` stand-in in
+        // `app::mod`), so this is the closest same-build equivalent.
+        app.inline_images
+            .get_mut()
+            .insert(InlineImageKey::Attachment("10001".into()), gradient_image());
+
+        let text = render_at(&app, 120, 40);
+        assert!(
+            text.contains("[image: accordion-mockup.png]"),
+            "with no detected picker, the placeholder must render exactly as before this phase"
+        );
+        assert!(!text.contains('▀') && !text.contains('▄'));
+    }
+
+    /// Two renders of the *same* `App` (so the same
+    /// `inline_image_protocols` cache) at pane widths chosen so the
+    /// sizing function's `(rows, cols)` genuinely differs between them
+    /// (160x100 columns/pane-bound at the wider terminal vs. a smaller,
+    /// row-clamped size at the narrower one) — exercises
+    /// `App::sliced_inline_image_protocol`'s "cached protocol's size no
+    /// longer matches this placement's current size" rebuild branch,
+    /// rather than just re-rendering an already-correctly-sized cached
+    /// protocol.
+    #[test]
+    fn a_terminal_resize_rebuilds_the_protocol_without_panicking() {
+        let mut app = demo_app();
+        open_issue_with_a_media_description(&mut app);
+        app.image_picker = Some(Picker::halfblocks());
+        app.inline_images
+            .get_mut()
+            .insert(InlineImageKey::Attachment("10001".into()), gradient_image());
+
+        let wide = render_at(&app, 200, 40);
+        let narrower = render_at(&app, 100, 40);
+        assert!(
+            wide.contains('▀') || wide.contains('▄'),
+            "expected halfblock cells at the wider pane width"
+        );
+        assert!(
+            narrower.contains('▀') || narrower.contains('▄'),
+            "expected halfblock cells at the narrower pane width after a rebuild"
+        );
+    }
+}
+
 #[test]
 fn attachment_upload_input_renders_the_typed_path() {
     let mut app = demo_app();
