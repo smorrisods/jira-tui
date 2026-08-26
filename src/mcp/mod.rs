@@ -148,6 +148,20 @@ struct AddAttachmentParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct GetAttachmentParams {
+    /// Issue key, e.g. "DS-123".
+    key: String,
+    /// Attachment id (see list_attachments).
+    attachment_id: String,
+    /// Local filesystem path to write the downloaded file to. This is
+    /// resolved on the machine running the `jira-mcp` server process, not on
+    /// the calling agent's own machine — if those differ (e.g. the server
+    /// runs on a remote host), the file lands there, not on wherever the
+    /// agent itself is running.
+    save_path: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct AssignIssueParams {
     /// Issue key, e.g. "DS-123".
     key: String,
@@ -399,6 +413,43 @@ impl JiraMcpServer {
     }
 
     #[tool(
+        description = "Download an attachment's raw content to a local file path (see list_attachments for attachment_id). `save_path` is resolved on the machine running the jira-mcp server, not the agent's own machine. Requires live Jira credentials — there's no demo data to download."
+    )]
+    fn get_attachment(
+        &self,
+        Parameters(GetAttachmentParams {
+            key,
+            attachment_id,
+            save_path,
+        }): Parameters<GetAttachmentParams>,
+    ) -> Result<String, McpError> {
+        let cfg = live_cfg()?;
+        let attachments = crate::jira::fetch_attachments(&cfg, &key)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let attachment = attachments
+            .iter()
+            .find(|a| a.id == attachment_id)
+            .ok_or_else(|| {
+                McpError::invalid_params(
+                    format!(
+                        "no attachment '{attachment_id}' on {key}; call list_attachments first"
+                    ),
+                    None,
+                )
+            })?;
+        let bytes = crate::jira::download_attachment(&cfg, &attachment.content_url)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        std::fs::write(&save_path, &bytes).map_err(|e| {
+            McpError::invalid_params(format!("failed to write '{save_path}': {e}"), None)
+        })?;
+        to_json(&serde_json::json!({
+            "filename": attachment.filename,
+            "size": attachment.size,
+            "saved_to": save_path,
+        }))
+    }
+
+    #[tool(
         description = "Overwrite an existing comment's body, from Markdown (converted to ADF automatically — never send raw ADF JSON here). Requires live Jira credentials."
     )]
     fn update_comment_markdown(
@@ -574,7 +625,9 @@ impl ServerHandler for JiraMcpServer {
                  field) — never construct raw ADF JSON yourself. Use list_attachments (or \
                  get_issue's attachments field) to see an issue's file attachments, and \
                  add_attachment to upload a new one from a local file path on the machine \
-                 running this server. Use \
+                 running this server, and get_attachment to download one's raw content to a \
+                 local file path there (requires live credentials — there's no demo data to \
+                 download). Use \
                  list_assignable_users \
                  and assign_issue to reassign or unassign issues by display name (or \"me\"). \
                  To @mention a teammate so they're actually notified, call search_users to \
