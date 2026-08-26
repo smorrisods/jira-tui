@@ -137,6 +137,26 @@ pub struct Attachment {
     pub thumbnail_url: Option<String>,
 }
 
+impl Attachment {
+    /// The URL to fetch for an in-app preview of this attachment, or `None`
+    /// if it isn't an image at all — shared by `app::attachments`' picker
+    /// preview and `app::inline_images`' description-embedded preview, which
+    /// both used to hand-roll this same "image mime, prefer the cheaper
+    /// thumbnail, fall back to the full content" rule independently (issue
+    /// #130). Prefers `thumbnail_url` since it's cheaper to fetch/decode than
+    /// `content_url`, but not every image attachment has one.
+    pub fn image_preview_url(&self) -> Option<String> {
+        if !self.mime_type.starts_with("image/") {
+            return None;
+        }
+        Some(
+            self.thumbnail_url
+                .clone()
+                .unwrap_or_else(|| self.content_url.clone()),
+        )
+    }
+}
+
 /// A workflow transition available from the current status.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Transition {

@@ -83,14 +83,24 @@ pub fn get_bytes_public(url: &str) -> Result<Vec<u8>> {
     fetch_public_bytes(url)
 }
 
+/// The redirect-disabled agent every `fetch_public_bytes` call reuses,
+/// built once rather than per call — an external description may embed
+/// several inline images (often on the same host/CDN), and a fresh
+/// `ureq::Agent` per fetch would pay a new connection-pool/TLS setup for
+/// each one instead of reusing keep-alive connections the way `get`/
+/// `get_bytes` already do via `ureq`'s own default agent.
+fn public_agent() -> &'static ureq::Agent {
+    static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+    AGENT.get_or_init(|| ureq::AgentBuilder::new().redirects(0).build())
+}
+
 /// The request/response half of `get_bytes_public`, split out so tests can
 /// exercise it directly against a plain-`http` `mockito` server without
 /// weakening `get_bytes_public`'s own `https://`-only gate to accommodate
 /// the test — `mockito` has no TLS support, so there is no way to drive a
 /// real request through that gate.
 fn fetch_public_bytes(url: &str) -> Result<Vec<u8>> {
-    let agent = ureq::AgentBuilder::new().redirects(0).build();
-    let resp = agent
+    let resp = public_agent()
         .get(url)
         .call()
         .map_err(|e| anyhow!("public image fetch failed: {e}"))?;

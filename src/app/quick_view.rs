@@ -24,6 +24,18 @@ impl App {
             return;
         };
         if self.detail_cache.contains_key(&key) {
+            // Already cached — still worth a cheap re-check for any inline
+            // image that never landed: `apply_inline_image_loaded` drops a
+            // response whose generation was bumped out from under it by an
+            // intervening Detail navigate, and a plain failed/undecodable
+            // fetch is never automatically retried otherwise, since this was
+            // the only site that ever dispatched one for this issue. This
+            // runs every frame while quick view is open (see this method's
+            // own doc comment), and `refresh_quick_view_inline_images` is a
+            // no-op for anything already resolved or still in flight, so
+            // re-checking here costs nothing beyond a cache/pending lookup.
+            #[cfg(feature = "images")]
+            self.refresh_quick_view_inline_images();
             return;
         }
         if !matches!(self.source, Source::Live { .. }) {

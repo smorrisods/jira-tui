@@ -17,6 +17,7 @@ use std::collections::HashSet;
 
 use ratatui::layout::Rect;
 
+#[cfg(not(feature = "images"))]
 use crate::adf;
 use crate::config::{self, Settings};
 use crate::domain::{
@@ -373,21 +374,22 @@ pub struct App {
     pub(crate) inline_images_pending: HashSet<InlineImageKey>,
     /// Encoded `SlicedProtocol`s for the Detail screen's and quick-view
     /// panel's inline description images (`images` feature only, Phase 3 of
-    /// issue #130; quick view added in Phase 5) — keyed by `InlineMediaRef`
-    /// (the same "media node's alt text" key `adf::ImagePlacement` already
-    /// carries), separate from `inline_images` (the *decoded* `DynamicImage`
-    /// cache) because encoding a `SlicedProtocol` is real work (resizing +
-    /// protocol-specific encoding) that should only happen once per target
-    /// size, not on every frame. `ui::detail`'s (and `ui::quick_view`'s)
-    /// paint pass rebuilds an entry from the still-cached `DynamicImage` in
-    /// `inline_images` whenever the cached protocol's own `.size()` no
-    /// longer matches the placement's current `(cols, rows)` (e.g. a
-    /// terminal resize changed the pane width), rather than tracking the
-    /// target size in a second field alongside it. Bounded the same way and
-    /// for the same reason as `inline_images` (see its own doc comment).
+    /// issue #130; quick view added in Phase 5) — keyed by `InlineImageKey`
+    /// (the same resolved attachment-id/external-URL identity `inline_images`
+    /// itself is keyed by, not the node's bare `alt` text), separate from
+    /// `inline_images` (the *decoded* `DynamicImage` cache) because encoding
+    /// a `SlicedProtocol` is real work (resizing + protocol-specific
+    /// encoding) that should only happen once per target size, not on every
+    /// frame. `ui::detail`'s (and `ui::quick_view`'s) paint pass rebuilds an
+    /// entry from the still-cached `DynamicImage` in `inline_images` whenever
+    /// the cached protocol's own `.size()` no longer matches the placement's
+    /// current `(cols, rows)` (e.g. a terminal resize changed the pane
+    /// width), rather than tracking the target size in a second field
+    /// alongside it. Bounded the same way and for the same reason as
+    /// `inline_images` (see its own doc comment).
     #[cfg(feature = "images")]
     pub(crate) inline_image_protocols:
-        RefCell<BoundedCache<adf::InlineMediaRef, ratatui_image::sliced::SlicedProtocol>>,
+        RefCell<BoundedCache<InlineImageKey, ratatui_image::sliced::SlicedProtocol>>,
 
     /// The screen `a` was pressed from, so backing out of About (see #38)
     /// restores it instead of always landing on Home.

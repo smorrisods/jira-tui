@@ -132,6 +132,90 @@ fn a_media_groups_children_resolve_both_in_document_order() {
     );
 }
 
+/// Code-review regression test: `adf::render_table`'s cell content is
+/// text-only (`cell_content_spans`/`collect_text` never touch a `media`
+/// node), so a media node nested in a table cell can never actually be
+/// painted — eagerly resolving/fetching it here would only waste a slot in
+/// `MAX_INLINE_IMAGES` on an image that never renders, and could starve out
+/// a genuinely visible image found later in the same document.
+#[test]
+fn a_media_node_inside_a_table_cell_is_never_resolved() {
+    let attachment = image_attachment("10001", "mockup.png", "image/png", None);
+    let description = json!({
+        "type": "doc", "version": 1,
+        "content": [ { "type": "table", "content": [
+            { "type": "tableRow", "content": [
+                { "type": "tableCell", "content": [
+                    { "type": "mediaSingle", "content": [ media_node("mockup.png") ] }
+                ] }
+            ] }
+        ] } ]
+    });
+    let detail = detail_with(description, vec![attachment]);
+
+    assert!(
+        resolve_inline_images(&detail).is_empty(),
+        "a table-cell-nested media node must never be resolved — render_table can't paint it"
+    );
+}
+
+/// Code-review regression test: a list item only routes a *nested* list back
+/// through `adf::render_block` (`render_list_item`); every other child —
+/// including a `mediaSingle`/`media` node directly inside the item — goes
+/// through the text-only `inline_spans`, so it can never render either. Same
+/// waste-of-fetch-budget concern as the table-cell case above.
+#[test]
+fn a_media_node_directly_inside_a_list_item_is_never_resolved() {
+    let attachment = image_attachment("10001", "mockup.png", "image/png", None);
+    let description = json!({
+        "type": "doc", "version": 1,
+        "content": [ { "type": "bulletList", "content": [
+            { "type": "listItem", "content": [
+                { "type": "mediaSingle", "content": [ media_node("mockup.png") ] }
+            ] }
+        ] } ]
+    });
+    let detail = detail_with(description, vec![attachment]);
+
+    assert!(
+        resolve_inline_images(&detail).is_empty(),
+        "a media node directly inside a list item must never be resolved — \
+         render_list_item routes it through the text-only inline_spans, not render_block"
+    );
+}
+
+/// A media node inside a *nested* list (a sub-list within a list item) is
+/// just as unreachable as one directly inside a top-level item:
+/// `render_list_item` only ever forwards a list item's immediate child back
+/// through `render_block` when that child is itself a further-nested list —
+/// the media node's own immediate container is never a list type, so it
+/// still ends up routed through the text-only `inline_spans` at whatever
+/// depth it's found, and must not be resolved either.
+#[test]
+fn a_media_node_inside_a_nested_list_is_also_never_resolved() {
+    let attachment = image_attachment("10001", "mockup.png", "image/png", None);
+    let description = json!({
+        "type": "doc", "version": 1,
+        "content": [ { "type": "bulletList", "content": [
+            { "type": "listItem", "content": [
+                { "type": "bulletList", "content": [
+                    { "type": "listItem", "content": [
+                        { "type": "mediaSingle", "content": [ media_node("mockup.png") ] }
+                    ] }
+                ] }
+            ] }
+        ] } ]
+    });
+    let detail = detail_with(description, vec![attachment]);
+
+    assert!(
+        resolve_inline_images(&detail).is_empty(),
+        "a media node inside a nested list must never be resolved either — its own immediate \
+         container is never itself a list type, so render_list_item's nested-list exception \
+         never applies to it, at any depth"
+    );
+}
+
 /// Issue #130 phase 4: an external media node resolves to `External(url)`
 /// directly from its own `url` attribute — no attachment/filename matching
 /// involved at all, unlike the attachment-backed path. A matching `alt` here
@@ -485,24 +569,23 @@ fn refresh_detail_clears_the_inline_image_cache_and_bumps_the_generation() {
 
 /// Regression test for a code-review finding: `invalidate_inline_images`
 /// used to clear `inline_images` (the decoded-image cache) but leave
-/// `inline_image_protocols` (the *encoded* `SlicedProtocol` cache) behind.
-/// That cache is keyed only by a media node's `alt` text, with no
-/// issue/generation component — so a stale entry left over from a
-/// previously-viewed issue whose inline image happened to share the same
-/// `alt` (e.g. a common filename like "screenshot.png") would be returned
-/// unchanged for the new issue by `App::sliced_inline_image_protocol`'s
+/// `inline_image_protocols` (the *encoded* `SlicedProtocol` cache) behind —
+/// and, until keyed by `InlineImageKey` (a further code-review fix), that
+/// cache was keyed only by a media node's `alt` text, with no issue
+/// component at all, so a stale entry left over from a previously-viewed
+/// issue whose inline image happened to share the same `alt` (e.g. a common
+/// filename like "screenshot.png") would be returned unchanged for a
+/// *different* attachment in the new issue by `App::sliced_inline_image_protocol`'s
 /// size-only staleness check, silently rendering the wrong picture. This
-/// confirms both caches are cleared together.
+/// confirms both caches are cleared together, even now that the key itself
+/// (attachment id) already rules out a cross-attachment collision.
 #[test]
 fn refresh_detail_also_clears_the_stale_sliced_protocol_cache() {
     let mut app = demo_app();
     app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
     app.selected = 0;
     app.open_detail();
-    let media = crate::adf::InlineMediaRef {
-        alt: "shared-filename.png".into(),
-        url: None,
-    };
+    let key = InlineImageKey::Attachment("shared-attachment-id".into());
     let picker = app.image_picker.as_ref().unwrap();
     let protocol = ratatui_image::sliced::SlicedProtocol::new_with_resize(
         picker,
@@ -511,9 +594,7 @@ fn refresh_detail_also_clears_the_stale_sliced_protocol_cache() {
         ratatui_image::Resize::Fit(None),
     )
     .unwrap();
-    app.inline_image_protocols
-        .get_mut()
-        .insert(media.clone(), protocol);
+    app.inline_image_protocols.get_mut().insert(key, protocol);
 
     app.refresh_detail();
 

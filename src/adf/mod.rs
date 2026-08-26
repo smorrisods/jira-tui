@@ -256,14 +256,38 @@ fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize, ctx: &
         }
         "blockquote" => {
             let mut inner: Vec<Line<'static>> = Vec::new();
+            let placements_before = ctx.placements.len();
             if let Some(content) = node.get("content").and_then(|c| c.as_array()) {
                 for child in content {
                     render_block(child, &mut inner, depth, ctx);
                 }
             }
-            for line in inner {
-                out.extend(crate::render::wrap_with_bar(&line, ctx.width, "┃ ", MUTED));
+            // Any `ImagePlacement` recorded while rendering into `inner`
+            // above has a `line_start` indexed into that private buffer,
+            // not `out` — and bar-wrapping below can turn one `inner` line
+            // into several wrapped rows, so a placement can't simply be
+            // shifted by `out.len()` either. Build a per-line cumulative
+            // wrapped-row-count table so each placement's `line_start`
+            // rebases onto the row it actually lands on in `out`, the same
+            // way `comment_starts`/`comments_header` get rebased by their
+            // own callers (see this struct's own doc comment).
+            let base = out.len();
+            let mut cumulative_rows = Vec::with_capacity(inner.len() + 1);
+            cumulative_rows.push(0usize);
+            let mut wrapped: Vec<Line<'static>> = Vec::new();
+            for line in &inner {
+                let rows = crate::render::wrap_with_bar(line, ctx.width, "┃ ", MUTED);
+                cumulative_rows.push(cumulative_rows.last().copied().unwrap_or(0) + rows.len());
+                wrapped.extend(rows);
             }
+            for placement in &mut ctx.placements[placements_before..] {
+                let offset = cumulative_rows
+                    .get(placement.line_start)
+                    .copied()
+                    .unwrap_or(0);
+                placement.line_start = base + offset;
+            }
+            out.extend(wrapped);
         }
         "table" => render_table(node, out, ctx.width),
         "mediaSingle" | "mediaGroup" => {
@@ -835,6 +859,65 @@ mod tests {
         }
         let placeholder_text: String = lines[2].spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(placeholder_text, "[image: not ready]");
+    }
+
+    /// Code-review regression test: a media node nested inside a
+    /// blockquote used to record a `line_start` indexed into the
+    /// blockquote's own private line buffer (see the `"blockquote"` arm's
+    /// `inner`) rather than the final `out` the caller actually receives —
+    /// so a placement for an image inside (or after enough of) a blockquote
+    /// landed at the wrong row, or a row that didn't even exist yet, once
+    /// bar-wrapping and preceding content were accounted for. Here the
+    /// blockquote holds two paragraphs before the image, so a correct
+    /// `line_start` must land on the third bar-wrapped row (index 2), not 0.
+    #[test]
+    fn media_inside_a_blockquote_rebases_its_line_start_past_preceding_content() {
+        // A top-level paragraph (plus the breathing-room blank line between
+        // top-level blocks) precedes the blockquote, so a correct
+        // `line_start` must account for both `out.len()` *before* the
+        // blockquote started (2) and the one quoted paragraph line ahead of
+        // the image *inside* the blockquote (1) — landing on row 3. Before
+        // this was fixed, `line_start` was computed against the blockquote's
+        // own private `inner` buffer and never rebased at all, so it would
+        // have come out as 1 (the media node's position within `inner`
+        // alone), pointing at the quoted paragraph's own bar-wrapped row
+        // instead of the image's reserved space.
+        let doc = json!({
+            "type": "doc",
+            "content": [
+                { "type": "paragraph", "content": [{ "type": "text", "text": "intro" }] },
+                { "type": "blockquote", "content": [
+                    { "type": "paragraph", "content": [{ "type": "text", "text": "quoted line" }] },
+                    { "type": "mediaSingle", "content": [
+                        { "type": "media", "attrs": { "id": "x", "type": "file", "alt": "quoted shot" } }
+                    ] }
+                ] }
+            ]
+        });
+        let ready = |media: &InlineMediaRef| -> Option<(u16, u16)> {
+            (media.alt == "quoted shot").then_some((2, 30))
+        };
+        let sizing = MediaSizing::Ready(&ready);
+        let (lines, placements) = render_with_media(&doc, 120, &sizing);
+
+        assert_eq!(placements.len(), 1);
+        let placement = &placements[0];
+        assert_eq!(
+            placement.line_start, 3,
+            "line_start must be rebased past the intro paragraph, the breathing-room blank \
+             line, and the one quoted paragraph line ahead of the image, got lines: {lines:?}"
+        );
+        let reserved_row_text: String = lines[placement.line_start]
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(
+            reserved_row_text, "┃ ",
+            "line_start must point at a reserved (blank, bar-prefixed) row, not quoted text or \
+             the wrong row entirely, got: {:?}",
+            lines[placement.line_start]
+        );
     }
 
     /// Issue #130 phase 4: an external (`type: "external"`) media node with

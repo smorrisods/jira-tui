@@ -152,16 +152,13 @@ impl App {
     /// that same key.
     ///
     /// Also clears `inline_image_protocols` (the *encoded* `SlicedProtocol`
-    /// cache — see its own field doc comment): that cache is keyed purely by
-    /// `InlineMediaRef` (a media node's `alt` text), with no issue/generation
-    /// component and no link back to `inline_images`' generation-guarded
-    /// entries. `sliced_inline_image_protocol`'s only staleness check is
-    /// whether the cached protocol's target size still matches — so leaving
-    /// a stale entry behind here means a different issue's inline image that
-    /// happens to share the same `alt` (e.g. a common filename like
-    /// "screenshot.png") and lands on the same target size would render the
-    /// *previous* issue's picture, without ever re-checking
-    /// `inline_images`/`self.detail` at all.
+    /// cache — see its own field doc comment): even though it's now keyed by
+    /// the same `InlineImageKey` `inline_images` is (no more alt-text
+    /// collision risk between different attachments), it still has no
+    /// issue/generation component of its own, so a same-id attachment
+    /// surviving a refresh with genuinely different image bytes would
+    /// otherwise still return the stale encoded protocol under that same
+    /// key.
     pub(crate) fn invalidate_inline_images(&mut self) {
         self.inline_images.get_mut().clear();
         self.inline_image_protocols.get_mut().clear();
@@ -445,11 +442,24 @@ impl App {
         placement: &adf::ImagePlacement,
     ) -> Option<Ref<'_, SlicedProtocol>> {
         let picker = self.image_picker.as_ref()?;
+        // Keyed by the resolved `InlineImageKey` (attachment id / external
+        // URL) rather than `placement.media` (an `InlineMediaRef` — just the
+        // node's `alt` text) — two different issues' media nodes can easily
+        // share the same `alt` (e.g. a common filename like
+        // "screenshot.png"), and quick view deliberately never clears this
+        // cache on a plain selection change (see `refresh_quick_view_inline_images`'s
+        // own doc comment), so an `alt`-only key could return a *different*
+        // attachment's already-cached protocol whenever the two happened to
+        // land on the same target size. Resolving through the same
+        // `InlineImageKey` `inline_images` itself is keyed by rules this out
+        // structurally instead of relying on `invalidate_inline_images` to
+        // have run recently enough.
+        let key = Self::inline_image_key_for(detail, &placement.media)?;
         let target = Size::new(placement.cols, placement.rows);
         let up_to_date = self
             .inline_image_protocols
             .borrow()
-            .get(&placement.media)
+            .get(&key)
             .is_some_and(|p| p.size() == target);
         if !up_to_date {
             let img = self.decoded_inline_image(detail, &placement.media)?.clone();
@@ -457,12 +467,9 @@ impl App {
                 SlicedProtocol::new_with_resize(picker, img, target, Resize::Fit(None)).ok()?;
             self.inline_image_protocols
                 .borrow_mut()
-                .insert(placement.media.clone(), protocol);
+                .insert(key.clone(), protocol);
         }
-        Ref::filter_map(self.inline_image_protocols.borrow(), |m| {
-            m.get(&placement.media)
-        })
-        .ok()
+        Ref::filter_map(self.inline_image_protocols.borrow(), |m| m.get(&key)).ok()
     }
 }
 
@@ -562,13 +569,9 @@ pub(crate) fn resolve_inline_images(detail: &IssueDetail) -> Vec<(InlineImageKey
         let Some(attachment) = detail.attachments.iter().find(|a| a.filename == alt) else {
             continue;
         };
-        if !attachment.mime_type.starts_with("image/") {
+        let Some(url) = attachment.image_preview_url() else {
             continue;
-        }
-        let url = attachment
-            .thumbnail_url
-            .clone()
-            .unwrap_or_else(|| attachment.content_url.clone());
+        };
         resolved.push((InlineImageKey::Attachment(attachment.id.clone()), url));
     }
     resolved
@@ -577,22 +580,46 @@ pub(crate) fn resolve_inline_images(detail: &IssueDetail) -> Vec<(InlineImageKey
 /// Minimal ADF tree walk scoped to finding `media` nodes, in document order.
 /// Unlike `adf::render_block`'s own traversal (which handles every node type
 /// it knows how to style/render), this only needs to find `media` nodes
-/// wherever they appear — including nested under `mediaSingle`/`mediaGroup`,
-/// list items, or table cells — so it generically descends into any node's
-/// `content` array rather than special-casing each container type. `media`
-/// nodes are themselves leaves (no `content` of their own), so the walk
-/// stops there rather than recursing further.
+/// wherever they appear — nested under `mediaSingle`/`mediaGroup` — so it
+/// generically descends into most nodes' `content` array rather than
+/// special-casing each container type. `media` nodes are themselves leaves
+/// (no `content` of their own), so the walk stops there rather than
+/// recursing further.
+///
+/// Two container types are deliberately *not* descended into at all, because
+/// `adf::render_block` can never actually paint a media node found there —
+/// eagerly fetching one would just waste a slot in `MAX_INLINE_IMAGES` on an
+/// image nothing ever displays:
+/// - `table`: `render_table`'s cell content goes through `cell_content_spans`
+///   (text-only — see that function and `collect_text`), never `render_block`
+///   itself, so a media node inside a cell is silently dropped at render
+///   time no matter what.
+/// - `bulletList`/`orderedList`/`taskList`: `render_list_item` only routes a
+///   list item's immediate child back through `render_block` when that child
+///   is *itself* a further-nested list; every other child of every item, at
+///   every nesting depth — including a `mediaSingle`/`media` node, whether
+///   directly inside the item or inside a nested list's own item — instead
+///   goes through the text-only `inline_spans`, which silently drops
+///   anything that isn't text/hardBreak/emoji/mention. Since a `media` node
+///   is never itself a list type, it can never be the one child that escapes
+///   that routing, no matter how deep the nesting — so skipping the entire
+///   list subtree here (rather than only its non-list children) still
+///   matches `render_block`'s actual reach exactly. (`taskList`'s own render
+///   arm is even flatter: it always uses `inline_spans` on an item's content
+///   with no nested-list exception at all.)
 fn find_media_nodes<'a>(value: &'a Value, out: &mut Vec<&'a Value>) {
     let Some(obj) = value.as_object() else {
         return;
     };
-    if obj.get("type").and_then(|t| t.as_str()) == Some("media") {
-        out.push(value);
-        return;
-    }
-    if let Some(content) = obj.get("content").and_then(|c| c.as_array()) {
-        for child in content {
-            find_media_nodes(child, out);
+    match obj.get("type").and_then(|t| t.as_str()).unwrap_or("") {
+        "media" => out.push(value),
+        "table" | "bulletList" | "orderedList" | "taskList" => {}
+        _ => {
+            if let Some(content) = obj.get("content").and_then(|c| c.as_array()) {
+                for child in content {
+                    find_media_nodes(child, out);
+                }
+            }
         }
     }
 }

@@ -369,15 +369,7 @@ fn attachment_preview_url(
     if !images_eligible(picker, source) {
         return None;
     }
-    if !attachment.mime_type.starts_with("image/") {
-        return None;
-    }
-    Some(
-        attachment
-            .thumbnail_url
-            .clone()
-            .unwrap_or_else(|| attachment.content_url.clone()),
-    )
+    attachment.image_preview_url()
 }
 
 /// Whether image fetching is worth attempting at all (`images` feature

@@ -469,6 +469,25 @@ fn linked_panel_title(detail: &IssueDetail) -> Line<'static> {
 /// returned placements are already rebased to be relative to the *combined*
 /// description+acceptance-criteria lines this function returns, the same
 /// way `comment_starts` is rebased by its own callers.
+/// Shift every `ImagePlacement`'s `line_start` by `base` — the same rebase
+/// every caller that splices one line-producing section after another needs
+/// (see `ImagePlacement`'s own doc comment on why a caller must do this),
+/// pulled out once so the three call sites that need it (`description_lines`,
+/// `narrow_detail`, `quick_view_narrow`) don't each hand-roll the same
+/// `ImagePlacement { line_start: p.line_start + base, ..p }` map.
+fn rebase_placements(
+    placements: Vec<adf::ImagePlacement>,
+    base: usize,
+) -> Vec<adf::ImagePlacement> {
+    placements
+        .into_iter()
+        .map(|p| adf::ImagePlacement {
+            line_start: p.line_start + base,
+            ..p
+        })
+        .collect()
+}
+
 pub(crate) fn description_lines(
     detail: &IssueDetail,
     width: usize,
@@ -484,10 +503,7 @@ pub(crate) fn description_lines(
         let base = lines.len();
         let (ac_lines, ac_placements) = adf::render_with_media(ac, width, media);
         lines.extend(ac_lines);
-        placements.extend(ac_placements.into_iter().map(|p| adf::ImagePlacement {
-            line_start: p.line_start + base,
-            ..p
-        }));
+        placements.extend(rebase_placements(ac_placements, base));
     }
     (lines, placements)
 }
@@ -735,13 +751,7 @@ pub fn narrow_detail(
     let description_base = lines.len();
     let (description, placements) = description_lines(detail, width, media);
     lines.extend(description);
-    let image_placements = placements
-        .into_iter()
-        .map(|p| adf::ImagePlacement {
-            line_start: p.line_start + description_base,
-            ..p
-        })
-        .collect();
+    let image_placements = rebase_placements(placements, description_base);
 
     let linked = linked_lines(detail);
     if !linked.is_empty() {
@@ -847,13 +857,7 @@ pub fn quick_view_narrow(
     let description_base = lines.len();
     let (description, placements) = description_lines(detail, width, media);
     lines.extend(description);
-    let image_placements = placements
-        .into_iter()
-        .map(|p| adf::ImagePlacement {
-            line_start: p.line_start + description_base,
-            ..p
-        })
-        .collect();
+    let image_placements = rebase_placements(placements, description_base);
     let links = linkify(&mut lines, DetailPane::Main);
     QuickViewNarrow {
         panel: Panel { lines, links },
