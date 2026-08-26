@@ -298,10 +298,9 @@ mod tests {
             // `App::any_modal_open` consolidated the list — a plain click
             // would have reached the screen underneath while either was
             // open.
-            (
-                "new_issue_type_picker_open",
-                |app| app.new_issue_type_picker_open = true,
-            ),
+            ("new_issue_type_picker_open", |app| {
+                app.new_issue_type_picker_open = true
+            }),
             ("project_picker_open", |app| app.project_picker_open = true),
         ];
 
