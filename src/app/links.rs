@@ -123,6 +123,7 @@ impl App {
                     DetailPane::Meta => wide.meta.lines,
                     DetailPane::Links => wide.links.lines,
                     DetailPane::Children => wide.children.lines,
+                    DetailPane::Attachments => wide.attachments.lines,
                 })
             }
         }

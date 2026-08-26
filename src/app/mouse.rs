@@ -175,8 +175,9 @@ impl App {
     /// wrapped description/comment text too, not just short field lines.
     ///
     /// On the Detail screen's wide layout, both the main column and the
-    /// four side-rail panels (workflow/meta/links/children — deliberately
-    /// non-scrolling, see `ui::detail::draw_rail`) are clickable. The
+    /// five side-rail panels (workflow/meta/links/children/attachments —
+    /// deliberately non-scrolling, see `ui::detail::draw_rail`) are
+    /// clickable. The
     /// returned index is still an index into `active_links()`'s full
     /// cross-pane ordering, so it stays consistent with
     /// `next_link`/`prev_link`/highlighting.
@@ -196,6 +197,7 @@ impl App {
                 (DetailPane::Meta, self.detail_meta_area.get()),
                 (DetailPane::Links, self.detail_links_area.get()),
                 (DetailPane::Children, self.detail_children_area.get()),
+                (DetailPane::Attachments, self.detail_attachments_area.get()),
             ] {
                 if let Some(idx) = self.link_at_pane(x, y, pane, area, 0) {
                     return Some(idx);
@@ -335,7 +337,7 @@ impl App {
 
     /// The panel a drag-selection starting at `(x, y)` should stay clipped
     /// to: whichever tracked panel area contains the point (Detail's main
-    /// column or one of its 4 rail panels, quick view, the list, or the
+    /// column or one of its 5 rail panels, quick view, the list, or the
     /// board), falling back to an effectively unbounded `Rect` for screens
     /// that are genuinely one column end-to-end (the render/copy side still
     /// clips against the real frame size regardless). Checked once at
@@ -349,6 +351,7 @@ impl App {
             self.detail_meta_area.get(),
             self.detail_links_area.get(),
             self.detail_children_area.get(),
+            self.detail_attachments_area.get(),
             self.quick_view_area.get(),
             self.list_area.get(),
             self.board_area.get(),

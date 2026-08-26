@@ -136,6 +136,18 @@ struct SearchUsersParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct AddAttachmentParams {
+    /// Issue key, e.g. "DS-123".
+    key: String,
+    /// Local filesystem path to the file to upload. This is resolved on the
+    /// machine running the `jira-mcp` server process, not on the calling
+    /// agent's own machine — if those differ (e.g. the server runs on a
+    /// remote host), the file must already exist there, not on wherever the
+    /// agent itself is running.
+    file_path: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct AssignIssueParams {
     /// Issue key, e.g. "DS-123".
     key: String,
@@ -208,6 +220,7 @@ impl JiraMcpServer {
                     "children": detail.children,
                     "description_markdown": description_markdown,
                     "transitions": detail.transitions,
+                    "attachments": detail.attachments,
                 }))
             }
             Err(_) => {
@@ -227,6 +240,7 @@ impl JiraMcpServer {
                     "children": detail.children,
                     "description_markdown": description_markdown,
                     "transitions": detail.transitions,
+                    "attachments": detail.attachments,
                     "note": "demo data — no Jira credentials configured",
                 }))
             }
@@ -332,6 +346,56 @@ impl JiraMcpServer {
                 }))
             }
         }
+    }
+
+    #[tool(
+        description = "List an issue's file attachments (id, filename, mime type, size, created, download URL). Falls back to demo data if no Jira credentials are configured."
+    )]
+    fn list_attachments(
+        &self,
+        Parameters(GetIssueParams { key }): Parameters<GetIssueParams>,
+    ) -> Result<String, McpError> {
+        match live_cfg() {
+            Ok(cfg) => {
+                let attachments = crate::jira::fetch_attachments(&cfg, &key)
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                to_json(&serde_json::json!({ "attachments": attachments }))
+            }
+            Err(_) => {
+                let attachments = demo_detail(&key).attachments;
+                to_json(&serde_json::json!({
+                    "attachments": attachments,
+                    "note": "demo data — no Jira credentials configured",
+                }))
+            }
+        }
+    }
+
+    #[tool(
+        description = "Upload a local file as an attachment on an issue. `file_path` is resolved on the machine running the jira-mcp server, not the agent's own machine. Requires live Jira credentials."
+    )]
+    fn add_attachment(
+        &self,
+        Parameters(AddAttachmentParams { key, file_path }): Parameters<AddAttachmentParams>,
+    ) -> Result<String, McpError> {
+        let cfg = live_cfg()?;
+        let bytes = std::fs::read(&file_path).map_err(|e| {
+            McpError::invalid_params(format!("failed to read '{file_path}': {e}"), None)
+        })?;
+        let filename = std::path::Path::new(&file_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| {
+                McpError::invalid_params(
+                    format!("could not extract a filename from '{file_path}'"),
+                    None,
+                )
+            })?
+            .to_string();
+        let mime = crate::mime::guess_mime(&filename);
+        let attachments = crate::jira::upload_attachment(&cfg, &key, &filename, mime, &bytes)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        to_json(&serde_json::json!({ "attachments": attachments }))
     }
 
     #[tool(
@@ -507,7 +571,11 @@ impl ServerHandler for JiraMcpServer {
                  comments as Markdown via add_comment_markdown, list_comments, \
                  update_comment_markdown, delete_comment, get_description_markdown, \
                  and update_description_markdown (and create_issue's description_markdown \
-                 field) — never construct raw ADF JSON yourself. Use list_assignable_users \
+                 field) — never construct raw ADF JSON yourself. Use list_attachments (or \
+                 get_issue's attachments field) to see an issue's file attachments, and \
+                 add_attachment to upload a new one from a local file path on the machine \
+                 running this server. Use \
+                 list_assignable_users \
                  and assign_issue to reassign or unassign issues by display name (or \"me\"). \
                  To @mention a teammate so they're actually notified, call search_users to \
                  resolve their accountId, then embed [~accountid:ACCOUNT_ID] directly in any \

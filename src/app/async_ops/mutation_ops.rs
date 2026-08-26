@@ -4,7 +4,7 @@
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::domain::Comment;
+use crate::domain::{Attachment, Comment};
 
 use super::super::{App, ReleaseBulkKind, Screen};
 use super::AppEvent;
@@ -385,6 +385,125 @@ fn create_issue_blocking(
     Ok(local_key.to_string())
 }
 
+/// Spawn an attachment download off the render thread, sending the result
+/// back as `AppEvent::AttachmentDownloaded`. Only ever dispatched for a
+/// genuine `Source::Live` session (see `App::download_selected_attachment`),
+/// but — like every other `dispatch_*` here — compiles unconditionally,
+/// gating the actual network call inside the blocking half.
+pub(crate) fn dispatch_attachment_download(
+    tx: UnboundedSender<AppEvent>,
+    key: String,
+    filename: String,
+    content_url: String,
+) {
+    tokio::spawn(async move {
+        let key_for_result = key.clone();
+        let filename_for_result = filename.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            download_attachment_blocking(&filename, &content_url)
+        })
+        .await
+        .unwrap_or_else(|_| Err("internal error: task panicked".into()));
+        let _ = tx.send(AppEvent::AttachmentDownloaded {
+            key: key_for_result,
+            filename: filename_for_result,
+            result,
+        });
+    });
+}
+
+/// Fetches `content_url`'s bytes, sanitizes `filename` to a safe on-disk
+/// basename (`attachments::sanitize_attachment_filename` — the API response
+/// is untrusted input), de-dupes it against the current working directory
+/// (`attachments::dedupe_filename`), and writes the bytes there. Returns the
+/// saved path as a display string.
+#[allow(unused_variables)]
+fn download_attachment_blocking(filename: &str, content_url: &str) -> Result<String, String> {
+    #[cfg(feature = "live")]
+    {
+        let cfg =
+            crate::jira::Config::load().ok_or_else(|| "no credentials configured".to_string())?;
+        let bytes =
+            crate::jira::download_attachment(&cfg, content_url).map_err(|e| e.to_string())?;
+        let safe_name = super::super::attachments::sanitize_attachment_filename(filename);
+        let dir = std::env::current_dir().map_err(|e| e.to_string())?;
+        let path = super::super::attachments::dedupe_filename(&dir, &safe_name);
+        std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+        Ok(path.display().to_string())
+    }
+    #[cfg(not(feature = "live"))]
+    Err("this build has no live support".to_string())
+}
+
+/// Spawn an attachment upload off the render thread, sending the result
+/// back as `AppEvent::AttachmentUploaded`. Only ever dispatched for a
+/// genuine `Source::Live` session (see `App::confirm_attachment_upload`),
+/// but — like every other `dispatch_*` here — compiles unconditionally,
+/// gating the actual network call inside the blocking half. `path` is
+/// already fully resolved (`~`-expanded) by the caller; its bytes are read
+/// inside the `spawn_blocking` closure, not on the render thread, so a
+/// large attachment's file I/O can't stall rendering any more than the
+/// upload request itself can.
+pub(crate) fn dispatch_attachment_upload(
+    tx: UnboundedSender<AppEvent>,
+    key: String,
+    path: std::path::PathBuf,
+    filename: String,
+    mime: &'static str,
+) {
+    tokio::spawn(async move {
+        let key_for_result = key.clone();
+        let filename_for_result = filename.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            upload_attachment_blocking(&key, &path, &filename, mime)
+        })
+        .await
+        .unwrap_or_else(|_| Err("internal error: task panicked".into()));
+        let _ = tx.send(AppEvent::AttachmentUploaded {
+            key: key_for_result,
+            filename: filename_for_result,
+            result,
+        });
+    });
+}
+
+/// Reads `path`'s bytes and POSTs them to `key`'s attachments endpoint,
+/// returning Jira's response (the newly-created attachment(s), see
+/// `jira::live::attachments::upload_attachment`'s own doc comment).
+#[allow(unused_variables)]
+fn upload_attachment_blocking(
+    key: &str,
+    path: &std::path::Path,
+    filename: &str,
+    mime: &str,
+) -> Result<Vec<Attachment>, String> {
+    #[cfg(feature = "live")]
+    {
+        let cfg =
+            crate::jira::Config::load().ok_or_else(|| "no credentials configured".to_string())?;
+        let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+        crate::jira::upload_attachment(&cfg, key, filename, mime, &bytes).map_err(|e| e.to_string())
+    }
+    #[cfg(not(feature = "live"))]
+    Err("this build has no live support".to_string())
+}
+
+/// Merge `uploaded` (Jira's response to a successful `upload_attachment`
+/// call) into `existing`: replacing any attachment that already shares an
+/// id (re-uploading to an existing entry, which Jira allows) and appending
+/// everything else. In practice `uploaded` is just the one just-uploaded
+/// file, but the API returns an array, so this handles more than one just
+/// as well.
+fn merge_attachments(existing: &mut Vec<Attachment>, uploaded: &[Attachment]) {
+    for a in uploaded {
+        if let Some(slot) = existing.iter_mut().find(|e| e.id == a.id) {
+            *slot = a.clone();
+        } else {
+            existing.push(a.clone());
+        }
+    }
+}
+
 impl App {
     /// Applies `AppEvent::TransitionApplied` — see `dispatch_transition` above.
     pub(super) fn apply_transition_applied(
@@ -649,5 +768,60 @@ impl App {
         } else {
             self.refresh_release_drill_if_showing(&version_name);
         }
+    }
+
+    /// Applies `AppEvent::AttachmentDownloaded` — see
+    /// `dispatch_attachment_download` above. No generation to check (see
+    /// that event variant's own doc comment) — this only ever surfaces a
+    /// status flash, never mutates state a stale result could corrupt.
+    pub(super) fn apply_attachment_downloaded(
+        &mut self,
+        key: String,
+        filename: String,
+        result: Result<String, String>,
+    ) {
+        self.loading = false;
+        match result {
+            Ok(path) => {
+                self.status = format!("{key}: downloaded {filename} to {path}");
+                self.flash(format!("✓ downloaded {filename}"));
+            }
+            Err(e) => self.status = format!("download failed: {e}"),
+        }
+    }
+
+    /// Applies `AppEvent::AttachmentUploaded` — see
+    /// `dispatch_attachment_upload` above. No generation to check, same as
+    /// `apply_attachment_downloaded`: a stale response here can't corrupt
+    /// list navigation state, only this one issue's own attachment list,
+    /// which is guarded a different way — the `self.detail` merge only
+    /// applies if the app is still viewing this issue (mirroring
+    /// `apply_transition_applied`'s own `d.key == key` check), while the
+    /// `detail_cache` merge is addressed by `key` directly and so needs no
+    /// such guard (mirroring `apply_comment_added`'s cache merge).
+    pub(super) fn apply_attachment_uploaded(
+        &mut self,
+        key: String,
+        filename: String,
+        result: Result<Vec<Attachment>, String>,
+    ) {
+        self.loading = false;
+        let uploaded = match result {
+            Ok(a) => a,
+            Err(e) => {
+                self.status = format!("upload failed: {e}");
+                return;
+            }
+        };
+        if let Some(d) = self.detail.as_mut() {
+            if d.key == key {
+                merge_attachments(&mut d.attachments, &uploaded);
+            }
+        }
+        if let Some(cached) = self.detail_cache.get_mut(&key) {
+            merge_attachments(&mut cached.attachments, &uploaded);
+        }
+        self.status = format!("{key}: uploaded {filename}");
+        self.flash(format!("✓ uploaded {filename}"));
     }
 }

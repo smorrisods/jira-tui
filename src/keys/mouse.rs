@@ -31,6 +31,8 @@ pub(crate) fn handle_mouse(app: &mut App, me: MouseEvent) {
         || app.spell_suggest_open
         || app.palette_open
         || app.confirm_discard
+        || app.attachments_open
+        || app.attachment_upload.is_some()
     {
         return;
     }
@@ -290,6 +292,16 @@ mod tests {
             ("spell_suggest_open", |app| app.spell_suggest_open = true),
             ("palette_open", |app| app.palette_open = true),
             ("confirm_discard", |app| app.confirm_discard = true),
+            ("attachments_open", |app| {
+                app.selected = 0;
+                app.open_detail();
+                app.open_attachments();
+            }),
+            ("attachment_upload", |app| {
+                app.selected = 0;
+                app.open_detail();
+                app.open_attachment_upload();
+            }),
         ];
 
         for (name, set_flag) in cases {

@@ -13,6 +13,7 @@
 //! `fetch_detail` assembles (e.g. one file per sub-fetch it stitches
 //! together), not re-drawing the endpoint-area boundary.
 
+mod attachments;
 mod comments;
 mod detail;
 mod fields;
@@ -23,6 +24,12 @@ mod search;
 mod support;
 mod versions;
 
+pub use attachments::{download_attachment, fetch_attachments, upload_attachment};
+// `guess_mime` lives in `crate::mime` (shared across every feature set —
+// see that module's doc comment), not in this `live`-only module; re-export
+// it here anyway so `jira::guess_mime` keeps resolving for existing/future
+// live-feature callers.
+pub use crate::mime::guess_mime;
 pub use comments::{add_comment, delete_comment, fetch_comments, update_comment};
 pub use detail::fetch_detail;
 pub use fields::{list_fields, FieldInfo};

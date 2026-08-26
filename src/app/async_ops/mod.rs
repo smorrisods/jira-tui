@@ -33,7 +33,8 @@ pub(crate) use list_ops::{
     dispatch_teammate_discovery, dispatch_text_search,
 };
 pub(crate) use mutation_ops::{
-    dispatch_add_comment, dispatch_assign, dispatch_create_issue, dispatch_release_bulk,
+    dispatch_add_comment, dispatch_assign, dispatch_attachment_download,
+    dispatch_attachment_upload, dispatch_create_issue, dispatch_release_bulk,
     dispatch_set_versions, dispatch_transition, dispatch_update_description,
 };
 pub(crate) use setup_ops::dispatch_field_mapping;

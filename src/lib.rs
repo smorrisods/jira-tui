@@ -15,6 +15,9 @@ pub mod infra;
 pub mod jira;
 #[cfg(feature = "mcp")]
 pub mod mcp;
+/// Filename → MIME-type guessing (`guess_mime`), split out of `jira::live`
+/// so it's available in every feature set — see the module doc comment.
+pub mod mime;
 /// Builds the flat line-list shared by the full Detail screen and the
 /// quick-view panel. Lives outside both `app` and `ui` so `app` can compute
 /// scroll offsets (e.g. jump-to-comments) without depending on the `ui`

@@ -106,6 +106,48 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Modal: the attachment picker (`a`, Detail only) — list an issue's
+    // attachments, open the highlighted one in the browser (`Enter`/`o`) or
+    // download it to disk (`d`). Mirrors the transition picker's shape.
+    if app.attachments_open {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => app.attachments_move(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.attachments_move(1),
+            KeyCode::Enter | KeyCode::Char('o') => app.open_selected_attachment(),
+            KeyCode::Char('d') => app.download_selected_attachment(),
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left | KeyCode::Backspace => {
+                app.close_attachments()
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // Modal: the attachment upload flow (`u`, Detail only) — a path-entry
+    // stage (`Input`, plain single-line typing like Search's query box)
+    // followed by a mandatory preview (`Confirm`) before any network call,
+    // per CLAUDE.md's "Preview before any mutating Jira call." `Confirm`'s
+    // Esc goes back to `Input` (keeping the typed path), matching the edit
+    // preview's own "go back, don't discard" semantics — see
+    // `App::back_out_of_preview`/`back_out_of_attachment_upload_confirm`.
+    if let Some(stage) = app.attachment_upload.as_ref() {
+        match stage {
+            app::AttachmentUpload::Input { .. } => match key.code {
+                KeyCode::Enter => app.confirm_attachment_upload_path(),
+                KeyCode::Backspace => app.attachment_upload_backspace(),
+                KeyCode::Esc => app.close_attachment_upload(),
+                KeyCode::Char(c) => app.attachment_upload_input_char(c),
+                _ => {}
+            },
+            app::AttachmentUpload::Confirm { .. } => match key.code {
+                KeyCode::Char('y') | KeyCode::Enter => app.confirm_attachment_upload(),
+                KeyCode::Esc => app.back_out_of_attachment_upload_confirm(),
+                _ => {}
+            },
+        }
+        return;
+    }
+
     // Modal: the view switcher (My Work / All Project Issues / a teammate).
     if app.view_picker_open {
         match key.code {
@@ -555,6 +597,8 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('l') if app.screen != Screen::Detail => app.screen = Screen::List,
 
         KeyCode::Char('t') if app.screen == Screen::Detail => app.open_transitions(),
+        KeyCode::Char('a') if app.screen == Screen::Detail => app.open_attachments(),
+        KeyCode::Char('u') if app.screen == Screen::Detail => app.open_attachment_upload(),
         // In-TUI editor (default) and external $EDITOR (E).
         KeyCode::Char('e') if app.screen == Screen::Detail && app.detail.is_some() => {
             app.begin_tui_edit();

@@ -408,6 +408,7 @@ impl App {
             acceptance_criteria: None,
             transitions: new_issue_transitions(),
             comments: Vec::new(),
+            attachments: Vec::new(),
         };
 
         self.all_issues.push(issue_summary.clone());

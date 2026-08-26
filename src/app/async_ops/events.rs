@@ -5,8 +5,8 @@
 //! match arm — not a whole logic block — per new `AppEvent` variant.
 
 use crate::domain::{
-    AssignableUser, Comment, IssueDetail, IssueSummary, IssueType, Project, Source, Version,
-    ViewKind,
+    AssignableUser, Attachment, Comment, IssueDetail, IssueSummary, IssueType, Project, Source,
+    Version, ViewKind,
 };
 
 use super::super::{App, ReleaseBulkKind, Screen};
@@ -202,6 +202,30 @@ pub enum AppEvent {
         description: Option<serde_json::Value>,
         result: Result<String, String>,
     },
+    /// An attachment download to disk resolved (or failed) — see
+    /// `App::download_selected_attachment`/`dispatch_attachment_download`.
+    /// Carries no `generation`: like `TeammatesDiscovered`, it only ever
+    /// surfaces a status flash and never mutates state a stale result could
+    /// corrupt, so there's nothing for a counter to guard against. `result`'s
+    /// `Ok` payload is the saved file's path, as a display string rather
+    /// than a `PathBuf`, since it's only ever shown to the user.
+    AttachmentDownloaded {
+        key: String,
+        filename: String,
+        result: Result<String, String>,
+    },
+    /// An attachment upload resolved (or failed) — see
+    /// `App::confirm_attachment_upload`/`dispatch_attachment_upload`.
+    /// Carries no `generation`, same reasoning as `AttachmentDownloaded`:
+    /// see `apply_attachment_uploaded`'s own doc comment for how a stale
+    /// response is guarded instead. `result`'s `Ok` payload is Jira's
+    /// response to the upload — normally just the one newly-created
+    /// attachment — merged into `App::detail`/`detail_cache`.
+    AttachmentUploaded {
+        key: String,
+        filename: String,
+        result: Result<Vec<Attachment>, String>,
+    },
 }
 
 impl App {
@@ -327,6 +351,16 @@ impl App {
                 description,
                 result,
             } => self.apply_issue_created(generation, issue_type, summary, description, result),
+            AppEvent::AttachmentDownloaded {
+                key,
+                filename,
+                result,
+            } => self.apply_attachment_downloaded(key, filename, result),
+            AppEvent::AttachmentUploaded {
+                key,
+                filename,
+                result,
+            } => self.apply_attachment_uploaded(key, filename, result),
         }
     }
 }
