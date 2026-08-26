@@ -11,9 +11,9 @@ use super::support::{get, get_bytes, post_multipart, str_field};
 use crate::domain::Attachment;
 
 /// Parse a `fields.attachment` JSON array (Jira's shape:
-/// `{id, filename, size, mimeType, created, content}`) into `Vec<Attachment>`.
-/// Missing/malformed fields fall back to empty defaults rather than failing
-/// the whole parse.
+/// `{id, filename, size, mimeType, created, content, thumbnail}`) into
+/// `Vec<Attachment>`. Missing/malformed fields fall back to empty defaults
+/// rather than failing the whole parse.
 pub(crate) fn parse_attachments(fields: &Value) -> Vec<Attachment> {
     fields
         .get("attachment")
@@ -40,6 +40,10 @@ fn parse_attachment(v: &Value) -> Attachment {
         // convention (see `support::summary_from`).
         created: created.chars().take(10).collect(),
         content_url: str_field(v, &["content"]).unwrap_or_default(),
+        // Only present for image attachments; absent (or non-string) for
+        // everything else, which is fine — it's an optional cheaper preview,
+        // not a required field.
+        thumbnail_url: str_field(v, &["thumbnail"]),
     }
 }
 
@@ -105,7 +109,8 @@ mod tests {
                                 "size": 245760,
                                 "mimeType": "image/png",
                                 "created": "2026-07-08T09:00:00.000-0400",
-                                "content": "https://demo.atlassian.net/secure/attachment/10001/accordion-mockup.png"
+                                "content": "https://demo.atlassian.net/secure/attachment/10001/accordion-mockup.png",
+                                "thumbnail": "https://demo.atlassian.net/secure/thumbnail/10001/accordion-mockup.png"
                             }
                         ]
                     }
@@ -127,6 +132,45 @@ mod tests {
             attachments[0].content_url,
             "https://demo.atlassian.net/secure/attachment/10001/accordion-mockup.png"
         );
+        assert_eq!(
+            attachments[0].thumbnail_url.as_deref(),
+            Some("https://demo.atlassian.net/secure/thumbnail/10001/accordion-mockup.png")
+        );
+    }
+
+    #[test]
+    fn fetch_attachments_leaves_thumbnail_url_none_when_absent() {
+        // Non-image attachments (e.g. a PDF) have no `thumbnail` field at
+        // all in Jira's response — that's optional, not an error.
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("GET", "/rest/api/3/issue/DS-1?fields=attachment")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "fields": {
+                        "attachment": [
+                            {
+                                "id": "10002",
+                                "filename": "beforematch-spike-notes.pdf",
+                                "size": 88213,
+                                "mimeType": "application/pdf",
+                                "created": "2026-07-09T09:00:00.000-0400",
+                                "content": "https://demo.atlassian.net/secure/attachment/10002/beforematch-spike-notes.pdf"
+                            }
+                        ]
+                    }
+                }"#,
+            )
+            .create();
+
+        let cfg = test_config(server.url());
+        let attachments = fetch_attachments(&cfg, "DS-1").unwrap();
+
+        mock.assert();
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].thumbnail_url, None);
     }
 
     #[test]

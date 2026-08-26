@@ -130,6 +130,11 @@ pub struct Attachment {
     pub created: String,
     /// Direct download URL for the attachment's content.
     pub content_url: String,
+    /// Jira's `thumbnail` field: a cheaper preview URL, present for image
+    /// attachments and absent otherwise. Cheaper to fetch/decode than
+    /// downloading the full `content_url`, intended for a small in-app
+    /// preview (see issue #130).
+    pub thumbnail_url: Option<String>,
 }
 
 /// A workflow transition available from the current status.
@@ -331,12 +336,37 @@ mod tests {
             created: "2026-07-08".into(),
             content_url: "https://demo.atlassian.net/secure/attachment/10001/accordion-mockup.png"
                 .into(),
+            thumbnail_url: Some(
+                "https://demo.atlassian.net/secure/thumbnail/10001/accordion-mockup.png".into(),
+            ),
         };
         let json = serde_json::to_string(&attachment).unwrap();
         let back: Attachment = serde_json::from_str(&json).unwrap();
         assert_eq!(back.id, attachment.id);
         assert_eq!(back.filename, attachment.filename);
         assert_eq!(back.size, attachment.size);
+        assert_eq!(back.thumbnail_url, attachment.thumbnail_url);
+    }
+
+    #[test]
+    fn attachment_with_no_thumbnail_round_trips_as_none() {
+        // Non-image attachments (e.g. a PDF) have no Jira `thumbnail` field
+        // at all — make sure `None` survives a JSON round-trip rather than
+        // erroring or turning into `Some("null")`.
+        let attachment = Attachment {
+            id: "10002".into(),
+            filename: "beforematch-spike-notes.pdf".into(),
+            mime_type: "application/pdf".into(),
+            size: 88_213,
+            created: "2026-07-09".into(),
+            content_url:
+                "https://demo.atlassian.net/secure/attachment/10002/beforematch-spike-notes.pdf"
+                    .into(),
+            thumbnail_url: None,
+        };
+        let json = serde_json::to_string(&attachment).unwrap();
+        let back: Attachment = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.thumbnail_url, None);
     }
 
     #[test]

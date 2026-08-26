@@ -363,7 +363,7 @@ impl JiraMcpServer {
     }
 
     #[tool(
-        description = "List an issue's file attachments (id, filename, mime type, size, created, download URL). Falls back to demo data if no Jira credentials are configured."
+        description = "List an issue's file attachments (id, filename, mime type, size, created, download URL, and — for image attachments — a cheaper thumbnail URL). Falls back to demo data if no Jira credentials are configured."
     )]
     fn list_attachments(
         &self,

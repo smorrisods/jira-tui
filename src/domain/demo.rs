@@ -418,6 +418,9 @@ fn demo_attachments() -> Vec<Attachment> {
             created: "2026-07-08".into(),
             content_url: "https://demo.atlassian.net/secure/attachment/10001/accordion-mockup.png"
                 .into(),
+            thumbnail_url: Some(
+                "https://demo.atlassian.net/secure/thumbnail/10001/accordion-mockup.png".into(),
+            ),
         },
         Attachment {
             id: "10002".into(),
@@ -428,6 +431,7 @@ fn demo_attachments() -> Vec<Attachment> {
             content_url:
                 "https://demo.atlassian.net/secure/attachment/10002/beforematch-spike-notes.pdf"
                     .into(),
+            thumbnail_url: None,
         },
     ]
 }
@@ -569,6 +573,25 @@ mod tests {
 
         let fallback = demo_detail("DS-0000");
         assert!(fallback.attachments.is_empty());
+    }
+
+    #[test]
+    fn demo_attachments_have_thumbnail_url_only_for_the_image_one() {
+        // The PNG demo attachment should carry a fake thumbnail URL (Jira
+        // only returns `thumbnail` for image attachments); the PDF should
+        // not.
+        let attachments = demo_attachments();
+        let png = attachments
+            .iter()
+            .find(|a| a.mime_type == "image/png")
+            .expect("demo data should include an image attachment");
+        assert!(png.thumbnail_url.is_some());
+
+        let pdf = attachments
+            .iter()
+            .find(|a| a.mime_type == "application/pdf")
+            .expect("demo data should include a non-image attachment");
+        assert_eq!(pdf.thumbnail_url, None);
     }
 
     #[test]
