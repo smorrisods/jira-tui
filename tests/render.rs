@@ -2419,6 +2419,25 @@ fn help_overlay_key_column_has_a_separator_for_long_keys() {
 }
 
 #[test]
+fn nerd_info_popup_shows_version_and_a_graphics_section() {
+    let mut app = demo_app();
+    app.nerd_info_open = true;
+    let text = render(&app);
+    assert!(
+        text.contains(env!("CARGO_PKG_VERSION")),
+        "the popup should show this build's version"
+    );
+    assert!(
+        text.contains("graphics"),
+        "the popup should show a graphics diagnostics section"
+    );
+    assert!(
+        text.contains("terminal"),
+        "the popup should show a terminal env-var section"
+    );
+}
+
+#[test]
 fn footer_shows_grouped_hints_on_a_wide_terminal() {
     // SPEC.md §2: footer hints are grouped under a faint uppercase label
     // (NAV/VIEW/ACT/GO). At a comfortably wide terminal every group for

@@ -24,6 +24,7 @@ pub(crate) fn handle_mouse(app: &mut App, me: MouseEvent) {
     // state) while the modal's own flag stays set, orphaning it over
     // whatever screen is now showing underneath.
     if app.show_help
+        || app.nerd_info_open
         || app.picker_open
         || app.view_picker_open
         || app.assignee_picker_open
@@ -283,6 +284,7 @@ mod tests {
         type ModalCase = (&'static str, fn(&mut App));
         let cases: &[ModalCase] = &[
             ("show_help", |app| app.show_help = true),
+            ("nerd_info_open", |app| app.nerd_info_open = true),
             ("picker_open", |app| app.picker_open = true),
             ("view_picker_open", |app| app.view_picker_open = true),
             ("assignee_picker_open", |app| {

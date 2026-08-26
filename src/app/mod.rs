@@ -127,6 +127,11 @@ pub struct App {
     pub tick: u64,
     pub status: String,
     pub show_help: bool,
+    /// The "nerd info" diagnostics popup (build version, detected terminal
+    /// env vars, detected image graphics capability) — see
+    /// `ui::nerd_info`. Palette-only, no dedicated key; closes on any
+    /// keypress, same shape as `show_help`.
+    pub nerd_info_open: bool,
     pub should_quit: bool,
 
     // Sort + filter.
@@ -572,6 +577,7 @@ impl App {
             tick: 0,
             status,
             show_help: false,
+            nerd_info_open: false,
             should_quit: false,
             sort_key: SortKey::Updated,
             sort_asc: false,

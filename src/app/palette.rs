@@ -62,13 +62,14 @@ pub enum PaletteAction {
     OpenFieldMapping,
     OpenAbout,
     OpenHelp,
+    OpenNerdInfo,
     NewIssue,
 }
 
 pub(crate) struct PaletteRow {
     pub label: String,
     /// Right-aligned keybinding hint — empty when the palette is the only
-    /// way to reach this action (only `OpenInBrowser` today).
+    /// way to reach this action (`OpenInBrowser`, `OpenNerdInfo`).
     pub hint: &'static str,
     pub group: PaletteGroup,
     pub action: PaletteAction,
@@ -296,6 +297,12 @@ impl App {
                 hint: "?",
                 group: PaletteGroup::App,
                 action: PaletteAction::OpenHelp,
+            },
+            PaletteRow {
+                label: "nerd info".into(),
+                hint: "",
+                group: PaletteGroup::App,
+                action: PaletteAction::OpenNerdInfo,
             },
         ]);
         // The direct `F` key is Home/List-only (mapping a custom field only
