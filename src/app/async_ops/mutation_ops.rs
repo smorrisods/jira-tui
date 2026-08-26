@@ -883,9 +883,14 @@ impl App {
     /// above. Guarded two ways against a stale response: the usual
     /// generation check (a newer picker move bumped
     /// `attachment_preview_generation` since this fetch was dispatched), and
-    /// — belt-and-suspenders, since a generation mismatch alone already
-    /// covers every case that matters — confirming the highlighted
-    /// attachment's id still matches the one this preview was fetched for.
+    /// the highlighted attachment's id still matching the one this preview
+    /// was fetched for. The id check is load-bearing, not redundant: a
+    /// manual `r` refresh (`App::refresh_detail`/`apply_detail_loaded`)
+    /// replaces `self.detail` wholesale and calls
+    /// `App::invalidate_attachment_preview` to bump the generation, but
+    /// `attachment_index` itself isn't reset — if the refreshed issue's
+    /// attachment list changed shape, the same index could now point at a
+    /// different attachment than this response was fetched for.
     #[cfg(feature = "images")]
     pub(super) fn apply_attachment_preview_loaded(
         &mut self,

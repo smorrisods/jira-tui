@@ -57,6 +57,10 @@ async fn main() -> Result<()> {
     }
 
     let mut terminal = setup_terminal()?;
+    // Before anything that could panic and leave the terminal in raw
+    // mode/alt-screen with no restoration — including the image-capability
+    // probe below.
+    install_panic_hook();
     // Strictly before `run()`'s `crossterm::EventStream` starts polling
     // stdin: `Picker::from_query_stdio` writes an escape-sequence query and
     // synchronously reads stdin for the terminal's response, which a
@@ -66,7 +70,6 @@ async fn main() -> Result<()> {
     {
         app.image_picker = detect_image_picker();
     }
-    install_panic_hook();
     if app.mouse.enabled {
         let _ = execute!(io::stdout(), EnableMouseCapture);
     }

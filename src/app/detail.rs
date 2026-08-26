@@ -74,6 +74,8 @@ impl App {
     fn resolve_detail_sync(&mut self, key: &str, detail: IssueDetail) {
         self.detail_cache.insert(key.to_string(), detail.clone());
         self.detail = Some(detail);
+        #[cfg(feature = "images")]
+        self.invalidate_attachment_preview();
         self.screen = Screen::Detail;
         if let Some(pos) = self.issues.iter().position(|i| i.key == key) {
             self.selected = pos;
@@ -108,6 +110,8 @@ impl App {
             self.detail_cache.insert(key.clone(), detail.clone());
             if self.screen == Screen::Detail {
                 self.detail = Some(detail);
+                #[cfg(feature = "images")]
+                self.invalidate_attachment_preview();
             }
             self.status = format!("refreshed {key}");
             self.flash(format!("↻ refreshed {key}"));

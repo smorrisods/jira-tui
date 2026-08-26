@@ -149,6 +149,29 @@ impl App {
         async_ops::dispatch_attachment_preview(tx, generation, id, url);
     }
 
+    /// Drops any cached/in-flight attachment preview (`images` feature
+    /// only) — called wherever `self.detail` gets replaced wholesale by a
+    /// manual refresh (`App::refresh_detail`, `apply_detail_loaded`'s
+    /// navigate branch) rather than a fresh picker open/move. Bumping the
+    /// generation alone would drop a same-attachment-id response too (the
+    /// image itself may have changed); clearing the cached preview here
+    /// means the picker falls back to its placeholder until the user moves
+    /// the selection and a fresh fetch dispatches, rather than risking a
+    /// stale image surviving a refresh.
+    #[cfg(feature = "images")]
+    pub(crate) fn invalidate_attachment_preview(&mut self) {
+        *self.attachment_preview.get_mut() = None;
+        self.attachment_preview_generation += 1;
+        let len = self
+            .detail
+            .as_ref()
+            .map(|d| d.attachments.len())
+            .unwrap_or(0);
+        if self.attachment_index >= len {
+            self.attachment_index = len.saturating_sub(1);
+        }
+    }
+
     /// `Enter`/`o` on the picker: open the highlighted attachment's
     /// `content_url` in the system browser — same
     /// success/failure-flash convention as `App::open_highlighted_link`'s

@@ -378,3 +378,40 @@ fn confirm_attachment_upload_on_demo_data_flashes_and_does_no_io() {
         "the flow should close once the confirm key fires, success or not"
     );
 }
+
+/// Regression test for a code-review finding: `App::refresh_detail`
+/// replaces `self.detail` wholesale without going through
+/// `App::open_attachments`/`attachments_move`, so nothing bumped the
+/// preview generation before `App::invalidate_attachment_preview` was added
+/// to that path. Without it, a preview response fetched before the refresh
+/// could still be applied afterward even though it may no longer correspond
+/// to the (possibly reshuffled) attachment now at the same index.
+#[cfg(feature = "images")]
+#[test]
+fn refresh_detail_invalidates_a_cached_attachment_preview() {
+    let mut app = demo_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    app.open_detail();
+    app.open_attachments();
+    let stale_generation = app.attachment_preview_generation;
+    *app.attachment_preview.get_mut() = Some(AttachmentPreview {
+        attachment_id: app.detail.as_ref().unwrap().attachments[0].id.clone(),
+        protocol: app
+            .image_picker
+            .as_ref()
+            .unwrap()
+            .new_resize_protocol(image::DynamicImage::new_rgb8(1, 1)),
+    });
+
+    app.refresh_detail();
+
+    assert_ne!(
+        app.attachment_preview_generation, stale_generation,
+        "refreshing the open issue must bump the preview generation"
+    );
+    assert!(
+        app.attachment_preview.borrow().is_none(),
+        "refreshing the open issue must drop any cached preview, not just its generation"
+    );
+}

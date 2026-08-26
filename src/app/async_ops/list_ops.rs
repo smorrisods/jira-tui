@@ -424,6 +424,8 @@ impl App {
         if navigate {
             self.detail_scroll = 0;
             self.detail = Some(*detail);
+            #[cfg(feature = "images")]
+            self.invalidate_attachment_preview();
             self.screen = Screen::Detail;
             if let Some(pos) = self.issues.iter().position(|i| i.key == key) {
                 self.selected = pos;
