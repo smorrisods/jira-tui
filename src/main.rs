@@ -104,7 +104,32 @@ async fn run(terminal: &mut Term, app: &mut App) -> Result<()> {
     // even if the initial state resolves to the plain "jira-tui" title.
     let mut window_title = String::new();
 
+    // Whether *any* modal/overlay (`App::any_modal_open`) was open on the
+    // *previous* iteration's render — every one of them, not just the
+    // largest (help/nerd-info), turned out to leave a Sixel/iTerm2 image's
+    // pixels ghosted once closed (confirmed against a real terminal this
+    // session; even the command palette, which barely overlaps the image
+    // area, was enough). See `erase_image_prone_areas`'s own doc comment
+    // for why a plain ratatui redraw doesn't already handle this.
+    #[cfg(feature = "images")]
+    let mut any_modal_was_open = false;
+
     loop {
+        // A Sixel/iTerm2 image's pixels aren't reliably cleared by a normal
+        // ratatui redraw once something else has been drawn over them and
+        // removed again (see `erase_image_prone_areas`) — do the scoped
+        // erase for whichever pane last held one, right before the frame
+        // that's about to render the overlay-free content again, on every
+        // open<->close transition of *any* modal that can cover one.
+        #[cfg(feature = "images")]
+        {
+            let any_modal_is_open = app.any_modal_open();
+            if any_modal_is_open != any_modal_was_open {
+                erase_image_prone_areas(terminal, app);
+            }
+            any_modal_was_open = any_modal_is_open;
+        }
+
         // Cloned immediately: `Terminal::draw` swaps its double buffer
         // before returning, so `terminal.current_buffer_mut()` queried any
         // later in this loop iteration would hand back the blank buffer
@@ -213,6 +238,82 @@ fn detect_image_picker() -> Option<ratatui_image::picker::Picker> {
         return None;
     }
     ratatui_image::picker::Picker::from_query_stdio().ok()
+}
+
+/// Erase `App::detail_main_area`/`quick_view_area` (whichever are non-empty
+/// — a plain `Rect::default()` from a screen/session that's never rendered
+/// either pane is skipped) at the terminal level, bypassing ratatui's usual
+/// buffer diff entirely. Only worth calling around an `App::any_modal_open`
+/// transition — see the run loop's own call site.
+///
+/// Why this exists: `ratatui-image`'s Sixel/iTerm2 protocols paint pixels
+/// directly to the terminal, outside ratatui's normal character-cell model.
+/// The crate's own `SlicedProtocol` already re-issues a proper erase (ECH,
+/// not a plain space/blank-character overwrite — the crate's own docs note
+/// blanks alone don't reliably clear graphics-protocol pixels on every
+/// terminal) for its own believed image rect on every single render call —
+/// but confirmed against a real terminal this session, that alone wasn't
+/// enough: opening so much as the command palette over an image and closing
+/// it again still left visible ghosting, meaning either the ghosting
+/// extends past the image's own exact cell rect (font-size/pixel rounding
+/// slop, or an overlay's footprint larger than the image's) or this
+/// particular terminal's Sixel implementation doesn't fully honour the
+/// crate's own erase in every case. Either way, explicitly erasing the
+/// *whole* pane (not just the image's tight rect) at the moment an overlay
+/// is about to stop covering it directly addresses the actual observed
+/// symptom, independent of exactly which of those is the underlying cause.
+///
+/// Deliberately writes straight to `terminal.backend_mut()` rather than
+/// going through a `ratatui::widgets::Clear` widget in the next `Frame` —
+/// `Clear` only marks cells as blank *within ratatui's own buffer model*,
+/// which is exactly the "overwriting with blank characters" case the
+/// crate's docs say isn't sufficient for Sixel; this needs the same
+/// terminal-level ECH primitive the crate itself uses, issued once, right
+/// before the next `terminal.draw` call composes the real content.
+///
+/// Experimental: erasing the same terminal-level way (ECH + explicit
+/// per-row cursor positioning) as the crate's own `clear_area` should be
+/// safe for ratatui's cursor-position bookkeeping — every backend
+/// implementation re-issues an explicit absolute move for the first cell of
+/// any diffed run, rather than trusting a cached "cursor is already here"
+/// assumption across an external write it didn't itself perform — but this
+/// hasn't been verified against ratatui's crossterm backend source beyond
+/// that general expectation. If a stray misplaced character ever shows up
+/// immediately after a modal closes on an `images` build, that assumption
+/// is the first thing to revisit.
+#[cfg(feature = "images")]
+fn erase_image_prone_areas(terminal: &mut Term, app: &App) {
+    use std::fmt::Write as _;
+    use std::io::Write as _;
+
+    let mut seq = String::new();
+    for rect in [app.detail_main_area.get(), app.quick_view_area.get()] {
+        if rect.width == 0 || rect.height == 0 {
+            continue;
+        }
+        for row in 0..rect.height {
+            // CUP (absolute cursor position, 1-indexed) then ECH (erase
+            // `width` characters from the cursor without moving it) — the
+            // same two primitives `ratatui-image`'s own `clear_area` uses
+            // internally, just looped here per row via absolute
+            // positioning rather than relative cursor-down movements,
+            // since there's no existing cursor position worth preserving
+            // around this call.
+            let _ = write!(
+                seq,
+                "\x1b[{};{}H\x1b[{}X",
+                rect.y + row + 1,
+                rect.x + 1,
+                rect.width
+            );
+        }
+    }
+    if seq.is_empty() {
+        return;
+    }
+    let backend = terminal.backend_mut();
+    let _ = backend.write_all(seq.as_bytes());
+    let _ = backend.flush();
 }
 
 // ── Terminal lifecycle ───────────────────────────────────────────────────────
