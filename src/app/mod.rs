@@ -21,7 +21,7 @@ use ratatui::layout::Rect;
 use crate::adf;
 use crate::config::{self, Settings};
 use crate::domain::{
-    AssignableUser, IssueDetail, IssueSummary, Project, Source, Version, ViewKind,
+    AssignableUser, IssueDetail, IssueSummary, Project, Source, Sprint, Version, ViewKind,
 };
 use crate::git::GitContext;
 
@@ -49,6 +49,7 @@ mod release;
 mod search;
 mod sort_filter;
 mod spell_suggest;
+mod sprint;
 mod transitions;
 mod tree;
 mod versions;
@@ -64,7 +65,7 @@ pub use attachments::AttachmentPreview;
 pub use attachments::AttachmentUpload;
 pub use board::BoardSelection;
 pub use edit::{EditTarget, EditorState};
-pub use field_mapping::{FieldMappingOutcome, FieldMappingState};
+pub use field_mapping::{FieldMappingOutcome, FieldMappingState, FieldMappingTarget};
 pub(crate) use history::{NavEntry, NavHistory};
 #[cfg(feature = "images")]
 pub use inline_images::{BoundedCache, InlineImageKey};
@@ -79,6 +80,7 @@ pub use release::{ReleaseBulkKind, ReleaseListMode, ReleaseState};
 pub use search::{SearchPurpose, SearchRow, SearchState};
 pub use sort_filter::SortKey;
 pub use spell_suggest::SpellSuggestState;
+pub use sprint::{SprintPickerState, SprintRow};
 pub use tree::ListViewMode;
 pub(crate) use tree::TreeRow;
 pub use versions::{VersionField, VersionPickerState};
@@ -485,6 +487,21 @@ pub struct App {
     /// instead — see `App::project_versions_source`). Also backs the
     /// release review screen's version list.
     pub(crate) project_versions: Vec<Version>,
+    /// Whether a sprint change is currently in flight. Mirrors
+    /// `version_pending`: `open_sprint_picker` refuses to reopen while this
+    /// is set, so `sprint_generation` can never go stale mid-flight.
+    pub(crate) sprint_pending: bool,
+    pub(crate) sprint_generation: u64,
+    /// Whether the sprint picker (`S`) is currently open.
+    pub sprint_picker_open: bool,
+    pub sprint_picker: SprintPickerState,
+    /// Every open (active/future) sprint on the configured board, as fetched
+    /// by `async_ops::dispatch_open_sprints` for a live session (empty for
+    /// demo/cache sessions, which fall back to `domain::demo_open_sprints()`
+    /// instead — see `App::sprint_rows_source`). Empty (rather than an
+    /// error) when `sprint_board_id` isn't configured — the picker still
+    /// offers "Remove from sprint" either way.
+    pub(crate) open_sprints: Vec<Sprint>,
     /// The release review screen's state (`w`) — see `app::release`.
     pub release: ReleaseState,
     /// Bumped on every drilled-into version (including re-entering the
@@ -689,6 +706,11 @@ impl App {
             version_picker_open: false,
             version_picker: VersionPickerState::default(),
             project_versions: Vec::new(),
+            sprint_pending: false,
+            sprint_generation: 0,
+            sprint_picker_open: false,
+            sprint_picker: SprintPickerState::default(),
+            open_sprints: Vec::new(),
             release: ReleaseState::default(),
             release_generation: 0,
             release_bulk_generation: 0,
@@ -732,6 +754,11 @@ impl App {
             async_ops::dispatch_teammate_discovery(app.events_tx.clone());
             async_ops::dispatch_project_versions(app.events_tx.clone());
             async_ops::dispatch_accessible_projects(app.events_tx.clone());
+            // Only meaningful once `sprint_board_id` is configured — see
+            // `dispatch_open_sprints`'s own blocking half, which no-ops
+            // (empty list) without one rather than needing a synchronous
+            // check here.
+            async_ops::dispatch_open_sprints(app.events_tx.clone());
         }
 
         app

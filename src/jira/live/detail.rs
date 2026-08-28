@@ -9,6 +9,7 @@ use super::attachments::parse_attachments;
 use super::comments::fetch_comments;
 use super::mutations::fetch_transitions;
 use super::search::search_issues;
+use super::sprint::{current_sprint, parse_sprint_field};
 use super::support::{priority_from, str_field};
 use crate::domain::{ChildIssue, IssueDetail, IssueLink};
 
@@ -19,6 +20,10 @@ pub fn fetch_detail(cfg: &Config, key: &str) -> anyhow::Result<IssueDetail> {
     if let Some(ac_field) = &cfg.acceptance_criteria_field {
         fields.push(',');
         fields.push_str(ac_field);
+    }
+    if let Some(sprint_field) = &cfg.sprint_field {
+        fields.push(',');
+        fields.push_str(sprint_field);
     }
     let path = format!("/rest/api/3/issue/{key}?fields={fields}");
     let issue = super::support::get(cfg, &path)?;
@@ -83,6 +88,10 @@ pub fn fetch_detail(cfg: &Config, key: &str) -> anyhow::Result<IssueDetail> {
             .acceptance_criteria_field
             .as_ref()
             .and_then(|field| f.get(field).cloned()),
+        sprint: cfg.sprint_field.as_ref().and_then(|field| {
+            let sprints = parse_sprint_field(f.get(field)?);
+            current_sprint(&sprints)
+        }),
         transitions: fetch_transitions(cfg, key).unwrap_or_default(),
         comments: fetch_comments(cfg, key).unwrap_or_default(),
         attachments: parse_attachments(&f),
@@ -255,6 +264,111 @@ mod tests {
 
         issue_mock.assert();
         assert_eq!(detail.acceptance_criteria, None);
+    }
+
+    #[test]
+    fn fetch_detail_includes_the_configured_sprint_field_and_picks_the_active_sprint() {
+        let mut server = mockito::Server::new();
+        let issue_mock = server
+            .mock(
+                "GET",
+                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,fixVersions,versions,parent,issuelinks,description,subtasks,attachment,customfield_10020",
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "fields": {
+                        "summary": "Sprint-tracked issue",
+                        "customfield_10020": [
+                            {"id": 5375, "name": "Design Sprint 10", "state": "closed", "goal": ""},
+                            {"id": 6415, "name": "Design Sprint 81", "state": "active", "boardId": 843, "goal": ""}
+                        ]
+                    }
+                }"#,
+            )
+            .create();
+        server
+            .mock("GET", "/rest/api/3/issue/DS-1/transitions")
+            .with_status(404)
+            .create();
+
+        let mut cfg = test_config(server.url());
+        cfg.sprint_field = Some("customfield_10020".into());
+
+        let detail = fetch_detail(&cfg, "DS-1").unwrap();
+
+        issue_mock.assert();
+        let sprint = detail.sprint.expect("an active sprint should be picked");
+        assert_eq!(sprint.id, "6415");
+        assert_eq!(sprint.name, "Design Sprint 81");
+        assert_eq!(sprint.state, "active");
+    }
+
+    #[test]
+    fn fetch_detail_omits_sprint_when_not_configured() {
+        let mut server = mockito::Server::new();
+        // No sprint_field configured, so the request must not ask for any
+        // customfield_* at all — this mock only matches that exact fields
+        // list (no trailing custom field), even though the response itself
+        // happens to carry a sprint-shaped field Jira wasn't asked for.
+        let issue_mock = server
+            .mock(
+                "GET",
+                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,fixVersions,versions,parent,issuelinks,description,subtasks,attachment",
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"fields": {"summary": "No sprint tracking here"}}"#)
+            .create();
+        server
+            .mock("GET", "/rest/api/3/issue/DS-1/transitions")
+            .with_status(404)
+            .create();
+
+        let cfg = test_config(server.url());
+        let detail = fetch_detail(&cfg, "DS-1").unwrap();
+
+        issue_mock.assert();
+        assert_eq!(detail.sprint, None);
+    }
+
+    #[test]
+    fn fetch_detail_sprint_is_none_when_configured_but_issue_has_no_current_sprint() {
+        let mut server = mockito::Server::new();
+        let issue_mock = server
+            .mock(
+                "GET",
+                "/rest/api/3/issue/DS-1?fields=summary,status,issuetype,priority,assignee,reporter,labels,components,fixVersions,versions,parent,issuelinks,description,subtasks,attachment,customfield_10020",
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "fields": {
+                        "summary": "Only sprint history, nothing current",
+                        "customfield_10020": [
+                            {"id": 1, "name": "Old Sprint", "state": "closed", "goal": ""}
+                        ]
+                    }
+                }"#,
+            )
+            .create();
+        server
+            .mock("GET", "/rest/api/3/issue/DS-1/transitions")
+            .with_status(404)
+            .create();
+
+        let mut cfg = test_config(server.url());
+        cfg.sprint_field = Some("customfield_10020".into());
+
+        let detail = fetch_detail(&cfg, "DS-1").unwrap();
+
+        issue_mock.assert();
+        assert_eq!(
+            detail.sprint, None,
+            "sprint_field is configured, but only closed history exists — no current sprint"
+        );
     }
 
     #[test]

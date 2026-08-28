@@ -98,6 +98,14 @@ pub struct IssueDetail {
     /// (see `acceptance_criteria_field` in `config.toml`). `None` if the
     /// field isn't configured or the issue has no value for it.
     pub acceptance_criteria: Option<Value>,
+    /// This issue's current sprint, if Sprint tracking is configured on this
+    /// Jira instance (`sprint_field`) and resolvable — see `Sprint`'s doc
+    /// comment for the "current" disambiguation rule. `None` either means
+    /// Sprint tracking isn't configured at all, or it is and this issue
+    /// simply has no current sprint (e.g. it's in the backlog) —
+    /// `App::sprint_field_configured` is what the Detail screen's meta panel
+    /// actually checks to tell those two cases apart for display purposes.
+    pub sprint: Option<Sprint>,
     pub transitions: Vec<Transition>,
     /// All comments, oldest first. Fetched in full via pagination in live
     /// mode (see `jira::live::fetch_comments`); a handful of canned entries
@@ -105,6 +113,22 @@ pub struct IssueDetail {
     pub comments: Vec<Comment>,
     /// This issue's file attachments (Jira's `attachment` field).
     pub attachments: Vec<Attachment>,
+}
+
+/// A Jira sprint (Jira Software's `customfield_XXXXX` — configurable via
+/// `sprint_field` in `config.toml`, same pattern as `acceptance_criteria`
+/// below). Unlike a plain field, the issue's raw custom field can carry
+/// *sprint history* (every sprint it was ever placed in) — `IssueDetail::sprint`
+/// is already resolved down to the one "current" sprint (see
+/// `jira::live::sprint::current_sprint`: prefers `active`, falls back to
+/// `future`, ignores `closed` history), so this type only ever represents a
+/// single, presently-relevant sprint.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Sprint {
+    pub id: String,
+    pub name: String,
+    /// Raw Jira sprint state: `"active"`, `"future"`, or `"closed"`.
+    pub state: String,
 }
 
 /// A single issue comment.

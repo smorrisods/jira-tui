@@ -63,7 +63,14 @@ fn draw_wide(
         .split(area);
 
     let mut wide = app.with_detail_media_sizing(cols[0].width, |media| {
-        render::wide_detail(detail, current_user, updated, cols[0].width as usize, media)
+        render::wide_detail(
+            detail,
+            current_user,
+            updated,
+            app.sprint_field_configured(),
+            cols[0].width as usize,
+            media,
+        )
     });
     if let Some(target) = render::wide_detail_links(&wide)
         .get(app.link_index)
@@ -228,6 +235,7 @@ fn draw_narrow(
             current_user,
             updated,
             app.facts_folded,
+            app.sprint_field_configured(),
             area.width as usize,
             media,
         )

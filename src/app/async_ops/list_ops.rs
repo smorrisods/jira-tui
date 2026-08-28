@@ -4,7 +4,8 @@
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::domain::{
-    AssignableUser, IssueDetail, IssueSummary, IssueType, Project, Source, Version, ViewKind,
+    AssignableUser, IssueDetail, IssueSummary, IssueType, Project, Source, Sprint, Version,
+    ViewKind,
 };
 
 use super::super::loader::load_issues_for;
@@ -128,6 +129,41 @@ fn project_versions_blocking() -> Vec<Version> {
         if let Some(cfg) = crate::jira::Config::load() {
             if let Ok(versions) = crate::jira::list_versions(&cfg, &cfg.project) {
                 return versions;
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// Spawn a one-shot background fetch of the configured board's open
+/// (active/future) sprints, sending the result back as
+/// `AppEvent::OpenSprintsLoaded`. Dispatched once from `App::new` for a
+/// genuine live session, mirroring `dispatch_project_versions` — so the
+/// sprint picker (`S`) has data the moment it's opened, without a dedicated
+/// fetch-on-open round-trip.
+pub(crate) fn dispatch_open_sprints(tx: UnboundedSender<AppEvent>) {
+    tokio::spawn(async move {
+        let sprints = tokio::task::spawn_blocking(open_sprints_blocking)
+            .await
+            .unwrap_or_default();
+        let _ = tx.send(AppEvent::OpenSprintsLoaded { sprints });
+    });
+}
+
+/// Mirrors `project_versions_blocking`'s "no credentials/failure means an
+/// empty list" shape — also empty (rather than an error) when
+/// `sprint_board_id` isn't configured, since there's nothing to ask Jira
+/// for without a board id and this is a best-effort startup warm-up, not a
+/// user-initiated action worth surfacing a failure for.
+#[allow(unused_variables)]
+fn open_sprints_blocking() -> Vec<Sprint> {
+    #[cfg(feature = "live")]
+    {
+        if let Some(cfg) = crate::jira::Config::load() {
+            if let Some(board_id) = &cfg.sprint_board_id {
+                if let Ok(sprints) = crate::jira::list_open_sprints(&cfg, board_id) {
+                    return sprints;
+                }
             }
         }
     }
@@ -465,6 +501,20 @@ impl App {
         self.project_versions = versions;
         if self.screen == Screen::Release && self.release.drilled.is_none() {
             self.rebuild_release_versions();
+        }
+    }
+
+    /// Applies `AppEvent::OpenSprintsLoaded` — see `dispatch_open_sprints`
+    /// above. Mirrors `apply_project_versions_loaded`: carries no
+    /// `generation`, since it only replaces `App::open_sprints` wholesale
+    /// and can't be made stale by an unrelated refresh/switch_view. Also
+    /// refreshes the picker's own rows if it happens to already be open, so
+    /// a slow startup fetch landing while the user is already browsing the
+    /// (until now, empty) picker doesn't leave it stuck showing nothing.
+    pub(super) fn apply_open_sprints_loaded(&mut self, sprints: Vec<Sprint>) {
+        self.open_sprints = sprints;
+        if self.sprint_picker_open {
+            self.sprint_picker.rows = self.sprint_rows_source();
         }
     }
 

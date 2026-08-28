@@ -1,5 +1,6 @@
 //! The field-mapping screen: search a live Jira site's custom fields and
-//! pick one to map "Acceptance Criteria" to (or clear the mapping).
+//! pick one to map to the currently selected target (`app::field_mapping::
+//! FieldMappingTarget`) — `Tab` switches which target you're editing.
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -17,8 +18,13 @@ pub(crate) fn draw_field_mapping(f: &mut Frame, app: &App, area: Rect) {
         .constraints([Constraint::Length(3), Constraint::Min(3)])
         .split(area);
 
-    // Query input line.
-    let input_block = card_bordered("  map acceptance criteria field  ", accent(), accent());
+    // Query input line — names the target so `Tab`-switching is obvious in
+    // the title, not just inferred from the results list below.
+    let input_title = format!(
+        "  map {} field · tab: switch  ",
+        app.field_mapping.target.label().to_lowercase()
+    );
+    let input_block = card_bordered(&input_title, accent(), accent());
     let input_inner = input_block.inner(rows[0]);
     f.render_widget(input_block, rows[0]);
     f.render_widget(

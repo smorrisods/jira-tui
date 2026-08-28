@@ -3066,3 +3066,29 @@ fn new_issue_form_records_each_fields_area() {
         "the three fields should be recorded top-to-bottom in form order"
     );
 }
+
+#[test]
+fn field_mapping_screen_shows_the_current_target_and_a_tab_hint() {
+    use jira_tui::app::FieldMappingTarget;
+
+    let mut app = demo_app();
+    app.screen = Screen::FieldMapping;
+    app.field_mapping.target = FieldMappingTarget::Sprint;
+    app.field_mapping.catalog = vec![
+        (String::new(), "— none — don't track Sprint".into()),
+        ("customfield_10020".into(), "Sprint".into()),
+    ];
+    app.field_mapping.selected = 1;
+    app.field_mapping.current_mapping = Some("customfield_10020".into());
+
+    let text = render(&app);
+
+    assert!(
+        text.contains("sprint") && text.contains("tab"),
+        "the input line should name the current target and hint at Tab to switch, got: {text}"
+    );
+    assert!(
+        text.contains("Sprint"),
+        "the catalog row for the mapped field should render"
+    );
+}

@@ -68,6 +68,7 @@ impl App {
             || self.attachment_upload.is_some()
             || self.new_issue_type_picker_open
             || self.project_picker_open
+            || self.sprint_picker_open
     }
 
     /// `a` (or the command palette's "about"): open the About screen,

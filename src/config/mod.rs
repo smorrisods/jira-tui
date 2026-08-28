@@ -128,8 +128,27 @@ const DEFAULT_CONFIG: &str = r#"# jira-tui configuration
 # Optional: custom field ID for "Acceptance Criteria" on your Jira site
 # (Settings -> Issues -> Custom fields; every site assigns its own numeric
 # ID). Leave commented out to skip fetching acceptance criteria entirely.
-# You can also find and set this from within jira-tui — press `F`.
+# You can also find and set this from within jira-tui — press `F` (Tab
+# switches which field you're mapping if you have more than one, e.g. Sprint
+# below).
 # acceptance_criteria_field = "customfield_10001"
+
+# Optional: custom field ID for "Sprint" on your Jira site — like
+# acceptance_criteria_field above, this is instance-specific (every site
+# assigns its own numeric ID), and you can also find and set it from within
+# jira-tui (press `F`, then Tab to switch to Sprint). Leave commented out to
+# skip fetching/showing Sprint entirely; the sprint picker (`S`) refuses to
+# open without it.
+# sprint_field = "customfield_10020"
+
+# Optional: the Scrum board ID the sprint picker (`S`) offers sprints from
+# (Settings -> your board's URL has ?rapidView=<id>, or GET
+# /rest/agile/1.0/board?projectKeyOrId=<project> lists your project's
+# boards). There's no reliable auto-discovery — a project can have several
+# boards — so this is opt-in too. Leave commented out and the picker still
+# lets you remove an issue from its sprint (back to the backlog), just not
+# choose a new one.
+# sprint_board_id = "843"
 
 # Optional: path to a file containing just your API token, if you'd rather
 # not use the JIRA_API_TOKEN env var or the default
@@ -244,10 +263,15 @@ pub fn save_settings(base_url: &str, email: &str, project: &str) -> Result<PathB
     set_config_key("project", Some(project))
 }
 
-/// Map (or clear) the "Acceptance Criteria" custom field, preserving the
-/// rest of `config.toml`. `None` clears any existing mapping.
-pub fn save_field_mapping(acceptance_criteria_field: Option<&str>) -> Result<PathBuf> {
-    set_config_key("acceptance_criteria_field", acceptance_criteria_field)
+/// Map (or clear) a custom field, preserving the rest of `config.toml` —
+/// `key` is the `config.toml` key to write (e.g. `"acceptance_criteria_field"`,
+/// `"sprint_field"`), matching `app::field_mapping::FieldMappingTarget::config_key`.
+/// `None` clears any existing mapping. Generalized from an
+/// acceptance-criteria-only signature once the field-mapping screen (`F`)
+/// grew a second target (Sprint) — `set_config_key` underneath was already
+/// field-agnostic, only this wrapper's name/signature were narrow.
+pub fn save_field_mapping(key: &str, value: Option<&str>) -> Result<PathBuf> {
+    set_config_key(key, value)
 }
 
 /// Set whether the local issue cache is enabled, preserving the rest of
@@ -319,7 +343,7 @@ mod tests {
         assert_eq!(kv.get("acceptance_criteria_field"), None);
 
         // Mapping a custom field preserves the rest of config.toml.
-        save_field_mapping(Some("customfield_10001")).unwrap();
+        save_field_mapping("acceptance_criteria_field", Some("customfield_10001")).unwrap();
         let kv = read_kv();
         assert_eq!(
             kv.get("acceptance_criteria_field").map(String::as_str),
@@ -341,7 +365,7 @@ mod tests {
         );
 
         // Clearing the mapping removes the key entirely.
-        save_field_mapping(None).unwrap();
+        save_field_mapping("acceptance_criteria_field", None).unwrap();
         assert_eq!(read_kv().get("acceptance_criteria_field"), None);
 
         // Token file path override round-trips and can be cleared too.
@@ -362,7 +386,7 @@ mod tests {
             "# a comment I wrote myself\nbase_url = \"https://x.atlassian.net\"\nemail = \"me@example.com\"\nproject = \"DS\"\nmouse = false\n# trailing comment\n",
         )
         .unwrap();
-        save_field_mapping(Some("customfield_20002")).unwrap();
+        save_field_mapping("acceptance_criteria_field", Some("customfield_20002")).unwrap();
         let rewritten = std::fs::read_to_string(&config_toml_path).unwrap();
         assert!(
             rewritten.contains("# a comment I wrote myself"),

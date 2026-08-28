@@ -56,8 +56,14 @@ impl App {
         self.with_detail_media_sizing(width as u16, |media| {
             match detail_layout_for_width(self.detail_area.get().width) {
                 DetailLayout::Wide => {
-                    let wide =
-                        crate::render::wide_detail(detail, &current_user, &updated, width, media);
+                    let wide = crate::render::wide_detail(
+                        detail,
+                        &current_user,
+                        &updated,
+                        self.sprint_field_configured(),
+                        width,
+                        media,
+                    );
                     (wide.main.comments_header, wide.main.comment_starts)
                 }
                 DetailLayout::Narrow => {
@@ -66,6 +72,7 @@ impl App {
                         &current_user,
                         &updated,
                         self.facts_folded,
+                        self.sprint_field_configured(),
                         width,
                         media,
                     );

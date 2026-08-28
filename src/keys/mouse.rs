@@ -302,6 +302,11 @@ mod tests {
                 app.new_issue_type_picker_open = true
             }),
             ("project_picker_open", |app| app.project_picker_open = true),
+            ("sprint_picker_open", |app| {
+                app.selected = 0;
+                app.open_detail();
+                app.open_sprint_picker();
+            }),
         ];
 
         for (name, set_flag) in cases {

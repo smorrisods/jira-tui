@@ -66,6 +66,7 @@ impl App {
                     detail,
                     &current_user,
                     &updated,
+                    self.sprint_field_configured(),
                     width,
                     media,
                 )),
@@ -75,6 +76,7 @@ impl App {
                         &current_user,
                         &updated,
                         self.facts_folded,
+                        self.sprint_field_configured(),
                         width,
                         media,
                     )
@@ -137,6 +139,7 @@ impl App {
                             &current_user,
                             &updated,
                             self.facts_folded,
+                            self.sprint_field_configured(),
                             width,
                             media,
                         )
@@ -146,7 +149,14 @@ impl App {
                     _ => None,
                 },
                 DetailLayout::Wide => {
-                    let wide = render::wide_detail(detail, &current_user, &updated, width, media);
+                    let wide = render::wide_detail(
+                        detail,
+                        &current_user,
+                        &updated,
+                        self.sprint_field_configured(),
+                        width,
+                        media,
+                    );
                     Some(match pane {
                         DetailPane::Identity => wide.identity.lines,
                         DetailPane::Main => wide.main.lines,

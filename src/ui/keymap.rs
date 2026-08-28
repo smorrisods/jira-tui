@@ -106,6 +106,11 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
                Otherwise: release review — versions, drill into one for its issues by status",
     },
     KeyHint {
+        key: "S",
+        desc: "move an issue into a sprint, or back to the backlog (needs sprint_field \
+               configured in config.toml)",
+    },
+    KeyHint {
         key: "s (release)",
         desc: "cycle the version list's grouping: split unreleased/released (default) or flat",
     },
@@ -163,7 +168,7 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
     },
     KeyHint {
         key: "F",
-        desc: "map a custom field (e.g. Acceptance Criteria)",
+        desc: "map a custom field (Acceptance Criteria, Sprint — Tab to switch)",
     },
     KeyHint {
         key: "a",

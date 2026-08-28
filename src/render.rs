@@ -164,9 +164,28 @@ fn identity_lines(detail: &IssueDetail) -> Vec<Line<'static>> {
     ]
 }
 
+/// The "sprint" fact's value, shared by the meta panel (`meta_lines`) and
+/// the narrow layout's facts grid (`facts_pairs`) — `None` when Sprint isn't
+/// tracked on this instance at all (`sprint_configured` false, see
+/// `App::sprint_field_configured`), so the row is omitted entirely rather
+/// than showing a possibly-misleading "none" for an instance that was never
+/// asked about Sprint in the first place. `Some("none")` when it *is*
+/// tracked but this particular issue has no current sprint (e.g. it's in
+/// the backlog) — a real, displayable fact, not an absence of one.
+fn sprint_fact(detail: &IssueDetail, sprint_configured: bool) -> Option<String> {
+    if !sprint_configured {
+        return None;
+    }
+    Some(match &detail.sprint {
+        Some(s) if s.state == "active" => s.name.clone(),
+        Some(s) => format!("{} ({})", s.name, s.state),
+        None => "none".to_string(),
+    })
+}
+
 /// Assignee/reporter/parent/component/labels, one per line, plus a trailing
 /// "updated" line.
-fn meta_lines(detail: &IssueDetail, updated: &str) -> Vec<Line<'static>> {
+fn meta_lines(detail: &IssueDetail, updated: &str, sprint_configured: bool) -> Vec<Line<'static>> {
     let mut lines = vec![Line::from(Span::styled(
         format!(
             "assignee: {}",
@@ -215,6 +234,12 @@ fn meta_lines(detail: &IssueDetail, updated: &str) -> Vec<Line<'static>> {
             Style::default().fg(muted()),
         )));
     }
+    if let Some(sprint) = sprint_fact(detail, sprint_configured) {
+        lines.push(Line::from(Span::styled(
+            format!("sprint: {sprint}"),
+            Style::default().fg(muted()),
+        )));
+    }
     lines.push(Line::from(Span::styled(
         format!("updated: {updated}"),
         Style::default().fg(muted()),
@@ -224,7 +249,11 @@ fn meta_lines(detail: &IssueDetail, updated: &str) -> Vec<Line<'static>> {
 
 /// The facts panel's kv pairs, in display order — shared by `facts_kv_lines`
 /// (two per row) and `folded_facts_line` (one compact summary).
-fn facts_pairs(detail: &IssueDetail, updated: &str) -> Vec<(&'static str, String)> {
+fn facts_pairs(
+    detail: &IssueDetail,
+    updated: &str,
+    sprint_configured: bool,
+) -> Vec<(&'static str, String)> {
     let mut pairs = vec![(
         "assignee",
         detail
@@ -250,14 +279,21 @@ fn facts_pairs(detail: &IssueDetail, updated: &str) -> Vec<(&'static str, String
     if !detail.affects_versions.is_empty() {
         pairs.push(("affects version(s)", detail.affects_versions.join(", ")));
     }
+    if let Some(sprint) = sprint_fact(detail, sprint_configured) {
+        pairs.push(("sprint", sprint));
+    }
     pairs.push(("updated", updated.to_string()));
     pairs
 }
 
 /// Narrow Detail's facts panel body (SPEC.md §6): "two-pairs-per-row kv
 /// grid".
-fn facts_kv_lines(detail: &IssueDetail, updated: &str) -> Vec<Line<'static>> {
-    facts_pairs(detail, updated)
+fn facts_kv_lines(
+    detail: &IssueDetail,
+    updated: &str,
+    sprint_configured: bool,
+) -> Vec<Line<'static>> {
+    facts_pairs(detail, updated, sprint_configured)
         .chunks(2)
         .map(|chunk| {
             let mut spans = Vec::new();
@@ -702,12 +738,16 @@ pub fn wide_detail(
     detail: &IssueDetail,
     current_user: &str,
     updated: &str,
+    sprint_configured: bool,
     main_width: usize,
     media: &adf::MediaSizing,
 ) -> WideDetail {
     let identity = linkify_panel(identity_lines(detail), DetailPane::Identity);
     let workflow = linkify_panel(workflow_lines(detail), DetailPane::Workflow);
-    let meta = linkify_panel(meta_lines(detail, updated), DetailPane::Meta);
+    let meta = linkify_panel(
+        meta_lines(detail, updated, sprint_configured),
+        DetailPane::Meta,
+    );
     let links = linkify_panel(links_lines(detail), DetailPane::Links);
     let children = linkify_panel(children_lines(detail), DetailPane::Children);
     let attachments = linkify_panel(attachments_lines(detail), DetailPane::Attachments);
@@ -773,6 +813,7 @@ pub fn narrow_detail(
     current_user: &str,
     updated: &str,
     facts_folded: bool,
+    sprint_configured: bool,
     width: usize,
     media: &adf::MediaSizing,
 ) -> NarrowDetail {
@@ -781,7 +822,7 @@ pub fn narrow_detail(
     if facts_folded {
         lines.push(folded_facts_line(detail, updated));
     } else {
-        lines.extend(facts_kv_lines(detail, updated));
+        lines.extend(facts_kv_lines(detail, updated, sprint_configured));
         lines.extend(workflow_lines(detail));
     }
     lines.push(divider());
@@ -1405,7 +1446,14 @@ mod link_tests {
     #[test]
     fn wide_detail_main_offsets_are_valid_indices() {
         let detail = demo_detail(&demo_issues()[1].key);
-        let wide = wide_detail(&detail, "you", "12m ago", 120, &adf::MediaSizing::Disabled);
+        let wide = wide_detail(
+            &detail,
+            "you",
+            "12m ago",
+            true,
+            120,
+            &adf::MediaSizing::Disabled,
+        );
         if let Some(header) = wide.main.comments_header {
             assert!(header < wide.main.lines.len());
         }
@@ -1427,12 +1475,68 @@ mod link_tests {
     }
 
     #[test]
+    fn meta_lines_omits_the_sprint_row_when_not_configured() {
+        let detail = demo_detail(&demo_issues()[1].key); // DS-2725, has a demo sprint
+        assert!(detail.sprint.is_some());
+        let lines = meta_lines(&detail, "12m ago", false);
+        let text: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(
+            !text.contains("sprint"),
+            "sprint_configured=false must hide the row entirely, even though this \
+             issue has a sprint in demo data"
+        );
+    }
+
+    #[test]
+    fn meta_lines_shows_the_active_sprint_by_name_when_configured() {
+        let detail = demo_detail(&demo_issues()[1].key); // DS-2725
+        let lines = meta_lines(&detail, "12m ago", true);
+        let text: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(text.contains(&format!("sprint: {}", detail.sprint.unwrap().name)));
+    }
+
+    #[test]
+    fn meta_lines_shows_none_for_a_configured_issue_with_no_current_sprint() {
+        let detail = demo_detail(&demo_issues()[0].key); // DS-2722 has a sprint; use one without
+        let mut detail = detail;
+        detail.sprint = None;
+        let lines = meta_lines(&detail, "12m ago", true);
+        let text: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(
+            text.contains("sprint: none"),
+            "configured but no current sprint must still show a row, not hide it"
+        );
+    }
+
+    #[test]
+    fn facts_pairs_mirrors_meta_lines_sprint_visibility() {
+        let detail = demo_detail(&demo_issues()[1].key);
+        let hidden = facts_pairs(&detail, "12m ago", false);
+        assert!(!hidden.iter().any(|(label, _)| *label == "sprint"));
+        let shown = facts_pairs(&detail, "12m ago", true);
+        assert!(shown.iter().any(|(label, _)| *label == "sprint"));
+    }
+
+    #[test]
     fn narrow_detail_folded_facts_has_fewer_lines_than_unfolded() {
         let detail = demo_detail(&demo_issues()[1].key);
         let folded = narrow_detail(
             &detail,
             "you",
             "12m ago",
+            true,
             true,
             120,
             &adf::MediaSizing::Disabled,
@@ -1442,6 +1546,7 @@ mod link_tests {
             "you",
             "12m ago",
             false,
+            true,
             120,
             &adf::MediaSizing::Disabled,
         );
@@ -1482,13 +1587,21 @@ mod link_tests {
     #[test]
     fn image_placements_are_empty_since_every_call_site_still_passes_disabled() {
         let detail = demo_detail(&demo_issues()[1].key);
-        let wide = wide_detail(&detail, "you", "12m ago", 120, &adf::MediaSizing::Disabled);
+        let wide = wide_detail(
+            &detail,
+            "you",
+            "12m ago",
+            true,
+            120,
+            &adf::MediaSizing::Disabled,
+        );
         assert!(wide.image_placements.is_empty());
         let narrow = narrow_detail(
             &detail,
             "you",
             "12m ago",
             false,
+            true,
             120,
             &adf::MediaSizing::Disabled,
         );

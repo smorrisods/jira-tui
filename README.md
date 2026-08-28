@@ -94,6 +94,8 @@ export JIRA_API_TOKEN="…"          # or ~/.config/jira-tui/token, or a token f
 export JIRA_BASE_URL="https://your-org.atlassian.net"     # required for live mode
 export JIRA_PROJECT="PROJ"                                # optional — only used when creating issues
 export JIRA_ACCEPTANCE_CRITERIA_FIELD="customfield_10001" # optional — your site's custom field ID, if any
+export JIRA_SPRINT_FIELD="customfield_10020"               # optional — your site's Sprint custom field ID, if any
+export JIRA_SPRINT_BOARD_ID="843"                           # optional — the Scrum board the sprint picker (S) offers sprints from
 export JIRA_TOKEN_FILE="/path/to/your/token"               # optional — use a token file anywhere you like
 ```
 
@@ -106,6 +108,8 @@ base_url = "https://your-org.atlassian.net"
 email = "you@example.com"
 project = "PROJ"
 acceptance_criteria_field = "customfield_10001"   # optional; every Jira site has its own field IDs
+sprint_field = "customfield_10020"                # optional — Sprint's custom field ID on your site
+sprint_board_id = "843"                           # optional — board the sprint picker (S) offers sprints from
 token_file = "/path/to/your/token"                # optional — where JIRA_TOKEN_FILE points, but persisted
 mouse = false   # start with mouse mode on/off
 ```
@@ -115,9 +119,9 @@ mouse = false   # start with mouse mode on/off
 Custom field IDs (`customfield_10001`, etc.) are assigned per Jira site, so there's no single correct default to ship. Rather than hunting for yours in Jira's admin settings, jira-tui can look it up for you:
 
 - After verifying credentials during onboarding, you're dropped straight into a searchable list of your site's custom fields — type to filter by name (e.g. "acceptance"), then `⏎` to map it, or pick the leading **— none —** entry to skip.
-- Press **`F`** at any time (from the work list) to reopen that screen and change or clear the mapping.
+- Press **`F`** at any time (from the work list) to reopen that screen and change or clear the mapping. **`Tab`** switches which field you're mapping (Acceptance Criteria, Sprint) — the same fetched list of custom fields serves both, so switching is instant, no re-fetch.
 
-Currently only "Acceptance Criteria" is wired up as a mapped field, shown on the issue detail screen when configured.
+Sprint also needs a board ID (`sprint_board_id`, env var or `config.toml`, above) to offer a choice of sprints — unlike a custom field, there's no reliable auto-discovery for that (a project can have several boards), so it's config-only for now. Once both are set, Sprint shows on the issue detail screen, and **`S`** opens a picker to move the issue into a sprint or back to the backlog.
 
 Missing or invalid credentials never crash the app — it falls back to the last cached list, then to demo data.
 
