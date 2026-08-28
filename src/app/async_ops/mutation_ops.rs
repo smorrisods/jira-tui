@@ -1228,24 +1228,44 @@ impl App {
                     }
                 }
             }
-            // Checks `inline_images_pending` as well as the decoded
-            // `inline_images` cache itself (a code-review finding): an
-            // inline fetch for this same attachment id can still be in
-            // flight, dispatched under the not-yet-invalidated generation,
-            // when the upload lands. Missing that case here meant the
-            // in-flight response would later land, pass
-            // `apply_inline_image_loaded`'s generation check (since nothing
-            // had bumped it), and cache the pre-upload bytes permanently —
-            // with no later invalidation ever triggered to catch it, unlike
-            // an already-decoded entry this same upload would have caught.
-            let touches_a_cached_inline_image = uploaded.iter().any(|a| {
-                let key = super::super::InlineImageKey::Attachment(a.id.clone());
-                self.inline_images.borrow().contains_key(&key)
-                    || self.inline_images_pending.contains(&key)
-            });
-            if touches_a_cached_inline_image {
-                self.invalidate_inline_images();
+            // Two more code-review findings, both about the inline-image
+            // half of this fix specifically:
+            //
+            // 1. Checks `inline_images_pending` as well as the decoded
+            //    `inline_images` cache itself: an inline fetch for this
+            //    same attachment id can still be in flight, dispatched
+            //    under the not-yet-invalidated generation, when the
+            //    upload lands. Missing that case would let the in-flight
+            //    response land later, pass `apply_inline_image_loaded`'s
+            //    generation check (since nothing had bumped it), and cache
+            //    the pre-upload bytes permanently.
+            // 2. Uses the scoped `invalidate_inline_image_key` (dropping
+            //    just this id) rather than the full `invalidate_inline_images`
+            //    (which would wipe every *other* recently-viewed issue's
+            //    still-valid cached images too — `inline_images` is
+            //    deliberately shared/retained across issues, see
+            //    `refresh_quick_view_inline_images`'s own doc comment) —
+            //    and only re-resolves if the touched issue is actually
+            //    what's live on screen right now (matching the
+            //    `attachments_open` guard on the preview branch above),
+            //    since `refresh_inline_images`/`refresh_quick_view_inline_images`
+            //    aren't themselves scoped to `key` — they just operate on
+            //    whatever `self.detail`/quick-view selection currently is.
+            //    If it's a *different* issue, the removal above is enough
+            //    on its own: `refresh_detail_images` resolves it fresh the
+            //    next time that issue is actually opened.
+            for a in &uploaded {
+                let inline_key = super::super::InlineImageKey::Attachment(a.id.clone());
+                if self.inline_images.borrow().contains_key(&inline_key)
+                    || self.inline_images_pending.contains(&inline_key)
+                {
+                    self.invalidate_inline_image_key(&inline_key);
+                }
+            }
+            if self.screen == Screen::Detail && self.detail.as_ref().is_some_and(|d| d.key == key) {
                 self.refresh_inline_images();
+            } else if self.quick_view && self.selected_issue().is_some_and(|i| i.key == key) {
+                self.refresh_quick_view_inline_images();
             }
         }
         self.status = format!("{key}: uploaded {filename}");

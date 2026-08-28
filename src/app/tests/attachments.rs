@@ -746,6 +746,54 @@ async fn re_uploading_an_attachment_with_an_in_flight_inline_fetch_invalidates_t
     );
 }
 
+/// Code-review regression test: `inline_images` is deliberately shared and
+/// retained across recently-viewed issues (see
+/// `refresh_quick_view_inline_images`'s own doc comment) — re-uploading an
+/// attachment on one issue must drop only *that* id's stale entry, never
+/// wipe an unrelated issue's own still-valid cached inline image the way a
+/// full `invalidate_inline_images` clear would.
+#[cfg(feature = "images")]
+#[tokio::test]
+async fn re_uploading_an_attachment_does_not_disturb_an_unrelated_cached_inline_image() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+    let mut detail = crate::domain::demo_detail(&key);
+    detail.comments = vec![];
+    app.detail = Some(detail);
+    app.screen = Screen::Detail;
+    let reuploaded_id = app.detail.as_ref().unwrap().attachments[0].id.clone();
+
+    app.inline_images.borrow_mut().insert(
+        InlineImageKey::Attachment(reuploaded_id.clone()),
+        image::DynamicImage::new_rgb8(1, 1),
+    );
+    let unrelated_key = InlineImageKey::Attachment("unrelated-issue-attachment".into());
+    app.inline_images
+        .borrow_mut()
+        .insert(unrelated_key.clone(), image::DynamicImage::new_rgb8(1, 1));
+
+    let reuploaded = app.detail.as_ref().unwrap().attachments[0].clone();
+    app.apply_event(AppEvent::AttachmentUploaded {
+        key,
+        filename: reuploaded.filename.clone(),
+        result: Ok(vec![reuploaded]),
+    });
+
+    assert!(
+        !app.inline_images
+            .borrow()
+            .contains_key(&InlineImageKey::Attachment(reuploaded_id)),
+        "the touched id's stale entry must still be dropped"
+    );
+    assert!(
+        app.inline_images.borrow().contains_key(&unrelated_key),
+        "an unrelated issue's own cached inline image must not be wiped"
+    );
+}
+
 /// A non-image attachment (the demo PDF) must never be handed off for
 /// decoding — `attachment_preview_url` (the pure eligibility gate) already
 /// has direct unit tests in `app::attachments`; this end-to-end version
