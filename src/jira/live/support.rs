@@ -28,9 +28,23 @@ pub(super) fn get(cfg: &Config, path: &str) -> Result<Value> {
 
 /// Like `get`, but for a full absolute URL (not a `cfg.base_url`-relative
 /// path) and returning raw bytes rather than parsed JSON — Jira's
-/// attachment `content` URL is already absolute, and the payload is
-/// arbitrary binary data, not JSON. Reuses the same auth header `get` does.
+/// attachment `content`/`thumbnail` URLs are already absolute, and the
+/// payload is arbitrary binary data, not JSON. Reuses the same auth header
+/// `get` does — but only after confirming `url` is actually on the
+/// configured Jira instance (a code-review finding): this is reachable not
+/// just from an explicit `d` download, but from merely opening the
+/// attachment picker or moving its selection (see
+/// `app::attachments::refresh_attachment_preview`), so a compromised or
+/// MITM'd Jira API response pointing an attachment's `thumbnail`/`content`
+/// field at an attacker-controlled host must not get the user's Basic-auth
+/// credential handed to it just from browsing.
 pub(super) fn get_bytes(cfg: &Config, url: &str) -> Result<Vec<u8>> {
+    if !is_same_origin(url, &cfg.base_url) {
+        return Err(anyhow!(
+            "refusing to send Jira credentials to {url}: it isn't the configured Jira instance ({})",
+            cfg.base_url
+        ));
+    }
     let resp = ureq::get(url)
         .set("Authorization", &auth_header(cfg))
         .call()
@@ -40,6 +54,43 @@ pub(super) fn get_bytes(cfg: &Config, url: &str) -> Result<Vec<u8>> {
         .read_to_end(&mut buf)
         .context("reading attachment bytes")?;
     Ok(buf)
+}
+
+/// True when `url` and `base_url` share the same origin — the only URLs
+/// this app should ever attach the user's Jira credentials to. `pub(super)`
+/// (not private) because `jira::live::attachments::media_uuid_for` sends
+/// its own request with the same credential and needs this same guard —
+/// see that function's own doc comment for why (a code-review finding: it
+/// was found to have the exact gap `get_bytes` above was patched for,
+/// since it doesn't go through `get_bytes` at all).
+///
+/// Parses with `url::Url` (already `ureq`'s own transitive dependency, so
+/// this adds nothing new to the build graph) rather than a hand-rolled
+/// parser — a code-review finding, confirmed exploitable: an earlier
+/// hand-rolled version didn't strip URL userinfo (`user:pass@host`) before
+/// extracting the host, so a crafted `https://example.atlassian.net:x@evil.com/…`
+/// parsed as host `example.atlassian.net` by that parser while `ureq`
+/// itself (via this same `url` crate, internally) resolves the real
+/// request host as `evil.com` — a parser that can disagree with the HTTP
+/// client actually making the request is exactly the kind of gap this
+/// whole check exists to close. `Url::parse` already normalizes scheme/
+/// host casing during parsing (DNS hostnames are case-insensitive per RFC
+/// 3986) and `.port_or_known_default()` folds an explicit default port
+/// (`:443` on `https`, `:80` on `http`) into the same value as no port at
+/// all — both matter for a self-hosted Jira Data Center instance, which
+/// can plausibly differ from `cfg.base_url` in either way while still
+/// being the exact same origin. `false` if either side fails to parse as
+/// an absolute URL — most plausibly `cfg.base_url` itself missing a scheme
+/// (an otherwise-unvalidated field, see `jira::config::Config::load`) —
+/// rather than only checking one side, so a misconfigured `base_url` fails
+/// this check closed instead of silently skipping it.
+pub(super) fn is_same_origin(url: &str, base_url: &str) -> bool {
+    let (Ok(a), Ok(b)) = (url::Url::parse(url), url::Url::parse(base_url)) else {
+        return false;
+    };
+    a.scheme() == b.scheme()
+        && a.host_str() == b.host_str()
+        && a.port_or_known_default() == b.port_or_known_default()
 }
 
 /// Cap on how many bytes `get_bytes_public` will read from an externally
@@ -420,6 +471,106 @@ mod tests {
         let a = multipart_boundary();
         let b = multipart_boundary();
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn is_same_origin_folds_an_explicit_default_port_into_no_port_given() {
+        assert!(is_same_origin(
+            "https://example.atlassian.net:443/x",
+            "https://example.atlassian.net/x"
+        ));
+        assert!(is_same_origin(
+            "http://example.atlassian.net:80/x",
+            "http://example.atlassian.net/x"
+        ));
+    }
+
+    #[test]
+    fn is_same_origin_keeps_a_non_default_port_distinct() {
+        assert!(!is_same_origin(
+            "https://example.atlassian.net:8443/x",
+            "https://example.atlassian.net/x"
+        ));
+    }
+
+    #[test]
+    fn is_same_origin_rejects_userinfo_smuggled_into_the_authority() {
+        // A code-review finding, confirmed exploitable against the earlier
+        // hand-rolled parser this replaced: `user:pass@host` syntax puts
+        // credentials before the `@`, with the *real* host after it. A
+        // parser that doesn't account for this reads `example.atlassian.net`
+        // as the host here, while `ureq` (via this same `url` crate,
+        // internally) resolves the actual request host as `evil.com` — a
+        // parser that can disagree with the HTTP client actually making the
+        // request defeats the whole point of this check.
+        assert!(!is_same_origin(
+            "https://example.atlassian.net:443@evil.com/x",
+            "https://example.atlassian.net"
+        ));
+    }
+
+    #[test]
+    fn is_same_origin_is_case_insensitive_on_host() {
+        // A code-review finding: DNS hostnames are case-insensitive per RFC
+        // 3986; a raw string comparison would wrongly reject two URLs that
+        // are actually the same origin.
+        assert!(is_same_origin(
+            "https://Example.Atlassian.NET/secure/attachment/1",
+            "https://example.atlassian.net"
+        ));
+    }
+
+    #[test]
+    fn is_same_origin_treats_an_explicit_default_port_as_equivalent_to_none() {
+        // A code-review finding: a self-hosted Jira Data Center attachment
+        // URL coming back with an explicit `:443` must still match a
+        // `cfg.base_url` with no port given.
+        assert!(is_same_origin(
+            "https://example.atlassian.net:443/secure/attachment/1",
+            "https://example.atlassian.net"
+        ));
+    }
+
+    #[test]
+    fn is_same_origin_fails_closed_when_base_url_is_unparseable() {
+        // A code-review finding: two unparseable URLs (e.g. `cfg.base_url`
+        // itself missing a scheme, which `Config::load` never actually
+        // validates) must never compare as a match to each other — that
+        // would silently skip the credential guard entirely rather than
+        // erroring.
+        assert!(!is_same_origin("no-scheme-either", "no-scheme-at-all"));
+        assert!(!is_same_origin(
+            "https://example.atlassian.net/x",
+            "no-scheme-at-all"
+        ));
+    }
+
+    #[test]
+    fn get_bytes_refuses_a_url_on_a_different_host_than_the_configured_jira_instance() {
+        let mut server = mockito::Server::new();
+        let mock = server.mock("GET", mockito::Matcher::Any).expect(0).create();
+        let cfg = test_config(server.url());
+
+        assert!(get_bytes(&cfg, "http://evil.example.com/secure/attachment/1").is_err());
+
+        mock.assert();
+    }
+
+    #[test]
+    fn get_bytes_refuses_a_hostname_that_merely_starts_with_the_configured_origin() {
+        // Regression guard for a `str::starts_with`-based check, which this
+        // exact shape would bypass: `cfg.base_url` (e.g.
+        // `http://127.0.0.1:PORT`) is a literal string prefix of
+        // `http://127.0.0.1:PORT.evil.com/...`, even though they're
+        // completely different hosts.
+        let mut server = mockito::Server::new();
+        let mock = server.mock("GET", mockito::Matcher::Any).expect(0).create();
+        let cfg = test_config(server.url());
+
+        let attacker_url = format!("{}.evil.com/secure/attachment/1", cfg.base_url);
+        assert!(get_bytes(&cfg, &attacker_url).is_err());
+
+        mock.assert();
     }
 
     #[test]
