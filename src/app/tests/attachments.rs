@@ -262,7 +262,12 @@ async fn attachment_preview_drops_a_stale_response_after_moving_again() {
     let first_id = app.detail.as_ref().unwrap().attachments[0].id.clone();
     let stale_generation = app.attachment_preview_generation;
 
+    // Moving now only *schedules* a debounced fetch (see
+    // `App::ensure_attachment_preview_dispatched`) rather than dispatching
+    // immediately — settle it before asserting the generation moved on.
     app.attachments_move(1);
+    app.tick += 100;
+    app.ensure_attachment_preview_dispatched();
     assert_ne!(
         app.attachment_preview_generation, stale_generation,
         "moving the selection must bump the preview generation"
@@ -311,6 +316,72 @@ async fn attachment_preview_applies_a_current_response() {
         Some(p) => assert_eq!(p.attachment_id, current_id),
         None => panic!("a current, matching response should populate the preview"),
     }
+}
+
+/// Code-review regression test: holding an arrow key through several rows
+/// must not fire one uncancelled fetch per row — only a single dispatch,
+/// once the highlighted row's sat still for the debounce window, for
+/// whichever row that settles on.
+#[cfg(feature = "images")]
+#[tokio::test]
+async fn holding_through_several_moves_only_dispatches_once_after_the_debounce_settles() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+    app.detail = Some(crate::domain::demo_detail(&key));
+    app.screen = Screen::Detail;
+    app.open_attachments();
+    let after_open = app.attachment_preview_generation;
+
+    app.attachments_move(1);
+    app.attachments_move(-1);
+    app.attachments_move(1);
+    assert_eq!(
+        app.attachment_preview_generation, after_open,
+        "moving must not dispatch anything until the debounce window elapses"
+    );
+
+    app.tick += 100;
+    app.ensure_attachment_preview_dispatched();
+    assert_eq!(
+        app.attachment_preview_generation,
+        after_open + 1,
+        "settling should dispatch exactly once, not once per move"
+    );
+
+    // Already-cleared pending flag: a second call in the same tick must be
+    // a no-op, not a second dispatch.
+    app.ensure_attachment_preview_dispatched();
+    assert_eq!(app.attachment_preview_generation, after_open + 1);
+}
+
+/// Closing the picker mid-debounce must cancel the pending move outright,
+/// not just rely on `ensure_attachment_preview_dispatched`'s own
+/// `attachments_open` guard to happen to also catch it.
+#[cfg(feature = "images")]
+#[tokio::test]
+async fn closing_the_picker_cancels_a_pending_debounced_move() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+    app.detail = Some(crate::domain::demo_detail(&key));
+    app.screen = Screen::Detail;
+    app.open_attachments();
+    app.attachments_move(1);
+    assert!(
+        app.attachment_preview_pending,
+        "setup: the move should have scheduled a debounced fetch"
+    );
+
+    app.close_attachments();
+    assert!(
+        !app.attachment_preview_pending,
+        "closing must cancel a still-pending debounced move"
+    );
 }
 
 /// A non-image attachment (the demo PDF) must never be handed off for

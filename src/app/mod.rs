@@ -338,6 +338,19 @@ pub struct App {
     /// counter on `App`.
     #[cfg(feature = "images")]
     pub(crate) attachment_preview_generation: u64,
+    /// A picker move debounced but not yet dispatched (`images` feature
+    /// only) — see `App::ensure_attachment_preview_dispatched`. Just a
+    /// bool, not the moved-to id/index: `refresh_attachment_preview`
+    /// always reads `self.attachment_index` fresh when it actually fires,
+    /// so whichever row is highlighted *then* (not whichever triggered
+    /// this particular debounce restart) is what gets fetched — the same
+    /// "recompute, don't cache" shape as `App::active_links` and friends.
+    #[cfg(feature = "images")]
+    pub(crate) attachment_preview_pending: bool,
+    /// The tick `attachment_preview_pending` becomes eligible to dispatch
+    /// at — mirrors `SearchState`'s own `dispatch_at_tick`.
+    #[cfg(feature = "images")]
+    pub(crate) attachment_preview_dispatch_at_tick: u64,
     /// Fetched-and-decoded inline description images (`images` feature
     /// only), keyed by `InlineImageKey` rather than one single slot like
     /// `attachment_preview` — every media node the description/acceptance
@@ -670,6 +683,10 @@ impl App {
             attachment_preview: RefCell::new(None),
             #[cfg(feature = "images")]
             attachment_preview_generation: 0,
+            #[cfg(feature = "images")]
+            attachment_preview_pending: false,
+            #[cfg(feature = "images")]
+            attachment_preview_dispatch_at_tick: 0,
             #[cfg(feature = "images")]
             inline_images: RefCell::new(BoundedCache::new(inline_images::INLINE_IMAGE_CACHE_CAP)),
             #[cfg(feature = "images")]
