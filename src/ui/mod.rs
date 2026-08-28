@@ -241,14 +241,28 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     draw_header(f, app, root[0]);
 
+    use crate::app::{EditTarget, Screen};
+
+    // Composing or confirming a COMMENT (as opposed to a description edit
+    // or a new issue) renders as a popover over its origin screen instead
+    // of replacing it outright — see `draw_comment_popover`'s doc comment.
+    // `background_screen` is what the dispatch below actually draws into
+    // `root[1]`; `app.screen` itself is untouched, so key handling
+    // (`keys::handle_key`) still keys off it exactly as before — only which
+    // screen's content fills the frame changes.
+    let comment_popover = matches!(app.screen, Screen::Edit | Screen::Preview)
+        && app.edit_target == EditTarget::Comment;
+    let background_screen = if comment_popover {
+        app.edit_return_screen
+    } else {
+        app.screen
+    };
+
     // The quick-view panel spans the full width beneath Home/List, taking a
     // generous share of the remaining height so fields and the ADF body are
     // both readable at a glance.
-    let quick_view_active = app.quick_view
-        && matches!(
-            app.screen,
-            crate::app::Screen::Home | crate::app::Screen::List
-        );
+    let quick_view_active =
+        app.quick_view && matches!(background_screen, Screen::Home | Screen::List);
     let (body_area, quick_area) = if quick_view_active {
         // SPEC.md §11: "height < ~30 rows: ... quick view caps at 40%
         // height" — a shorter terminal has less room to spare for the list
@@ -275,8 +289,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     // different screen once the layout's moved on.
     app.home_recent_area.set(Rect::default());
 
-    use crate::app::Screen;
-    match app.screen {
+    match background_screen {
         Screen::Welcome => draw_welcome(f, app, body_area),
         Screen::Home => draw_home(f, app, body_area),
         Screen::List => draw_list(f, app, body_area, true),
@@ -293,6 +306,16 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     if let Some(qa) = quick_area {
         draw_quick_view(f, app, qa);
+    }
+
+    // Drawn last among `root[1]`'s content so it sits on top of the
+    // background screen (and the quick-view panel, if that's showing) —
+    // anchored to the bottom of the *whole* body region (`root[1]`, not the
+    // narrower `body_area`), so it overlaps whichever's actually at the
+    // bottom (the list, or the quick-view panel) while the content above it
+    // stays visible.
+    if comment_popover {
+        draw_comment_popover(f, app, root[1]);
     }
 
     if show_nav_strip {
@@ -422,6 +445,37 @@ pub fn draw(f: &mut Frame, app: &App) {
     // A transient toast (e.g. clipboard confirmations) floats above everything.
     if let Some(msg) = app.active_flash() {
         draw_toast(f, msg, f.area());
+    }
+}
+
+/// A COMMENT compose/confirm session (`Screen::Edit`/`Screen::Preview` with
+/// `EditTarget::Comment`) renders as a bottom panel over `area` instead of
+/// replacing the whole screen — its origin screen (`app.edit_return_screen`,
+/// drawn into `body_area` by `draw()`'s dispatch above) stays visible around
+/// it. A description edit or new-issue compose session still takes the
+/// whole screen (`draw()` only takes this branch for `EditTarget::Comment`):
+/// a comment is usually short and posted in direct reaction to whatever's
+/// on screen (the list, the quick-view panel, an issue's Detail rail), so
+/// losing that context for it — as the full-screen editor used to — was a
+/// bigger cost than the edit itself warranted.
+///
+/// Reuses `draw_editor`/`draw_preview` unmodified: both already take an
+/// arbitrary `area` and render self-containedly (cursor position included),
+/// so shrinking that area to a bottom strip is enough on its own — no
+/// changes needed inside either. `Clear` first, matching every other
+/// overlay in this module (`draw_toast` below, the `*_picker` modals).
+fn draw_comment_popover(f: &mut Frame, app: &App, area: Rect) {
+    let height = (area.height / 2).clamp(6, 16).min(area.height);
+    let popover = Rect {
+        x: area.x,
+        y: area.y + area.height - height,
+        width: area.width,
+        height,
+    };
+    f.render_widget(Clear, popover);
+    match app.screen {
+        crate::app::Screen::Preview => draw_preview(f, app, popover),
+        _ => draw_editor(f, app, popover),
     }
 }
 

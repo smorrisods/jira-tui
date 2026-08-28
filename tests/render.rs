@@ -1511,6 +1511,104 @@ fn preview_screen_wording_matches_the_edit_target() {
     );
 }
 
+/// Regression test for the bug report behind the comment popover: composing
+/// a comment from the quick-view panel used to replace the *entire* screen
+/// with the editor, hiding the list and quick-view panel it was reacting
+/// to. It should now render as a bottom panel with the list still visible
+/// above it and the footer still showing the editor's own hints below it.
+#[test]
+fn comment_popover_from_quick_view_keeps_the_list_visible_behind_it() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.quick_view = true;
+    app.selected = 0;
+    app.ensure_quick_view_loaded();
+    app.begin_comment();
+    assert_eq!(app.screen, Screen::Edit);
+
+    let text = render(&app);
+    assert!(
+        text.contains("KEY") && text.contains("SUMMARY"),
+        "the issue list's column header should still be visible behind the popover"
+    );
+    assert!(
+        text.contains("editing") && text.contains("Markdown"),
+        "the editor panel itself should still be showing"
+    );
+    assert!(
+        text.contains("esc cancel"),
+        "the footer should show the editor's hints, not be blank or covered"
+    );
+}
+
+/// Same coverage as above, but composing from the Detail screen: its own
+/// side rail (workflow/meta) should stay visible above the popover.
+#[test]
+fn comment_popover_from_detail_keeps_the_rail_visible_behind_it() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.begin_comment();
+    assert_eq!(app.screen, Screen::Edit);
+
+    let text = render(&app);
+    assert!(
+        text.contains("workflow"),
+        "Detail's side rail should still be visible behind the popover"
+    );
+    assert!(text.contains("editing") && text.contains("Markdown"));
+}
+
+/// The confirmation step (`Screen::Preview`, reached via ^S) gets the same
+/// popover treatment as the editor, so the round-trip stays visually
+/// consistent rather than popping up for compose and covering everything
+/// for confirm.
+#[test]
+fn comment_preview_also_renders_as_a_popover() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.quick_view = true;
+    app.selected = 0;
+    app.ensure_quick_view_loaded();
+    app.begin_comment();
+    for c in "Looks good.".chars() {
+        app.editor.insert_char(c);
+    }
+    app.commit_tui_edit();
+    assert_eq!(app.screen, Screen::Preview);
+
+    let text = render(&app);
+    assert!(
+        text.contains("KEY") && text.contains("SUMMARY"),
+        "the list should still be visible behind the comment preview popover"
+    );
+    assert!(
+        text.contains("preview ·"),
+        "the preview panel should still be showing"
+    );
+}
+
+/// Guards against over-applying the popover: a DESCRIPTION edit (only ever
+/// reachable from the Detail screen already showing that issue) keeps
+/// taking the whole screen, unchanged — there's no "different background
+/// issue" context to preserve the way there is for a comment composed from
+/// quick view.
+#[test]
+fn description_edit_still_takes_the_whole_screen() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.begin_tui_edit();
+    assert_eq!(app.screen, Screen::Edit);
+
+    let text = render(&app);
+    assert!(
+        !text.contains("workflow"),
+        "a description edit must not show Detail's own side rail behind it \
+         (contrast with comment_popover_from_detail_keeps_the_rail_visible_behind_it)"
+    );
+}
+
 #[test]
 fn in_tui_editor_wraps_long_lines_instead_of_running_off_screen() {
     let mut app = demo_app();
