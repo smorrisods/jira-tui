@@ -28,9 +28,23 @@ pub(super) fn get(cfg: &Config, path: &str) -> Result<Value> {
 
 /// Like `get`, but for a full absolute URL (not a `cfg.base_url`-relative
 /// path) and returning raw bytes rather than parsed JSON — Jira's
-/// attachment `content` URL is already absolute, and the payload is
-/// arbitrary binary data, not JSON. Reuses the same auth header `get` does.
+/// attachment `content`/`thumbnail` URLs are already absolute, and the
+/// payload is arbitrary binary data, not JSON. Reuses the same auth header
+/// `get` does — but only after confirming `url` is actually on the
+/// configured Jira instance (a code-review finding): this is reachable not
+/// just from an explicit `d` download, but from merely opening the
+/// attachment picker or moving its selection (see
+/// `app::attachments::refresh_attachment_preview`), so a compromised or
+/// MITM'd Jira API response pointing an attachment's `thumbnail`/`content`
+/// field at an attacker-controlled host must not get the user's Basic-auth
+/// credential handed to it just from browsing.
 pub(super) fn get_bytes(cfg: &Config, url: &str) -> Result<Vec<u8>> {
+    if origin(url) != origin(&cfg.base_url) {
+        return Err(anyhow!(
+            "refusing to send Jira credentials to {url}: it isn't the configured Jira instance ({})",
+            cfg.base_url
+        ));
+    }
     let resp = ureq::get(url)
         .set("Authorization", &auth_header(cfg))
         .call()
@@ -40,6 +54,23 @@ pub(super) fn get_bytes(cfg: &Config, url: &str) -> Result<Vec<u8>> {
         .read_to_end(&mut buf)
         .context("reading attachment bytes")?;
     Ok(buf)
+}
+
+/// Extracts `scheme://host[:port]` from `url` — e.g.
+/// `"https://example.atlassian.net/secure/attachment/1"` ->
+/// `"https://example.atlassian.net"`. `None` if `url` has no `://` at all.
+/// Used by `get_bytes` to compare a candidate URL's origin against
+/// `cfg.base_url`'s by exact equality, never by prefix: a plain
+/// `url.starts_with(base_url)` check would be fooled by a hostname that
+/// merely starts with the real one (`https://example.atlassian.net.evil.com/...`
+/// is a `str::starts_with` match for `https://example.atlassian.net` but a
+/// completely different host). Hand-rolled rather than pulling in the `url`
+/// crate — not otherwise a dependency of this codebase — matching
+/// `get_bytes_public`'s own hand-rolled scheme check above.
+fn origin(url: &str) -> Option<&str> {
+    let (scheme, rest) = url.split_once("://")?;
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    Some(&url[..scheme.len() + 3 + end])
 }
 
 /// Cap on how many bytes `get_bytes_public` will read from an externally
@@ -420,6 +451,55 @@ mod tests {
         let a = multipart_boundary();
         let b = multipart_boundary();
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn origin_extracts_scheme_and_host_up_to_the_first_path_query_or_fragment() {
+        assert_eq!(
+            origin("https://example.atlassian.net/secure/attachment/1"),
+            Some("https://example.atlassian.net")
+        );
+        assert_eq!(
+            origin("https://example.atlassian.net?x=1"),
+            Some("https://example.atlassian.net")
+        );
+        assert_eq!(
+            origin("https://example.atlassian.net#frag"),
+            Some("https://example.atlassian.net")
+        );
+        assert_eq!(
+            origin("https://example.atlassian.net"),
+            Some("https://example.atlassian.net")
+        );
+        assert_eq!(origin("not-a-url"), None);
+    }
+
+    #[test]
+    fn get_bytes_refuses_a_url_on_a_different_host_than_the_configured_jira_instance() {
+        let mut server = mockito::Server::new();
+        let mock = server.mock("GET", mockito::Matcher::Any).expect(0).create();
+        let cfg = test_config(server.url());
+
+        assert!(get_bytes(&cfg, "http://evil.example.com/secure/attachment/1").is_err());
+
+        mock.assert();
+    }
+
+    #[test]
+    fn get_bytes_refuses_a_hostname_that_merely_starts_with_the_configured_origin() {
+        // Regression guard for a `str::starts_with`-based check, which this
+        // exact shape would bypass: `cfg.base_url` (e.g.
+        // `http://127.0.0.1:PORT`) is a literal string prefix of
+        // `http://127.0.0.1:PORT.evil.com/...`, even though they're
+        // completely different hosts.
+        let mut server = mockito::Server::new();
+        let mock = server.mock("GET", mockito::Matcher::Any).expect(0).create();
+        let cfg = test_config(server.url());
+
+        let attacker_url = format!("{}.evil.com/secure/attachment/1", cfg.base_url);
+        assert!(get_bytes(&cfg, &attacker_url).is_err());
+
+        mock.assert();
     }
 
     #[test]
