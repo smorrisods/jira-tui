@@ -2,6 +2,9 @@
 //! flash-message path. Also the upload flow (`u`): path-entry editing,
 //! stat-and-preview, and the demo-upload flash-message path.
 
+#[cfg(feature = "images")]
+use crate::domain::Attachment;
+
 use super::super::*;
 use super::support::*;
 
@@ -463,7 +466,6 @@ async fn a_direct_refresh_clears_a_still_pending_debounced_move() {
         "the stale debounce must not fire a second, redundant fetch"
     );
 }
-
 
 /// Code-review regression test: closing the picker must bump
 /// `attachment_preview_generation`, not just clear the cached preview —
