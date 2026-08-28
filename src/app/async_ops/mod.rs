@@ -41,8 +41,9 @@ pub(crate) use mutation_ops::dispatch_inline_image;
 pub(crate) use mutation_ops::dispatch_uuid_resolve;
 pub(crate) use mutation_ops::{
     dispatch_add_comment, dispatch_assign, dispatch_attachment_download,
-    dispatch_attachment_upload, dispatch_create_issue, dispatch_release_bulk, dispatch_set_sprint,
-    dispatch_set_versions, dispatch_transition, dispatch_update_description,
+    dispatch_attachment_upload, dispatch_create_issue, dispatch_release_bulk,
+    dispatch_set_priority, dispatch_set_sprint, dispatch_set_versions, dispatch_transition,
+    dispatch_update_description,
 };
 pub(crate) use setup_ops::dispatch_field_mapping;
 #[cfg(feature = "live")]

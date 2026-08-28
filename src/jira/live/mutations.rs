@@ -74,6 +74,18 @@ pub fn update_summary(cfg: &Config, key: &str, summary: &str) -> Result<()> {
     )
 }
 
+/// Update an issue's priority. `priority_name` is one of Jira's standard
+/// names (`Priority::label`, e.g. "High") — the same set `support::
+/// priority_from` recognizes on the way back in.
+pub fn set_priority(cfg: &Config, key: &str, priority_name: &str) -> Result<()> {
+    send(
+        cfg,
+        "PUT",
+        &format!("/rest/api/3/issue/{key}"),
+        serde_json::json!({ "fields": { "priority": { "name": priority_name } } }),
+    )
+}
+
 /// Every user assignable to issues in `project` — used to discover
 /// teammates for the view picker and to populate the assignee picker
 /// (`A`), without touching any issue data at all (`GET
@@ -560,5 +572,34 @@ mod tests {
 
         let desc = serde_json::json!({"type": "doc", "content": []});
         assert!(update_description(&cfg, "DS-1", &desc).is_err());
+    }
+
+    #[test]
+    fn set_priority_sends_the_priority_name() {
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("PUT", "/rest/api/3/issue/DS-1")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "fields": { "priority": { "name": "High" } }
+            })))
+            .with_status(204)
+            .create();
+
+        let cfg = test_config(server.url());
+        set_priority(&cfg, "DS-1", "High").unwrap();
+
+        mock.assert();
+    }
+
+    #[test]
+    fn set_priority_surfaces_http_errors() {
+        let mut server = mockito::Server::new();
+        server
+            .mock("PUT", "/rest/api/3/issue/DS-1")
+            .with_status(500)
+            .create();
+
+        let cfg = test_config(server.url());
+        assert!(set_priority(&cfg, "DS-1", "High").is_err());
     }
 }

@@ -5,8 +5,8 @@
 //! match arm — not a whole logic block — per new `AppEvent` variant.
 
 use crate::domain::{
-    AssignableUser, Attachment, Comment, IssueDetail, IssueSummary, IssueType, Project, Source,
-    Sprint, Version, ViewKind,
+    AssignableUser, Attachment, Comment, IssueDetail, IssueSummary, IssueType, Priority, Project,
+    Source, Sprint, Version, ViewKind,
 };
 
 use super::super::{App, ReleaseBulkKind, Screen};
@@ -170,6 +170,14 @@ pub enum AppEvent {
         generation: u64,
         key: String,
         sprint: Option<Sprint>,
+        error: Option<String>,
+    },
+    /// A priority change resolved against live Jira — see `App::
+    /// confirm_priority_picker`/`dispatch_set_priority`.
+    PriorityApplied {
+        generation: u64,
+        key: String,
+        priority: Priority,
         error: Option<String>,
     },
     /// The release review screen's drill-down fetch resolved — see
@@ -401,6 +409,12 @@ impl App {
                 sprint,
                 error,
             } => self.apply_sprint_applied(generation, key, sprint, error),
+            AppEvent::PriorityApplied {
+                generation,
+                key,
+                priority,
+                error,
+            } => self.apply_priority_applied(generation, key, priority, error),
             AppEvent::ReleaseIssuesLoaded {
                 generation,
                 issues,

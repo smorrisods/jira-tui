@@ -4,7 +4,7 @@
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::domain::{Attachment, Comment, Sprint};
+use crate::domain::{Attachment, Comment, Priority, Sprint};
 
 use super::super::{App, ReleaseBulkKind, Screen};
 use super::AppEvent;
@@ -213,6 +213,47 @@ fn set_sprint_blocking(key: &str, sprint_id: Option<&str>) -> Option<String> {
                 None => crate::jira::remove_from_sprint(&cfg, key),
             };
             return result.err().map(|e| e.to_string());
+        }
+    }
+    None
+}
+
+/// Spawn a priority change off the render thread, sending the result back
+/// as `AppEvent::PriorityApplied`. Mirrors `dispatch_set_sprint`'s shape,
+/// minus the `Option` — a priority is never absent on an issue, so there's
+/// no "remove" case to model.
+pub(crate) fn dispatch_set_priority(
+    tx: UnboundedSender<AppEvent>,
+    generation: u64,
+    key: String,
+    priority: Priority,
+) {
+    tokio::spawn(async move {
+        let key_for_result = key.clone();
+        let priority_for_result = priority.clone();
+        let priority_name = priority.label();
+        let error = tokio::task::spawn_blocking(move || set_priority_blocking(&key, priority_name))
+            .await
+            .unwrap_or_else(|_| Some("internal error: task panicked".into()));
+        let _ = tx.send(AppEvent::PriorityApplied {
+            generation,
+            key: key_for_result,
+            priority: priority_for_result,
+            error,
+        });
+    });
+}
+
+/// Mirrors `set_sprint_blocking`'s "no credentials means nothing to do
+/// live" shape.
+#[allow(unused_variables)]
+fn set_priority_blocking(key: &str, priority_name: &'static str) -> Option<String> {
+    #[cfg(feature = "live")]
+    {
+        if let Some(cfg) = crate::jira::Config::load() {
+            return crate::jira::set_priority(&cfg, key, priority_name)
+                .err()
+                .map(|e| e.to_string());
         }
     }
     None
@@ -1062,6 +1103,29 @@ impl App {
             Some(s) => format!("✓ moved to {}", s.name),
             None => "✓ removed from sprint".to_string(),
         });
+    }
+
+    /// Applies `AppEvent::PriorityApplied` — see `dispatch_set_priority`
+    /// above. Mirrors `apply_sprint_applied`'s shape.
+    pub(super) fn apply_priority_applied(
+        &mut self,
+        generation: u64,
+        key: String,
+        priority: Priority,
+        error: Option<String>,
+    ) {
+        if generation != self.priority_generation {
+            return;
+        }
+        self.loading = false;
+        self.priority_pending = false;
+        if let Some(e) = error {
+            self.status = format!("priority update failed: {e}");
+            return;
+        }
+        self.apply_priority_locally(&key, priority.clone());
+        self.status = format!("set {key} priority to {}", priority.label());
+        self.flash(format!("✓ priority set to {}", priority.label()));
     }
 
     /// Applies `AppEvent::ReleaseBulkApplied` — see `dispatch_release_bulk`

@@ -44,6 +44,7 @@ mod new_issue;
 mod new_issue_type_picker;
 mod palette;
 mod preview;
+mod priority_picker;
 mod project_picker;
 mod quick_view;
 pub(crate) mod quick_view_columns;
@@ -76,6 +77,7 @@ use new_issue::draw_new_issue;
 use new_issue_type_picker::draw_new_issue_type_picker;
 use palette::draw_palette;
 use preview::draw_preview;
+use priority_picker::draw_priority_picker;
 use project_picker::draw_project_picker;
 use quick_view::draw_quick_view;
 use release::draw_release;
@@ -344,6 +346,10 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     if app.sprint_picker_open {
         draw_sprint_picker(f, app, f.area());
+    }
+
+    if app.priority_picker_open {
+        draw_priority_picker(f, app, f.area());
     }
 
     if app.new_issue_type_picker_open {

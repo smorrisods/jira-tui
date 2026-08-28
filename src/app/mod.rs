@@ -42,6 +42,7 @@ mod mouse;
 mod new_issue;
 mod onboarding;
 mod palette;
+mod priority;
 mod project_picker;
 mod query;
 mod quick_view;
@@ -75,6 +76,7 @@ pub use new_issue::{NewIssueField, NewIssueState};
 pub use onboarding::{Field, OnboardingState, WelcomePhase};
 pub use palette::{PaletteAction, PaletteState};
 pub(crate) use palette::{PaletteGroup, PaletteRow};
+pub use priority::PriorityPickerState;
 pub use project_picker::ProjectPickerState;
 pub use release::{ReleaseBulkKind, ReleaseListMode, ReleaseState};
 pub use search::{SearchPurpose, SearchRow, SearchState};
@@ -527,6 +529,14 @@ pub struct App {
     /// error) when `sprint_board_id` isn't configured — the picker still
     /// offers "Remove from sprint" either way.
     pub(crate) open_sprints: Vec<Sprint>,
+    /// Whether a priority change is currently in flight. Mirrors
+    /// `sprint_pending`: `open_priority_picker` refuses to reopen while this
+    /// is set, so `priority_generation` can never go stale mid-flight.
+    pub(crate) priority_pending: bool,
+    pub(crate) priority_generation: u64,
+    /// Whether the priority picker (`P`) is currently open.
+    pub priority_picker_open: bool,
+    pub priority_picker: PriorityPickerState,
     /// The release review screen's state (`w`) — see `app::release`.
     pub release: ReleaseState,
     /// Bumped on every drilled-into version (including re-entering the
@@ -742,6 +752,10 @@ impl App {
             sprint_picker_open: false,
             sprint_picker: SprintPickerState::default(),
             open_sprints: Vec::new(),
+            priority_pending: false,
+            priority_generation: 0,
+            priority_picker_open: false,
+            priority_picker: PriorityPickerState::default(),
             release: ReleaseState::default(),
             release_generation: 0,
             release_bulk_generation: 0,
