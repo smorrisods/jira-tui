@@ -746,6 +746,49 @@ async fn re_uploading_an_attachment_with_an_in_flight_inline_fetch_invalidates_t
     );
 }
 
+/// Code-review regression test: invalidating one inline-cached attachment
+/// on re-upload must not leave a *different*, still-in-flight inline
+/// fetch marked pending under the now-stale generation — that would block
+/// any future re-dispatch for it (the resolve walk's own dedup treats
+/// "still pending" as "already being fetched correctly"), silently
+/// stranding it on its placeholder once its stale response gets dropped.
+#[cfg(feature = "images")]
+#[tokio::test]
+async fn re_uploading_one_attachment_does_not_strand_a_different_in_flight_inline_fetch() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+    let mut detail = crate::domain::demo_detail(&key);
+    detail.comments = vec![];
+    app.detail = Some(detail);
+    app.screen = Screen::Detail;
+    let reuploaded_id = app.detail.as_ref().unwrap().attachments[0].id.clone();
+
+    // The re-uploaded attachment is already cached...
+    app.inline_images.borrow_mut().insert(
+        InlineImageKey::Attachment(reuploaded_id.clone()),
+        image::DynamicImage::new_rgb8(1, 1),
+    );
+    // ...while a *different* image is still in flight for the same issue.
+    let sibling_key = InlineImageKey::Attachment("sibling-attachment-id".into());
+    app.inline_images_pending.insert(sibling_key.clone());
+
+    let reuploaded = app.detail.as_ref().unwrap().attachments[0].clone();
+    app.apply_event(AppEvent::AttachmentUploaded {
+        key,
+        filename: reuploaded.filename.clone(),
+        result: Ok(vec![reuploaded]),
+    });
+
+    assert!(
+        !app.inline_images_pending.contains(&sibling_key),
+        "a sibling in-flight fetch's pending marker must not survive the generation bump, \
+         or nothing will ever re-dispatch it once its now-stale response is dropped"
+    );
+}
+
 /// Code-review regression test: `inline_images` is deliberately shared and
 /// retained across recently-viewed issues (see
 /// `refresh_quick_view_inline_images`'s own doc comment) — re-uploading an

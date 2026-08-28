@@ -211,7 +211,8 @@ impl App {
     /// event would throw all of that away for no reason (a code-review
     /// finding on `App::apply_attachment_uploaded`, this method's only
     /// caller). Drops `key`'s entry from `inline_images`/
-    /// `inline_image_protocols`/`inline_images_pending` and nothing else's.
+    /// `inline_image_protocols` and nothing else's — see below for why
+    /// `inline_images_pending` doesn't get the same scoping.
     ///
     /// Still bumps the shared `inline_image_generation`, unlike a true
     /// per-key invalidation might suggest: there's no per-key staleness
@@ -222,16 +223,29 @@ impl App {
     /// Dropping just `key` from `inline_images_pending` without bumping
     /// generation wouldn't stop a same-key fetch already in flight
     /// (dispatched with the pre-upload URL) from landing later and
-    /// re-caching the stale bytes anyway. The trade-off: any *other*
-    /// issue's in-flight inline fetch also gets dropped by this bump —
-    /// global generation is the smallest unit of in-flight invalidation
-    /// this cache supports — but its already-*decoded* entries are left
-    /// untouched, unlike what a full `invalidate_inline_images` clear
-    /// would do to them.
+    /// re-caching the stale bytes anyway.
+    ///
+    /// `inline_images_pending` itself is cleared *entirely*, not scoped to
+    /// `key` — unlike the two scoped removes above (a code-review finding:
+    /// an earlier version scoped this one too). Bumping generation
+    /// immediately stales every *other* still-in-flight fetch as well, not
+    /// just `key`'s; leaving their pending markers in place would block
+    /// `refresh_inline_images`/`refresh_quick_view_inline_images`'s own
+    /// dedup from ever re-dispatching a fresh fetch for them (it treats
+    /// "still pending" as "already being fetched correctly"), so each
+    /// would land under the stale generation, get silently dropped, and
+    /// then sit permanently stuck on its placeholder until some unrelated
+    /// full navigate-away-and-back happened to re-trigger it — including a
+    /// *sibling* image on the very same issue this call is meant to
+    /// repair. Matches `invalidate_inline_images`'s own full clear of this
+    /// exact set, for the exact same generation-coupling reason (see its
+    /// doc comment). `inline_images`/`inline_image_protocols` have no such
+    /// coupling — they're just data, valid until explicitly evicted — so
+    /// scoping those two to `key` alone is still correct.
     pub(crate) fn invalidate_inline_image_key(&mut self, key: &InlineImageKey) {
         self.inline_images.get_mut().remove(key);
         self.inline_image_protocols.get_mut().remove(key);
-        self.inline_images_pending.remove(key);
+        self.inline_images_pending.clear();
         self.inline_image_generation += 1;
     }
 
