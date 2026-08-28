@@ -378,6 +378,7 @@ async fn uploading_to_the_current_issue_invalidates_the_cached_preview() {
         "setup: the preview must be cached before the upload lands"
     );
 
+    let generation_before_upload = app.attachment_preview_generation;
     app.apply_event(AppEvent::AttachmentUploaded {
         key,
         filename: "mockup.png".into(),
@@ -387,6 +388,57 @@ async fn uploading_to_the_current_issue_invalidates_the_cached_preview() {
     assert!(
         app.attachment_preview.borrow().is_none(),
         "a re-upload to the current issue must invalidate its cached preview"
+    );
+    // A code-review finding: invalidating alone (one generation bump)
+    // isn't enough while the picker is already open — a paired
+    // `attachments_open`-guarded refresh (a second bump) must also fire,
+    // the same shape `refresh_detail_images` uses, or the picker is left
+    // showing no preview until the user happens to move the selection.
+    assert_eq!(
+        app.attachment_preview_generation,
+        generation_before_upload + 2,
+        "an open picker must get both the invalidate and a re-dispatched refresh"
+    );
+}
+
+/// Code-review regression test: the sequence the review actually flagged
+/// as reachable — confirming an upload with the picker *closed* (the only
+/// way to reach it at all, since `attachments_open` swallows `u`), then
+/// opening the picker *while that upload is still in flight* (nothing
+/// guards `a` on an in-flight upload), then the response landing. The
+/// picker must still end up showing a re-dispatched preview, not a blank
+/// one left over from `invalidate_attachment_preview` alone.
+#[cfg(feature = "images")]
+#[tokio::test]
+async fn opening_the_picker_while_an_upload_is_in_flight_still_gets_a_refreshed_preview() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+    app.detail = Some(crate::domain::demo_detail(&key));
+    app.screen = Screen::Detail;
+
+    // Picker closed throughout the "confirm upload" step — matches the
+    // only reachable way to start one.
+    assert!(!app.attachments_open);
+
+    // The picker opens *after* the upload was dispatched but *before* its
+    // response lands.
+    app.open_attachments();
+    assert!(app.attachments_open);
+    let generation_before_upload = app.attachment_preview_generation;
+
+    app.apply_event(AppEvent::AttachmentUploaded {
+        key,
+        filename: "mockup.png".into(),
+        result: Ok(vec![app.detail.as_ref().unwrap().attachments[0].clone()]),
+    });
+
+    assert_eq!(
+        app.attachment_preview_generation,
+        generation_before_upload + 2,
+        "the now-open picker must get a re-dispatched refresh, not just an invalidate"
     );
 }
 

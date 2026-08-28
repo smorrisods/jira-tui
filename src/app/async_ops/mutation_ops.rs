@@ -1190,15 +1190,24 @@ impl App {
         // A code-review finding: re-uploading a new version to an existing
         // attachment id updates `self.detail.attachments` in place without
         // invalidating a cached preview for that id, unlike every other
-        // `self.detail` mutation in this file. Not currently reachable —
-        // `attachments_open` swallows the `u` keybinding, so a re-upload
-        // can only start with the picker already closed, and closing
-        // already clears the cache (see `App::close_attachments`) — but
-        // this keeps the invariant true rather than relying on that
-        // keybinding shape to keep holding.
+        // `self.detail` mutation in this file. Genuinely reachable, despite
+        // `attachments_open` swallowing the `u` keybinding while the picker
+        // is open (an earlier version of this comment claimed otherwise):
+        // that only blocks *starting* a new upload while the picker is
+        // open, not opening the picker while a previously-started upload —
+        // dispatched with the picker closed — is still resolving. `u`
+        // itself has no `self.loading`/upload-in-flight guard, so `a` right
+        // after confirming an upload is a real, reachable sequence. Pairs
+        // with an `attachments_open`-guarded refresh, the same shape
+        // `refresh_detail_images` already uses, so a response landing
+        // while the picker is now open re-dispatches instead of leaving it
+        // blank.
         #[cfg(feature = "images")]
         if touched_current {
             self.invalidate_attachment_preview();
+            if self.attachments_open {
+                self.refresh_attachment_preview();
+            }
         }
         self.status = format!("{key}: uploaded {filename}");
         self.flash(format!("✓ uploaded {filename}"));
