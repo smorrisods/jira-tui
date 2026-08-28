@@ -286,6 +286,26 @@ fn detect_image_picker() -> Option<ratatui_image::picker::Picker> {
 /// that general expectation. If a stray misplaced character ever shows up
 /// immediately after a modal closes on an `images` build, that assumption
 /// is the first thing to revisit.
+///
+/// A functional regression this same mechanism caused, found live: writing
+/// straight to the backend bypasses ratatui's own diff buffer entirely —
+/// `Terminal::draw`'s `flush()` only ever sends the backend cells that
+/// *differ* from what its internal "previous frame" buffer still believes
+/// is on screen, so an external erase these lines don't know about leaves
+/// that buffer thinking the description text is still there. If the
+/// upcoming frame's content happens to be identical (the common case: a
+/// modal opening/closing doesn't itself change the Detail screen
+/// underneath), the diff sees "no change" and skips rewriting those exact
+/// cells — leaving the whole erased pane blank instead of repainted, not
+/// just the image. `Terminal::clear()` (below) is the only public API that
+/// resets that internal "previous frame" tracking, forcing every cell to
+/// be treated as dirty on the very next `draw`; it also does its own
+/// terminal-level `ClearType::All`, but that alone isn't a substitute for
+/// the ECH writes above — `ClearType::All` maps to a plain `ESC[2J`, the
+/// same "doesn't reliably clear Sixel" primitive this function's own ECH
+/// approach exists to work around (confirmed against `ratatui-crossterm`'s
+/// own source, not just the crate's compatibility notes). Both are needed:
+/// ECH for the graphics pixels, `clear()` for ratatui's own bookkeeping.
 #[cfg(feature = "images")]
 fn erase_image_prone_areas(terminal: &mut Term, app: &App) {
     use std::fmt::Write as _;
@@ -319,6 +339,11 @@ fn erase_image_prone_areas(terminal: &mut Term, app: &App) {
     let backend = terminal.backend_mut();
     let _ = backend.write_all(seq.as_bytes());
     let _ = backend.flush();
+    // Forces the next `terminal.draw` to rewrite every cell rather than
+    // skipping ones its diff thinks are unchanged — see this function's
+    // own doc comment for why the ECH writes above aren't enough on their
+    // own.
+    let _ = terminal.clear();
 }
 
 // ── Terminal lifecycle ───────────────────────────────────────────────────────
