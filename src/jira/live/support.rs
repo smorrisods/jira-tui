@@ -64,72 +64,33 @@ pub(super) fn get_bytes(cfg: &Config, url: &str) -> Result<Vec<u8>> {
 /// was found to have the exact gap `get_bytes` above was patched for,
 /// since it doesn't go through `get_bytes` at all).
 ///
-/// Compares by parsed-and-normalized origin, not raw string equality or a
-/// `str::starts_with` prefix check — the latter would be fooled by a
-/// hostname that merely starts with the real one
-/// (`https://example.atlassian.net.evil.com/...` is a `starts_with` match
-/// for `https://example.atlassian.net` but a completely different host).
-/// Normalizes host casing (DNS hostnames are case-insensitive per RFC
-/// 3986) and folds an explicit default port into "none given" (`:443` on
-/// `https`, `:80` on `http`) — self-hosted Jira Data Center deployments in
-/// particular can plausibly differ from `cfg.base_url` in either of those
-/// two ways while still being the exact same origin (another code-review
-/// finding: an earlier version of this compared raw origin strings, which
-/// would have wrongly rejected both). `None` on either side (most likely
-/// `cfg.base_url` itself missing a scheme, an otherwise-unvalidated field —
-/// see `jira::config::Config::load`) is never treated as a match, even
-/// against another `None` — a misconfigured `base_url` must fail this
-/// check closed, not silently skip it (a third code-review finding: a
-/// naive `Option`-equality comparison would have let two unparseable URLs
-/// compare equal to each other).
+/// Parses with `url::Url` (already `ureq`'s own transitive dependency, so
+/// this adds nothing new to the build graph) rather than a hand-rolled
+/// parser — a code-review finding, confirmed exploitable: an earlier
+/// hand-rolled version didn't strip URL userinfo (`user:pass@host`) before
+/// extracting the host, so a crafted `https://example.atlassian.net:x@evil.com/…`
+/// parsed as host `example.atlassian.net` by that parser while `ureq`
+/// itself (via this same `url` crate, internally) resolves the real
+/// request host as `evil.com` — a parser that can disagree with the HTTP
+/// client actually making the request is exactly the kind of gap this
+/// whole check exists to close. `Url::parse` already normalizes scheme/
+/// host casing during parsing (DNS hostnames are case-insensitive per RFC
+/// 3986) and `.port_or_known_default()` folds an explicit default port
+/// (`:443` on `https`, `:80` on `http`) into the same value as no port at
+/// all — both matter for a self-hosted Jira Data Center instance, which
+/// can plausibly differ from `cfg.base_url` in either way while still
+/// being the exact same origin. `false` if either side fails to parse as
+/// an absolute URL — most plausibly `cfg.base_url` itself missing a scheme
+/// (an otherwise-unvalidated field, see `jira::config::Config::load`) —
+/// rather than only checking one side, so a misconfigured `base_url` fails
+/// this check closed instead of silently skipping it.
 pub(super) fn is_same_origin(url: &str, base_url: &str) -> bool {
-    match (origin_parts(url), origin_parts(base_url)) {
-        (Some(a), Some(b)) => a == b,
-        _ => false,
-    }
-}
-
-/// Parses `url`'s origin into `(scheme, lowercased host, effective port)`
-/// — e.g. `"https://Example.Atlassian.NET:443/x"` ->
-/// `("https", "example.atlassian.net", 443)`. `None` for anything without
-/// a `scheme://` prefix, or whose scheme isn't `http`/`https` (the only
-/// two Jira ever uses, and the only two this has a default port for).
-/// Hand-rolled rather than pulling in the `url` crate — not otherwise a
-/// dependency of this codebase — matching `get_bytes_public`'s own
-/// hand-rolled scheme check elsewhere in this file.
-///
-/// A bracketed IPv6 host (`[::1]`, `[::1]:8080`) is deliberately *not*
-/// split on its rightmost `:` for a port — that would misparse the address
-/// itself, which also contains colons — so it's compared as one opaque
-/// (bracket-inclusive) host string at the scheme's default port instead.
-/// An IPv6-literal `cfg.base_url` genuinely specifying a non-default port
-/// would therefore never match; not worth the real URL-parsing bracket
-/// handling would take to fix, since Jira is never actually reached via a
-/// bare IP literal in practice.
-fn origin_parts(url: &str) -> Option<(&'static str, String, u16)> {
-    let (scheme, rest) = url.split_once("://")?;
-    // Normalized to a canonical lowercase `&'static str`, not the raw
-    // (possibly differently-cased) slice from `url` itself — comparing two
-    // `origin_parts` results by tuple equality only actually normalizes
-    // scheme casing if the returned value already *is* normalized.
-    let (scheme, default_port) = if scheme.eq_ignore_ascii_case("https") {
-        ("https", 443)
-    } else if scheme.eq_ignore_ascii_case("http") {
-        ("http", 80)
-    } else {
-        return None;
+    let (Ok(a), Ok(b)) = (url::Url::parse(url), url::Url::parse(base_url)) else {
+        return false;
     };
-    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    let authority = &rest[..end];
-    let (host, port) = if authority.starts_with('[') {
-        (authority, default_port)
-    } else {
-        match authority.rsplit_once(':') {
-            Some((h, p)) => (h, p.parse().unwrap_or(default_port)),
-            None => (authority, default_port),
-        }
-    };
-    Some((scheme, host.to_ascii_lowercase(), port))
+    a.scheme() == b.scheme()
+        && a.host_str() == b.host_str()
+        && a.port_or_known_default() == b.port_or_known_default()
 }
 
 /// Cap on how many bytes `get_bytes_public` will read from an externally
@@ -513,53 +474,39 @@ mod tests {
     }
 
     #[test]
-    fn origin_parts_extracts_scheme_host_and_default_port_up_to_the_first_path_query_or_fragment() {
-        assert_eq!(
-            origin_parts("https://example.atlassian.net/secure/attachment/1"),
-            Some(("https", "example.atlassian.net".into(), 443))
-        );
-        assert_eq!(
-            origin_parts("https://example.atlassian.net?x=1"),
-            Some(("https", "example.atlassian.net".into(), 443))
-        );
-        assert_eq!(
-            origin_parts("https://example.atlassian.net#frag"),
-            Some(("https", "example.atlassian.net".into(), 443))
-        );
-        assert_eq!(
-            origin_parts("http://example.atlassian.net"),
-            Some(("http", "example.atlassian.net".into(), 80))
-        );
-        assert_eq!(origin_parts("not-a-url"), None);
-        assert_eq!(origin_parts("ftp://example.com"), None);
+    fn is_same_origin_folds_an_explicit_default_port_into_no_port_given() {
+        assert!(is_same_origin(
+            "https://example.atlassian.net:443/x",
+            "https://example.atlassian.net/x"
+        ));
+        assert!(is_same_origin(
+            "http://example.atlassian.net:80/x",
+            "http://example.atlassian.net/x"
+        ));
     }
 
     #[test]
-    fn origin_parts_normalizes_scheme_and_host_casing() {
-        assert_eq!(
-            origin_parts("HTTPS://Example.Atlassian.NET/x"),
-            Some(("https", "example.atlassian.net".into(), 443))
-        );
+    fn is_same_origin_keeps_a_non_default_port_distinct() {
+        assert!(!is_same_origin(
+            "https://example.atlassian.net:8443/x",
+            "https://example.atlassian.net/x"
+        ));
     }
 
     #[test]
-    fn origin_parts_folds_an_explicit_default_port_into_no_port_given() {
-        assert_eq!(
-            origin_parts("https://example.atlassian.net:443/x"),
-            origin_parts("https://example.atlassian.net/x")
-        );
-        assert_eq!(
-            origin_parts("http://example.atlassian.net:80/x"),
-            origin_parts("http://example.atlassian.net/x")
-        );
-    }
-
-    #[test]
-    fn origin_parts_keeps_a_non_default_port_distinct() {
-        assert_ne!(
-            origin_parts("https://example.atlassian.net:8443/x"),
-            origin_parts("https://example.atlassian.net/x")
-        );
+    fn is_same_origin_rejects_userinfo_smuggled_into_the_authority() {
+        // A code-review finding, confirmed exploitable against the earlier
+        // hand-rolled parser this replaced: `user:pass@host` syntax puts
+        // credentials before the `@`, with the *real* host after it. A
+        // parser that doesn't account for this reads `example.atlassian.net`
+        // as the host here, while `ureq` (via this same `url` crate,
+        // internally) resolves the actual request host as `evil.com` — a
+        // parser that can disagree with the HTTP client actually making the
+        // request defeats the whole point of this check.
+        assert!(!is_same_origin(
+            "https://example.atlassian.net:443@evil.com/x",
+            "https://example.atlassian.net"
+        ));
     }
 
     #[test]
