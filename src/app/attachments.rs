@@ -191,8 +191,17 @@ impl App {
     /// without any special-casing at the call sites — `ui::attachment_picker`
     /// already renders its normal placeholder path whenever there's nothing
     /// here.
+    ///
+    /// Also clears `attachment_preview_pending` (a code-review finding): a
+    /// caller reaching this directly (`App::open_attachments`, or a manual
+    /// refresh via `refresh_detail_images`) fully supersedes whatever move
+    /// `App::attachments_move` may still have debounced — leaving the flag
+    /// set would let `App::ensure_attachment_preview_dispatched` fire a
+    /// second, redundant fetch once that debounce window elapses, exactly
+    /// the duplicate-dispatch waste the debounce itself exists to avoid.
     #[cfg(feature = "images")]
     pub(crate) fn refresh_attachment_preview(&mut self) {
+        self.attachment_preview_pending = false;
         *self.attachment_preview.get_mut() = None;
         self.attachment_preview_generation += 1;
         let generation = self.attachment_preview_generation;

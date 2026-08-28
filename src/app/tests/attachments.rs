@@ -384,6 +384,46 @@ async fn closing_the_picker_cancels_a_pending_debounced_move() {
     );
 }
 
+/// Code-review regression test: a direct call to `refresh_attachment_preview`
+/// (e.g. a manual `r` detail refresh landing via `refresh_detail_images`
+/// while the picker happens to still be settling a debounced move) must
+/// supersede that pending debounce outright, not just fetch immediately
+/// and leave the flag set — otherwise the debounce still fires a second,
+/// redundant fetch once its window elapses.
+#[cfg(feature = "images")]
+#[tokio::test]
+async fn a_direct_refresh_clears_a_still_pending_debounced_move() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+    app.detail = Some(crate::domain::demo_detail(&key));
+    app.screen = Screen::Detail;
+    app.open_attachments();
+    app.attachments_move(1);
+    assert!(
+        app.attachment_preview_pending,
+        "setup: the move should have scheduled a debounced fetch"
+    );
+
+    // Simulates a manual refresh landing mid-debounce, the same direct
+    // call `refresh_detail_images` makes.
+    app.refresh_attachment_preview();
+    assert!(
+        !app.attachment_preview_pending,
+        "a direct refresh must clear the superseded debounce"
+    );
+    let generation_after_direct_refresh = app.attachment_preview_generation;
+
+    app.tick += 100;
+    app.ensure_attachment_preview_dispatched();
+    assert_eq!(
+        app.attachment_preview_generation, generation_after_direct_refresh,
+        "the stale debounce must not fire a second, redundant fetch"
+    );
+}
+
 /// A non-image attachment (the demo PDF) must never be handed off for
 /// decoding — `attachment_preview_url` (the pure eligibility gate) already
 /// has direct unit tests in `app::attachments`; this end-to-end version
