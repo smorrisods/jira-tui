@@ -557,13 +557,12 @@ pub(crate) fn dispatch_attachment_preview(
     url: String,
 ) {
     tokio::spawn(async move {
-        let id_for_result = attachment_id.clone();
         let image = tokio::task::spawn_blocking(move || fetch_attachment_preview_blocking(&url))
             .await
             .unwrap_or(None);
         let _ = tx.send(AppEvent::AttachmentPreviewLoaded {
             generation,
-            attachment_id: id_for_result,
+            attachment_id,
             image,
         });
     });
@@ -1174,13 +1173,32 @@ impl App {
                 return;
             }
         };
+        #[cfg(feature = "images")]
+        let mut touched_current = false;
         if let Some(d) = self.detail.as_mut() {
             if d.key == key {
                 merge_attachments(&mut d.attachments, &uploaded);
+                #[cfg(feature = "images")]
+                {
+                    touched_current = true;
+                }
             }
         }
         if let Some(cached) = self.detail_cache.get_mut(&key) {
             merge_attachments(&mut cached.attachments, &uploaded);
+        }
+        // A code-review finding: re-uploading a new version to an existing
+        // attachment id updates `self.detail.attachments` in place without
+        // invalidating a cached preview for that id, unlike every other
+        // `self.detail` mutation in this file. Not currently reachable —
+        // `attachments_open` swallows the `u` keybinding, so a re-upload
+        // can only start with the picker already closed, and closing
+        // already clears the cache (see `App::close_attachments`) — but
+        // this keeps the invariant true rather than relying on that
+        // keybinding shape to keep holding.
+        #[cfg(feature = "images")]
+        if touched_current {
+            self.invalidate_attachment_preview();
         }
         self.status = format!("{key}: uploaded {filename}");
         self.flash(format!("✓ uploaded {filename}"));

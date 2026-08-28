@@ -313,6 +313,83 @@ async fn attachment_preview_applies_a_current_response() {
     }
 }
 
+/// Code-review regression test: closing the picker must bump
+/// `attachment_preview_generation`, not just clear the cached preview —
+/// otherwise a fetch still in flight when the picker closes lands tagged
+/// with a generation that's still current (nothing else bumps it between
+/// close and the next open/move), passes
+/// `apply_attachment_preview_loaded`'s checks, and silently repopulates
+/// `attachment_preview` while the picker is closed.
+#[cfg(feature = "images")]
+#[tokio::test]
+async fn closing_the_picker_bumps_the_generation_so_a_late_response_is_dropped() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+    app.detail = Some(crate::domain::demo_detail(&key));
+    app.screen = Screen::Detail;
+    app.open_attachments();
+    let current_id = app.detail.as_ref().unwrap().attachments[0].id.clone();
+    let stale_generation = app.attachment_preview_generation;
+
+    app.close_attachments();
+    assert_ne!(
+        app.attachment_preview_generation, stale_generation,
+        "closing the picker must bump the generation, not just clear the cache"
+    );
+
+    app.apply_event(AppEvent::AttachmentPreviewLoaded {
+        generation: stale_generation,
+        attachment_id: current_id,
+        image: Some(image::DynamicImage::new_rgb8(1, 1)),
+    });
+
+    assert!(
+        app.attachment_preview.borrow().is_none(),
+        "a response dispatched before close must not repopulate the preview after close"
+    );
+}
+
+/// Code-review regression test: re-uploading a new version of the
+/// currently-cached-preview attachment must invalidate that cache — the
+/// old decoded bytes belong to the file that just got replaced.
+#[cfg(feature = "images")]
+#[tokio::test]
+async fn uploading_to_the_current_issue_invalidates_the_cached_preview() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+    app.detail = Some(crate::domain::demo_detail(&key));
+    app.screen = Screen::Detail;
+    app.open_attachments();
+    let current_id = app.detail.as_ref().unwrap().attachments[0].id.clone();
+    let generation = app.attachment_preview_generation;
+    app.apply_event(AppEvent::AttachmentPreviewLoaded {
+        generation,
+        attachment_id: current_id.clone(),
+        image: Some(image::DynamicImage::new_rgb8(1, 1)),
+    });
+    assert!(
+        app.attachment_preview.borrow().is_some(),
+        "setup: the preview must be cached before the upload lands"
+    );
+
+    app.apply_event(AppEvent::AttachmentUploaded {
+        key,
+        filename: "mockup.png".into(),
+        result: Ok(vec![app.detail.as_ref().unwrap().attachments[0].clone()]),
+    });
+
+    assert!(
+        app.attachment_preview.borrow().is_none(),
+        "a re-upload to the current issue must invalidate its cached preview"
+    );
+}
+
 /// A non-image attachment (the demo PDF) must never be handed off for
 /// decoding — `attachment_preview_url` (the pure eligibility gate) already
 /// has direct unit tests in `app::attachments`; this end-to-end version
