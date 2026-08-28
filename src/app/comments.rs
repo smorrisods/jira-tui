@@ -47,29 +47,39 @@ impl App {
         let current_user = self.current_user_display();
         let updated = self.issue_updated(&detail.key).to_string();
         let width = self.detail_main_width();
-        match detail_layout_for_width(self.detail_area.get().width) {
-            DetailLayout::Wide => {
-                let wide = crate::render::wide_detail(
-                    detail,
-                    &current_user,
-                    &updated,
-                    self.sprint_field_configured(),
-                    width,
-                );
-                (wide.main.comments_header, wide.main.comment_starts)
+        // The same `MediaSizing` `ui::detail`'s draw functions would build
+        // for this pane width — otherwise a description with an inline
+        // image would have its comment offsets computed against the
+        // placeholder's 1-line reservation while the screen actually
+        // rendered several blank rows in its place, jumping `]`/`n`/`p` to
+        // the wrong scroll position. See `App::with_detail_media_sizing`.
+        self.with_detail_media_sizing(width as u16, |media| {
+            match detail_layout_for_width(self.detail_area.get().width) {
+                DetailLayout::Wide => {
+                    let wide = crate::render::wide_detail(
+                        detail,
+                        &current_user,
+                        &updated,
+                        self.sprint_field_configured(),
+                        width,
+                        media,
+                    );
+                    (wide.main.comments_header, wide.main.comment_starts)
+                }
+                DetailLayout::Narrow => {
+                    let narrow = crate::render::narrow_detail(
+                        detail,
+                        &current_user,
+                        &updated,
+                        self.facts_folded,
+                        self.sprint_field_configured(),
+                        width,
+                        media,
+                    );
+                    (narrow.lines.comments_header, narrow.lines.comment_starts)
+                }
             }
-            DetailLayout::Narrow => {
-                let narrow = crate::render::narrow_detail(
-                    detail,
-                    &current_user,
-                    &updated,
-                    self.facts_folded,
-                    self.sprint_field_configured(),
-                    width,
-                );
-                (narrow.lines.comments_header, narrow.lines.comment_starts)
-            }
-        }
+        })
     }
 
     /// `]` — jump the scroll position to the start of the comments section.

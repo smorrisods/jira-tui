@@ -460,10 +460,24 @@ impl App {
         if navigate {
             self.detail_scroll = 0;
             self.detail = Some(*detail);
+            #[cfg(feature = "images")]
+            self.refresh_detail_images();
             self.screen = Screen::Detail;
             if let Some(pos) = self.issues.iter().position(|i| i.key == key) {
                 self.selected = pos;
             }
+        } else {
+            // A cache-only quick-view load landing (see
+            // `App::dispatch_detail_fetch`'s doc comment) — unlike the
+            // `navigate` branch above, this must NOT touch
+            // `invalidate_inline_images`: that would clear every other
+            // recently-visited issue's still-useful cached images just
+            // because this one finished loading. `refresh_quick_view_inline_images`
+            // reads whichever issue is *currently* selected (which may no
+            // longer be `key`, if the user has since moved on) rather than
+            // assuming it's still this one.
+            #[cfg(feature = "images")]
+            self.refresh_quick_view_inline_images();
         }
     }
 

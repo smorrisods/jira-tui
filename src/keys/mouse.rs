@@ -23,20 +23,7 @@ pub(crate) fn handle_mouse(app: &mut App, me: MouseEvent) {
     // the same way, or a click could mutate `app.screen` (or list/quick-view
     // state) while the modal's own flag stays set, orphaning it over
     // whatever screen is now showing underneath.
-    if app.show_help
-        || app.picker_open
-        || app.view_picker_open
-        || app.assignee_picker_open
-        || app.version_picker_open
-        || app.spell_suggest_open
-        || app.palette_open
-        || app.confirm_discard
-        || app.attachments_open
-        || app.attachment_upload.is_some()
-        || app.new_issue_type_picker_open
-        || app.project_picker_open
-        || app.sprint_picker_open
-    {
+    if app.any_modal_open() {
         return;
     }
     // Any button other than a continuing Left-button drag cancels an
@@ -286,6 +273,7 @@ mod tests {
         type ModalCase = (&'static str, fn(&mut App));
         let cases: &[ModalCase] = &[
             ("show_help", |app| app.show_help = true),
+            ("nerd_info_open", |app| app.nerd_info_open = true),
             ("picker_open", |app| app.picker_open = true),
             ("view_picker_open", |app| app.view_picker_open = true),
             ("assignee_picker_open", |app| {
@@ -305,10 +293,11 @@ mod tests {
                 app.open_detail();
                 app.open_attachment_upload();
             }),
-            // Regression: `new_issue_type_picker_open`/`project_picker_open`
-            // were genuine overlays (see `ui::mod`'s draw dispatch) missing
-            // from this guard entirely — a plain click would have reached
-            // the screen underneath while either was open.
+            // Regression: both were genuine overlays (see `ui::mod`'s draw
+            // dispatch) missing from this guard entirely until
+            // `App::any_modal_open` consolidated the list — a plain click
+            // would have reached the screen underneath while either was
+            // open.
             ("new_issue_type_picker_open", |app| {
                 app.new_issue_type_picker_open = true
             }),

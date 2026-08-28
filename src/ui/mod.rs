@@ -39,6 +39,7 @@ mod keymap;
 mod list;
 mod list_columns;
 pub(crate) mod nav_strip;
+mod nerd_info;
 mod new_issue;
 mod new_issue_type_picker;
 mod palette;
@@ -70,6 +71,7 @@ use home::draw_home;
 use jax_companion::{draw_jax_companion, draw_jax_mini, JaxMode, MINI_DOCK_WIDTH};
 use list::draw_list;
 use nav_strip::{draw_nav_strip, nav_strip_visible};
+use nerd_info::draw_nerd_info;
 use new_issue::draw_new_issue;
 use new_issue_type_picker::draw_new_issue_type_picker;
 use palette::draw_palette;
@@ -411,6 +413,10 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     if app.show_help {
         draw_help_overlay(f, f.area());
+    }
+
+    if app.nerd_info_open {
+        draw_nerd_info(f, app, f.area());
     }
 
     // A transient toast (e.g. clipboard confirmations) floats above everything.

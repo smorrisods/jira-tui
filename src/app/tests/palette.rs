@@ -216,6 +216,7 @@ fn build_palette_rows_view_and_app_groups_are_always_present() {
         PaletteAction::ToggleJax,
         PaletteAction::OpenAbout,
         PaletteAction::OpenHelp,
+        PaletteAction::OpenNerdInfo,
     ] {
         assert!(
             app.palette.all_rows.iter().any(|r| r.action == action),

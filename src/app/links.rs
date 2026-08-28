@@ -35,41 +35,56 @@ impl App {
         if self.screen != Screen::Detail {
             let updated = self.issue_updated(&detail.key).to_string();
             let width = self.quick_view_description_width();
-            return match quick_view_layout_for_width(self.quick_view_area.get().width) {
-                QuickViewLayout::Wide => {
-                    render::quick_view_wide_links(&render::quick_view_wide(detail, &updated, width))
+            // Same `MediaSizing` `ui::quick_view` actually painted with, so a
+            // link target's recorded line always matches what's really on
+            // screen — see `App::with_quick_view_media_sizing` and
+            // `active_links`'s Detail branch below for why this has to
+            // agree.
+            return self.with_quick_view_media_sizing(width as u16, |media| {
+                match quick_view_layout_for_width(self.quick_view_area.get().width) {
+                    QuickViewLayout::Wide => render::quick_view_wide_links(
+                        &render::quick_view_wide(detail, &updated, width, media),
+                    ),
+                    QuickViewLayout::Narrow => {
+                        render::quick_view_narrow(detail, &updated, width, media)
+                            .panel
+                            .links
+                    }
                 }
-                QuickViewLayout::Narrow => {
-                    render::quick_view_narrow(detail, &updated, width)
-                        .panel
-                        .links
-                }
-            };
+            });
         }
         let current_user = self.current_user_display();
         let updated = self.issue_updated(&detail.key).to_string();
         let width = self.detail_main_width();
-        match detail_layout_for_width(self.detail_area.get().width) {
-            DetailLayout::Wide => render::wide_detail_links(&render::wide_detail(
-                detail,
-                &current_user,
-                &updated,
-                self.sprint_field_configured(),
-                width,
-            )),
-            DetailLayout::Narrow => {
-                render::narrow_detail(
+        // Same `MediaSizing` `ui::detail` actually painted with, so a link
+        // target's recorded line always matches what's really on screen —
+        // see `App::with_detail_media_sizing` and `app::comments`'s own
+        // call site for why this has to agree.
+        self.with_detail_media_sizing(width as u16, |media| {
+            match detail_layout_for_width(self.detail_area.get().width) {
+                DetailLayout::Wide => render::wide_detail_links(&render::wide_detail(
                     detail,
                     &current_user,
                     &updated,
-                    self.facts_folded,
                     self.sprint_field_configured(),
                     width,
-                )
-                .lines
-                .links
+                    media,
+                )),
+                DetailLayout::Narrow => {
+                    render::narrow_detail(
+                        detail,
+                        &current_user,
+                        &updated,
+                        self.facts_folded,
+                        self.sprint_field_configured(),
+                        width,
+                        media,
+                    )
+                    .lines
+                    .links
+                }
             }
-        }
+        })
     }
 
     /// The rendered lines for a given `DetailPane`, recomputed fresh (see
@@ -85,63 +100,75 @@ impl App {
             // Quick view only ever has Main (description) and Meta panes.
             let updated = self.issue_updated(&detail.key).to_string();
             let width = self.quick_view_description_width();
-            return match quick_view_layout_for_width(self.quick_view_area.get().width) {
-                QuickViewLayout::Wide => {
-                    let wide = render::quick_view_wide(detail, &updated, width);
-                    match pane {
-                        DetailPane::Main => Some(wide.description.lines),
-                        DetailPane::Meta => Some(wide.meta.lines),
-                        _ => None,
+            // As `active_links` above — the same `MediaSizing`
+            // `ui::quick_view` actually painted with, so wrap-aware
+            // click-to-line mapping agrees with what's really on screen.
+            return self.with_quick_view_media_sizing(width as u16, |media| {
+                match quick_view_layout_for_width(self.quick_view_area.get().width) {
+                    QuickViewLayout::Wide => {
+                        let wide = render::quick_view_wide(detail, &updated, width, media);
+                        match pane {
+                            DetailPane::Main => Some(wide.description.lines),
+                            DetailPane::Meta => Some(wide.meta.lines),
+                            _ => None,
+                        }
                     }
+                    QuickViewLayout::Narrow => match pane {
+                        DetailPane::Main => Some(
+                            render::quick_view_narrow(detail, &updated, width, media)
+                                .panel
+                                .lines,
+                        ),
+                        _ => None,
+                    },
                 }
-                QuickViewLayout::Narrow => match pane {
-                    DetailPane::Main => Some(
-                        render::quick_view_narrow(detail, &updated, width)
-                            .panel
-                            .lines,
-                    ),
-                    _ => None,
-                },
-            };
+            });
         }
         let current_user = self.current_user_display();
         let updated = self.issue_updated(&detail.key).to_string();
         let width = self.detail_main_width();
-        match detail_layout_for_width(self.detail_area.get().width) {
-            DetailLayout::Narrow => match pane {
-                DetailPane::Main => Some(
-                    render::narrow_detail(
+        // As `active_links` above — the same `MediaSizing` `ui::detail`
+        // actually painted with, so wrap-aware click-to-line mapping agrees
+        // with what's really on screen.
+        self.with_detail_media_sizing(width as u16, |media| {
+            match detail_layout_for_width(self.detail_area.get().width) {
+                DetailLayout::Narrow => match pane {
+                    DetailPane::Main => Some(
+                        render::narrow_detail(
+                            detail,
+                            &current_user,
+                            &updated,
+                            self.facts_folded,
+                            self.sprint_field_configured(),
+                            width,
+                            media,
+                        )
+                        .lines
+                        .lines,
+                    ),
+                    _ => None,
+                },
+                DetailLayout::Wide => {
+                    let wide = render::wide_detail(
                         detail,
                         &current_user,
                         &updated,
-                        self.facts_folded,
                         self.sprint_field_configured(),
                         width,
-                    )
-                    .lines
-                    .lines,
-                ),
-                _ => None,
-            },
-            DetailLayout::Wide => {
-                let wide = render::wide_detail(
-                    detail,
-                    &current_user,
-                    &updated,
-                    self.sprint_field_configured(),
-                    width,
-                );
-                Some(match pane {
-                    DetailPane::Identity => wide.identity.lines,
-                    DetailPane::Main => wide.main.lines,
-                    DetailPane::Workflow => wide.workflow.lines,
-                    DetailPane::Meta => wide.meta.lines,
-                    DetailPane::Links => wide.links.lines,
-                    DetailPane::Children => wide.children.lines,
-                    DetailPane::Attachments => wide.attachments.lines,
-                })
+                        media,
+                    );
+                    Some(match pane {
+                        DetailPane::Identity => wide.identity.lines,
+                        DetailPane::Main => wide.main.lines,
+                        DetailPane::Workflow => wide.workflow.lines,
+                        DetailPane::Meta => wide.meta.lines,
+                        DetailPane::Links => wide.links.lines,
+                        DetailPane::Children => wide.children.lines,
+                        DetailPane::Attachments => wide.attachments.lines,
+                    })
+                }
             }
-        }
+        })
     }
 
     /// `}` — highlight the next link, wrapping around.

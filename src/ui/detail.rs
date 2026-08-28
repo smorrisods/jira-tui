@@ -62,13 +62,16 @@ fn draw_wide(
         ])
         .split(area);
 
-    let mut wide = render::wide_detail(
-        detail,
-        current_user,
-        updated,
-        app.sprint_field_configured(),
-        cols[0].width as usize,
-    );
+    let mut wide = app.with_detail_media_sizing(cols[0].width, |media| {
+        render::wide_detail(
+            detail,
+            current_user,
+            updated,
+            app.sprint_field_configured(),
+            cols[0].width as usize,
+            media,
+        )
+    });
     if let Some(target) = render::wide_detail_links(&wide)
         .get(app.link_index)
         .cloned()
@@ -101,12 +104,25 @@ fn draw_wide(
         main_rows[0],
     );
     app.detail_main_area.set(main_rows[1]);
+    // Computed from `&wide.main.lines` (a borrow, not a move) before the
+    // `Paragraph::new` below consumes them — see `image_paint_offsets`'s
+    // doc comment for why the visual-row math needs the actual line
+    // content, not just the placement list.
+    #[cfg(feature = "images")]
+    let image_paints = image_paint_offsets(
+        &wide.main.lines,
+        &wide.image_placements,
+        main_rows[1].width,
+        app.detail_scroll,
+    );
     f.render_widget(
         Paragraph::new(wide.main.lines)
             .wrap(Wrap { trim: false })
             .scroll((app.detail_scroll, 0)),
         main_rows[1],
     );
+    #[cfg(feature = "images")]
+    paint_inline_images(f, app, main_rows[1], image_paints, Some(detail));
 
     let workflow_title = "workflow · t to change".to_string();
     let meta_title = "people & meta".to_string();
@@ -213,20 +229,109 @@ fn draw_narrow(
     current_user: &str,
     updated: &str,
 ) {
-    let mut narrow = render::narrow_detail(
-        detail,
-        current_user,
-        updated,
-        app.facts_folded,
-        app.sprint_field_configured(),
-        area.width as usize,
-    );
+    let mut narrow = app.with_detail_media_sizing(area.width, |media| {
+        render::narrow_detail(
+            detail,
+            current_user,
+            updated,
+            app.facts_folded,
+            app.sprint_field_configured(),
+            area.width as usize,
+            media,
+        )
+    });
     if let Some(target) = narrow.lines.links.get(app.link_index).cloned() {
         render::highlight_target(&mut narrow.lines.lines, &target);
     }
     app.detail_main_area.set(area);
+    #[cfg(feature = "images")]
+    let image_paints = image_paint_offsets(
+        &narrow.lines.lines,
+        &narrow.image_placements,
+        area.width,
+        app.detail_scroll,
+    );
     let para = Paragraph::new(narrow.lines.lines)
         .wrap(Wrap { trim: false })
         .scroll((app.detail_scroll, 0));
     f.render_widget(para, area);
+    #[cfg(feature = "images")]
+    paint_inline_images(f, app, area, image_paints, Some(detail));
+}
+
+/// Convert each `ImagePlacement`'s logical `line_start` into a *visual*
+/// (post-wrap) row offset relative to the pane's current scroll position
+/// (`images` feature only, Phase 3 of issue #130) — `scroll` is in the same
+/// wrapped-row units `Paragraph::scroll` itself consumes (see
+/// `detail_columns::wrapped_row_count`'s own doc comment), so the row count
+/// of everything *before* `line_start` (via `wrapped_row_count` on that
+/// prefix slice) is exactly where the reserved rows start once rendered,
+/// minus `scroll` to land in on-screen coordinates. Must be called with
+/// `lines` still intact — i.e. before whatever `Paragraph::new` call is
+/// about to move them — since this needs the actual line content wrapping
+/// was computed against, the same constraint `app::mouse::link_at`'s own
+/// wrap-aware click mapping already has.
+///
+/// `pub(super)` (rather than file-private) since `ui::quick_view`'s own
+/// paint pass reuses this verbatim (Phase 5 of issue #130) — the maths here
+/// never touched `App`/Detail-specific state to begin with, just line
+/// content and placements, so quick view's own `Panel`/scroll shape needs
+/// nothing different.
+#[cfg(feature = "images")]
+pub(super) fn image_paint_offsets(
+    lines: &[ratatui::text::Line<'static>],
+    placements: &[crate::adf::ImagePlacement],
+    width: u16,
+    scroll: u16,
+) -> Vec<(crate::adf::ImagePlacement, i32)> {
+    placements
+        .iter()
+        .map(|p| {
+            let prefix_end = p.line_start.min(lines.len());
+            let visual_row = wrapped_row_count(&lines[..prefix_end], width);
+            (p.clone(), visual_row as i32 - scroll as i32)
+        })
+        .collect()
+}
+
+/// Paint every still-on-screen inline image over `pane`, after its
+/// scrolled `Paragraph` has already been rendered (`images` feature only,
+/// Phase 3 of issue #130) — a placement whose full row range is above or
+/// below the visible area (`y + rows <= 0` or `y >= pane.height`) is
+/// skipped entirely rather than handed to `SlicedImage`, which is both a
+/// cheap optimization and correct either way: `SlicedProtocol` clips a
+/// partially-visible placement on its own. `App::sliced_inline_image_protocol`
+/// returning `None` (no picker, or the decoded image was evicted from the
+/// cache since sizing was computed) just leaves that reservation's rows
+/// blank — never a panic, never a fallback placeholder drawn over already
+/// -rendered blank rows.
+///
+/// `pub(super)`, and takes `detail` explicitly (rather than reading
+/// `app.detail` itself) since `ui::quick_view` reuses this too (Phase 5 of
+/// issue #130) — its own images come from `app.quick_view_detail()`, not
+/// `app.detail`. `None` is a legitimate value here (no picker, or a document
+/// whose images all resolve without ever needing an attachment-id lookup),
+/// not just a placeholder for "unavailable."
+#[cfg(feature = "images")]
+pub(super) fn paint_inline_images(
+    f: &mut Frame,
+    app: &App,
+    pane: Rect,
+    offsets: Vec<(crate::adf::ImagePlacement, i32)>,
+    detail: Option<&IssueDetail>,
+) {
+    for (placement, y) in offsets {
+        if y + i32::from(placement.rows) <= 0 || y >= i32::from(pane.height) {
+            continue;
+        }
+        let Some(protocol) = app.sliced_inline_image_protocol(detail, &placement) else {
+            continue;
+        };
+        let y = y.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+        let position = ratatui_image::sliced::SignedPosition::from((0, y));
+        f.render_widget(
+            ratatui_image::sliced::SlicedImage::new(&protocol, position),
+            pane,
+        );
+    }
 }

@@ -9,10 +9,16 @@
 //! helpers (selection, window title, toasts, at-a-glance counts).
 
 use std::cell::Cell;
+#[cfg(feature = "images")]
+use std::cell::RefCell;
 use std::collections::HashMap;
+#[cfg(feature = "images")]
+use std::collections::HashSet;
 
 use ratatui::layout::Rect;
 
+#[cfg(not(feature = "images"))]
+use crate::adf;
 use crate::config::{self, Settings};
 use crate::domain::{
     AssignableUser, IssueDetail, IssueSummary, Project, Source, Sprint, Version, ViewKind,
@@ -28,6 +34,8 @@ mod detail;
 mod edit;
 mod field_mapping;
 mod history;
+#[cfg(feature = "images")]
+mod inline_images;
 mod links;
 mod loader;
 mod mouse;
@@ -52,11 +60,15 @@ mod tests;
 
 pub use assign::{AssigneePickerState, AssigneeRow};
 pub use async_ops::AppEvent;
+#[cfg(feature = "images")]
+pub use attachments::AttachmentPreview;
 pub use attachments::AttachmentUpload;
 pub use board::BoardSelection;
 pub use edit::{EditTarget, EditorState};
 pub use field_mapping::{FieldMappingOutcome, FieldMappingState, FieldMappingTarget};
 pub(crate) use history::{NavEntry, NavHistory};
+#[cfg(feature = "images")]
+pub use inline_images::{BoundedCache, InlineImageKey};
 pub use mouse::{ListFocus, MouseState, SelectionSpan};
 pub(crate) use new_issue::LocallyCreatedIssue;
 pub use new_issue::{NewIssueField, NewIssueState};
@@ -117,6 +129,11 @@ pub struct App {
     pub tick: u64,
     pub status: String,
     pub show_help: bool,
+    /// The "nerd info" diagnostics popup (build version, detected terminal
+    /// env vars, detected image graphics capability) — see
+    /// `ui::nerd_info`. Palette-only, no dedicated key; closes on any
+    /// keypress, same shape as `show_help`.
+    pub nerd_info_open: bool,
     pub should_quit: bool,
 
     // Sort + filter.
@@ -291,6 +308,105 @@ pub struct App {
     /// mandatory preview before the actual multipart POST — see
     /// `App::open_attachment_upload`. `None` when the flow isn't active.
     pub attachment_upload: Option<AttachmentUpload>,
+    /// Runtime-detected terminal image capability (`images` feature only) —
+    /// see `main::detect_image_picker`, called once at startup strictly
+    /// before `crossterm::EventStream` starts polling stdin (the detection
+    /// query reads a synchronous response off stdin, which a concurrently
+    /// polling event stream would otherwise steal). `None` whenever the
+    /// terminal wasn't queried, the query failed, or stdin/stdout isn't a
+    /// real tty — every other code path treats that exactly like the
+    /// `images` feature being absent: fall back to the `[image: alt]`
+    /// placeholder.
+    #[cfg(feature = "images")]
+    pub image_picker: Option<ratatui_image::picker::Picker>,
+    /// The attachment picker's fetched-and-decoded preview for the
+    /// currently-highlighted attachment (`images` feature only) — see
+    /// `App::refresh_attachment_preview`/`AppEvent::AttachmentPreviewLoaded`.
+    /// Wrapped in a `RefCell` (rather than a plain field, like every other
+    /// `attachment_*` field above) because rendering it needs a `&mut
+    /// StatefulProtocol` (ratatui-image resizes/re-encodes at render time),
+    /// while `ui::draw` only ever holds `&App` — the same "interior
+    /// mutability so render-time code can still update itself" shape as
+    /// this struct's `Cell<Rect>` hit-test fields, just for a type that
+    /// isn't `Copy`.
+    #[cfg(feature = "images")]
+    pub attachment_preview: RefCell<Option<AttachmentPreview>>,
+    /// Bumped on every attachment-picker open/move; a completed preview
+    /// fetch whose generation no longer matches this has been superseded by
+    /// a newer selection and is dropped instead of overwriting a preview
+    /// for a different attachment. Mirrors every other `*_generation`
+    /// counter on `App`.
+    #[cfg(feature = "images")]
+    pub(crate) attachment_preview_generation: u64,
+    /// Fetched-and-decoded inline description images (`images` feature
+    /// only), keyed by `InlineImageKey` rather than one single slot like
+    /// `attachment_preview` — every media node the description/acceptance
+    /// criteria resolves to is independently and simultaneously valid,
+    /// there's no single "current selection" the way the attachment picker
+    /// has one. See `App::refresh_inline_images`/
+    /// `AppEvent::InlineImageLoaded`. `RefCell`-wrapped for the same
+    /// "paint-time code needs `&mut` access through `&App`" reason as
+    /// `attachment_preview` — a later phase's rendering will construct a
+    /// `StatefulProtocol`-adjacent value from each cached `DynamicImage` at
+    /// paint time. `pub` (not `pub(crate)`, unlike most of this struct's
+    /// internal caches) for the same reason `attachment_preview` is: the
+    /// `tests/render.rs` integration suite (a separate crate) needs to seed
+    /// a decoded image directly, bypassing the async fetch, to exercise the
+    /// Detail screen's inline-image paint pass headlessly.
+    /// Bounded (Phase 5 of issue #130 — see `inline_images::BoundedCache`'s
+    /// own doc comment for why: Detail's own three "detail landed" sites
+    /// still fully clear this on every navigate via
+    /// `invalidate_inline_images`, so the bound only ever matters for quick
+    /// view's higher-churn, no-clear-on-selection trigger,
+    /// `refresh_quick_view_inline_images`).
+    #[cfg(feature = "images")]
+    pub inline_images: RefCell<BoundedCache<InlineImageKey, image::DynamicImage>>,
+    /// Bumped whenever the viewed issue changes (mirrors
+    /// `attachment_preview_generation`) — a completed fetch whose generation
+    /// no longer matches this belongs to an issue that's no longer showing
+    /// and is dropped instead of populating the cache for the wrong issue.
+    #[cfg(feature = "images")]
+    pub(crate) inline_image_generation: u64,
+    /// Keys with a fetch currently in flight (dispatched by
+    /// `refresh_inline_images`/`refresh_quick_view_inline_images` but not
+    /// yet answered by `apply_inline_image_loaded`) — Phase 5 of issue #130.
+    /// Without this, quick view's higher selection-churn rate could
+    /// re-dispatch a fetch for the same key on every revisit before the
+    /// first one resolves (the cache-membership check alone only catches an
+    /// *already-completed* fetch, not one still in flight). Cleared
+    /// alongside the cache itself in `invalidate_inline_images`, and per-key
+    /// in `apply_inline_image_loaded` once that key's response lands (or
+    /// fails to decode), so a later re-resolution of the same key can retry.
+    #[cfg(feature = "images")]
+    pub(crate) inline_images_pending: HashSet<InlineImageKey>,
+    /// Media node uuid -> resolved `InlineImageKey`, for whatever the
+    /// redirect-probe fallback (`dispatch_uuid_resolve`) has matched so far
+    /// (issue #130's DS-1880 follow-up) — `App::inline_image_key_for` reads
+    /// this when a node's `alt` doesn't resolve, so a node with no (or a
+    /// mismatched) `alt` can still be keyed into `inline_images` by its own
+    /// `attrs.id`. Populated by `apply_inline_image_uuids_resolved`
+    /// alongside dispatching the actual byte fetch; cleared alongside every
+    /// other inline-image cache in `invalidate_inline_images`.
+    #[cfg(feature = "images")]
+    pub(crate) inline_image_uuid_matches: HashMap<String, InlineImageKey>,
+    /// Encoded `SlicedProtocol`s for the Detail screen's and quick-view
+    /// panel's inline description images (`images` feature only, Phase 3 of
+    /// issue #130; quick view added in Phase 5) — keyed by `InlineImageKey`
+    /// (the same resolved attachment-id/external-URL identity `inline_images`
+    /// itself is keyed by, not the node's bare `alt` text), separate from
+    /// `inline_images` (the *decoded* `DynamicImage` cache) because encoding
+    /// a `SlicedProtocol` is real work (resizing + protocol-specific
+    /// encoding) that should only happen once per target size, not on every
+    /// frame. `ui::detail`'s (and `ui::quick_view`'s) paint pass rebuilds an
+    /// entry from the still-cached `DynamicImage` in `inline_images` whenever
+    /// the cached protocol's own `.size()` no longer matches the placement's
+    /// current `(cols, rows)` (e.g. a terminal resize changed the pane
+    /// width), rather than tracking the target size in a second field
+    /// alongside it. Bounded the same way and for the same reason as
+    /// `inline_images` (see its own doc comment).
+    #[cfg(feature = "images")]
+    pub(crate) inline_image_protocols:
+        RefCell<BoundedCache<InlineImageKey, ratatui_image::sliced::SlicedProtocol>>,
 
     /// The screen `a` was pressed from, so backing out of About (see #38)
     /// restores it instead of always landing on Home.
@@ -488,6 +604,7 @@ impl App {
             tick: 0,
             status,
             show_help: false,
+            nerd_info_open: false,
             should_quit: false,
             sort_key: SortKey::Updated,
             sort_asc: false,
@@ -547,6 +664,24 @@ impl App {
             attachments_open: false,
             attachment_index: 0,
             attachment_upload: None,
+            #[cfg(feature = "images")]
+            image_picker: None,
+            #[cfg(feature = "images")]
+            attachment_preview: RefCell::new(None),
+            #[cfg(feature = "images")]
+            attachment_preview_generation: 0,
+            #[cfg(feature = "images")]
+            inline_images: RefCell::new(BoundedCache::new(inline_images::INLINE_IMAGE_CACHE_CAP)),
+            #[cfg(feature = "images")]
+            inline_image_generation: 0,
+            #[cfg(feature = "images")]
+            inline_images_pending: HashSet::new(),
+            #[cfg(feature = "images")]
+            inline_image_uuid_matches: HashMap::new(),
+            #[cfg(feature = "images")]
+            inline_image_protocols: RefCell::new(BoundedCache::new(
+                inline_images::INLINE_IMAGE_CACHE_CAP,
+            )),
             about_return_screen: Screen::Home,
             field_mapping: FieldMappingState::default(),
             current_view: ViewKind::default(),
@@ -627,5 +762,35 @@ impl App {
         }
 
         app
+    }
+}
+
+/// A non-`images`-build stand-in for `inline_images`'s own
+/// `App::with_detail_media_sizing` (Phase 3 of issue #130) — always hands
+/// the callback `MediaSizing::Disabled`, so `ui::detail`/`app::comments`/
+/// `app::links` can call this same method name unconditionally rather than
+/// `#[cfg]`-branching at every call site. `adf::MediaSizing` itself isn't
+/// feature-gated (Phase 2 already made every mode compile regardless of
+/// `images`), only the machinery that ever produces a real `Ready` closure
+/// is.
+#[cfg(not(feature = "images"))]
+impl App {
+    pub(crate) fn with_detail_media_sizing<R>(
+        &self,
+        _width: u16,
+        f: impl FnOnce(&adf::MediaSizing) -> R,
+    ) -> R {
+        f(&adf::MediaSizing::Disabled)
+    }
+
+    /// Non-`images`-build stand-in for `inline_images::App::with_quick_view_media_sizing`
+    /// (Phase 5 of issue #130) — see `with_detail_media_sizing` above for why
+    /// this always hands the callback `MediaSizing::Disabled`.
+    pub(crate) fn with_quick_view_media_sizing<R>(
+        &self,
+        _width: u16,
+        f: impl FnOnce(&adf::MediaSizing) -> R,
+    ) -> R {
+        f(&adf::MediaSizing::Disabled)
     }
 }

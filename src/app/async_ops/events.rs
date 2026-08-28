@@ -245,6 +245,52 @@ pub enum AppEvent {
         filename: String,
         result: Result<Vec<Attachment>, String>,
     },
+    /// The attachment picker's image-preview fetch+decode resolved
+    /// (`images` feature only) — see
+    /// `App::refresh_attachment_preview`/`dispatch_attachment_preview`.
+    /// `image` is `None` for every fallback reason (network error, decode
+    /// failure, or the request was never eligible in the first place —
+    /// though in practice `refresh_attachment_preview` only ever dispatches
+    /// when there's a real chance of success), in which case the apply arm
+    /// leaves the preview absent so the UI falls back to its normal
+    /// placeholder path.
+    #[cfg(feature = "images")]
+    AttachmentPreviewLoaded {
+        generation: u64,
+        attachment_id: String,
+        image: Option<image::DynamicImage>,
+    },
+    /// An eagerly-fetched inline description/acceptance-criteria image
+    /// resolved (`images` feature only) — see
+    /// `App::refresh_inline_images`/`dispatch_inline_image`. Mirrors
+    /// `AttachmentPreviewLoaded`'s shape; `image` is `None` for every
+    /// fallback reason (network error, decode failure), in which case the
+    /// apply arm leaves that key absent from the cache so the description
+    /// keeps showing its normal placeholder for it.
+    #[cfg(feature = "images")]
+    InlineImageLoaded {
+        generation: u64,
+        key: super::super::InlineImageKey,
+        image: Option<image::DynamicImage>,
+    },
+    /// A batch of media nodes that `resolve_inline_images_with_candidates`
+    /// couldn't resolve via `alt` matching were checked against a
+    /// redirect-probe uuid map instead (`dispatch_uuid_resolve`, `images`
+    /// feature only) — see that fn's own doc comment. Each resolved
+    /// `(candidate uuid, key, url)` triple still needs its own
+    /// byte-fetch/decode, dispatched via the same `dispatch_inline_image`
+    /// the alt-matched path already uses — this event only carries
+    /// *identity* resolution, not image bytes. The uuid is carried
+    /// alongside `key`/`url` (rather than just the latter two) so
+    /// `App::apply_inline_image_uuids_resolved` can also record it in
+    /// `App::inline_image_uuid_matches` — the render-side lookup a media
+    /// node with no (or a mismatched) `alt` needs in order to ever find its
+    /// own cached image again.
+    #[cfg(feature = "images")]
+    InlineImageUuidsResolved {
+        generation: u64,
+        resolved: Vec<(String, super::super::InlineImageKey, String)>,
+    },
 }
 
 impl App {
@@ -388,6 +434,23 @@ impl App {
                 filename,
                 result,
             } => self.apply_attachment_uploaded(key, filename, result),
+            #[cfg(feature = "images")]
+            AppEvent::AttachmentPreviewLoaded {
+                generation,
+                attachment_id,
+                image,
+            } => self.apply_attachment_preview_loaded(generation, attachment_id, image),
+            #[cfg(feature = "images")]
+            AppEvent::InlineImageLoaded {
+                generation,
+                key,
+                image,
+            } => self.apply_inline_image_loaded(generation, key, image),
+            #[cfg(feature = "images")]
+            AppEvent::InlineImageUuidsResolved {
+                generation,
+                resolved,
+            } => self.apply_inline_image_uuids_resolved(generation, resolved),
         }
     }
 }

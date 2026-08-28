@@ -25,7 +25,7 @@ mod sprint;
 mod support;
 mod versions;
 
-pub use attachments::{download_attachment, fetch_attachments, upload_attachment};
+pub use attachments::{download_attachment, fetch_attachments, media_uuid_for, upload_attachment};
 // `guess_mime` lives in `crate::mime` (shared across every feature set —
 // see that module's doc comment), not in this `live`-only module; re-export
 // it here anyway so `jira::guess_mime` keeps resolving for existing/future
@@ -45,5 +45,5 @@ pub use search::{
     SEARCH_RESULTS_CAP,
 };
 pub use sprint::{assign_sprint, list_open_sprints, remove_from_sprint};
-pub use support::whoami;
+pub use support::{get_bytes_public, whoami};
 pub use versions::{list_versions, set_affects_versions, set_fix_versions};

@@ -74,10 +74,31 @@ impl App {
     fn resolve_detail_sync(&mut self, key: &str, detail: IssueDetail) {
         self.detail_cache.insert(key.to_string(), detail.clone());
         self.detail = Some(detail);
+        #[cfg(feature = "images")]
+        self.refresh_detail_images();
         self.screen = Screen::Detail;
         if let Some(pos) = self.issues.iter().position(|i| i.key == key) {
             self.selected = pos;
         }
+    }
+
+    /// Refresh every image-related cache for the issue `self.detail` was
+    /// just replaced with — shared by every "a detail just landed" site
+    /// (`resolve_detail_sync` above, `refresh_detail`'s own non-live Detail
+    /// branch below, and `apply_detail_loaded`'s navigate branch) so the
+    /// invalidate-then-refresh pairing can't drift out of sync between them
+    /// the way it once did (a code-review finding: one of these sites used
+    /// to invalidate the attachment preview without the matching
+    /// `attachments_open`-guarded refresh `invalidate_attachment_preview`'s
+    /// own doc comment requires of every caller).
+    #[cfg(feature = "images")]
+    pub(crate) fn refresh_detail_images(&mut self) {
+        self.invalidate_attachment_preview();
+        if self.attachments_open {
+            self.refresh_attachment_preview();
+        }
+        self.invalidate_inline_images();
+        self.refresh_inline_images();
     }
 
     /// Re-fetch the currently viewed (Detail screen) or quick-viewed issue's
@@ -108,6 +129,20 @@ impl App {
             self.detail_cache.insert(key.clone(), detail.clone());
             if self.screen == Screen::Detail {
                 self.detail = Some(detail);
+                #[cfg(feature = "images")]
+                self.refresh_detail_images();
+            } else {
+                // `key` is guaranteed the quick-viewed issue here (see this
+                // function's own `key` match above) — deliberately doesn't
+                // call `invalidate_inline_images`, matching
+                // `refresh_quick_view_inline_images`'s own no-clear-on-selection
+                // design (Phase 5 of issue #130); a manual quick-view refresh
+                // is rare enough that leaving the rest of the shared cache
+                // untouched is worth more than forcing a re-decode of an
+                // attachment/URL whose content almost certainly didn't
+                // change.
+                #[cfg(feature = "images")]
+                self.refresh_quick_view_inline_images();
             }
             self.status = format!("refreshed {key}");
             self.flash(format!("↻ refreshed {key}"));

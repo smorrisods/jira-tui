@@ -23,9 +23,9 @@ pub use config::Config;
 pub use live::{
     add_comment, apply_transition, assign_issue, assign_sprint, assignable_users, create_issue,
     delete_comment, download_attachment, fetch_attachments, fetch_comments, fetch_detail,
-    fetch_my_work, fetch_transitions, guess_mime, jql_for, jql_for_version,
+    fetch_my_work, fetch_transitions, get_bytes_public, guess_mime, jql_for, jql_for_version,
     list_create_issue_types, list_fields, list_open_sprints, list_projects, list_versions,
-    remove_from_sprint, search_by_text, search_issues, search_users, set_affects_versions,
-    set_fix_versions, update_comment, update_description, update_summary, upload_attachment,
-    whoami, FieldInfo, MY_WORK_JQL, SEARCH_RESULTS_CAP,
+    media_uuid_for, remove_from_sprint, search_by_text, search_issues, search_users,
+    set_affects_versions, set_fix_versions, update_comment, update_description, update_summary,
+    upload_attachment, whoami, FieldInfo, MY_WORK_JQL, SEARCH_RESULTS_CAP,
 };
