@@ -1254,18 +1254,33 @@ impl App {
             //    If it's a *different* issue, the removal above is enough
             //    on its own: `refresh_detail_images` resolves it fresh the
             //    next time that issue is actually opened.
+            // `touched_an_inline_image` gates the refresh below the same
+            // way `highlighted_id`'s match gates the preview branch above
+            // — a code-review finding: without it, *any* upload to the
+            // issue on screen (even a brand-new, unrelated attachment that
+            // matched nothing in the loop) would still re-run the full
+            // description/comment resolve walk, including re-firing the
+            // uuid redirect-probe fallback for whatever's still
+            // unresolved — real, repeated network latency for an upload
+            // that touched nothing inline at all.
+            let mut touched_an_inline_image = false;
             for a in &uploaded {
                 let inline_key = super::super::InlineImageKey::Attachment(a.id.clone());
                 if self.inline_images.borrow().contains_key(&inline_key)
                     || self.inline_images_pending.contains(&inline_key)
                 {
                     self.invalidate_inline_image_key(&inline_key);
+                    touched_an_inline_image = true;
                 }
             }
-            if self.screen == Screen::Detail && self.detail.as_ref().is_some_and(|d| d.key == key) {
-                self.refresh_inline_images();
-            } else if self.quick_view && self.selected_issue().is_some_and(|i| i.key == key) {
-                self.refresh_quick_view_inline_images();
+            if touched_an_inline_image {
+                if self.screen == Screen::Detail
+                    && self.detail.as_ref().is_some_and(|d| d.key == key)
+                {
+                    self.refresh_inline_images();
+                } else if self.quick_view && self.selected_issue().is_some_and(|i| i.key == key) {
+                    self.refresh_quick_view_inline_images();
+                }
             }
         }
         self.status = format!("{key}: uploaded {filename}");

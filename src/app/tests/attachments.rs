@@ -794,6 +794,64 @@ async fn re_uploading_an_attachment_does_not_disturb_an_unrelated_cached_inline_
     );
 }
 
+/// Code-review regression test: an upload that touches no cached/pending
+/// inline image at all must not trigger a full re-resolve of the issue's
+/// description — that would re-walk the whole document (and, for any
+/// still-unresolved media node, re-fire the uuid redirect-probe fallback)
+/// for every unrelated upload, real repeated network cost for nothing
+/// that actually changed.
+#[cfg(feature = "images")]
+#[tokio::test]
+async fn uploading_an_attachment_not_referenced_inline_does_not_trigger_a_resolve_walk() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+    let mut detail = crate::domain::demo_detail(&key);
+    detail.comments = vec![];
+    detail.attachments = vec![Attachment {
+        id: "10001".into(),
+        filename: "mockup.png".into(),
+        mime_type: "image/png".into(),
+        size: 100,
+        created: "2026-08-28".into(),
+        content_url: "https://example.atlassian.net/secure/attachment/10001/mockup.png".into(),
+        thumbnail_url: None,
+    }];
+    detail.description = serde_json::json!({
+        "type": "doc", "version": 1,
+        "content": [ { "type": "mediaSingle", "content": [
+            { "type": "media", "attrs": { "id": "x", "type": "file", "alt": "mockup.png" } }
+        ] } ]
+    });
+    app.detail = Some(detail);
+    app.screen = Screen::Detail;
+    // Never resolved yet — `refresh_inline_images` was never called (this
+    // test sets `app.detail` directly, bypassing `show_issue`/`open_by_key`).
+    assert!(app.inline_images_pending.is_empty());
+
+    let new_attachment = Attachment {
+        id: "99999".into(),
+        filename: "brand-new.png".into(),
+        mime_type: "image/png".into(),
+        size: 100,
+        created: "2026-08-28".into(),
+        content_url: "https://example.atlassian.net/secure/attachment/99999/brand-new.png".into(),
+        thumbnail_url: None,
+    };
+    app.apply_event(AppEvent::AttachmentUploaded {
+        key,
+        filename: "brand-new.png".into(),
+        result: Ok(vec![new_attachment]),
+    });
+
+    assert!(
+        app.inline_images_pending.is_empty(),
+        "an unrelated upload must not trigger a resolve walk of the description"
+    );
+}
+
 /// A non-image attachment (the demo PDF) must never be handed off for
 /// decoding — `attachment_preview_url` (the pure eligibility gate) already
 /// has direct unit tests in `app::attachments`; this end-to-end version
