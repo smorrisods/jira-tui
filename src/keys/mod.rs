@@ -546,6 +546,13 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Tab if matches!(app.screen, Screen::Home | Screen::List) => {
             app.toggle_list_focus()
         }
+        // Cycle keyboard focus among the wide Detail layout's side-rail
+        // panels that overflow their allotted height, so their arrows/
+        // PageUp/PageDown (below) can scroll one instead of the main
+        // column — see `App::cycle_rail_focus`. A no-op in the narrow
+        // layout (no rail) or when nothing overflows.
+        KeyCode::Tab if app.screen == Screen::Detail => app.cycle_rail_focus(true),
+        KeyCode::BackTab if app.screen == Screen::Detail => app.cycle_rail_focus(false),
         KeyCode::Char('J') => app.toggle_jax(),
         KeyCode::Char('y') => app.copy_key(),
         KeyCode::Char('Y') => app.copy_url(),
@@ -833,6 +840,13 @@ fn run_palette_action(app: &mut App, action: &PaletteAction) {
 
 fn nav(app: &mut App, delta: isize) {
     match app.screen {
+        // While a side-rail panel has `Tab` focus (`App::rail_focus`),
+        // arrows/PageUp/PageDown scroll that panel instead of the main
+        // column — same "focus redirects arrow keys" shape as Home/List's
+        // quick-view focus below.
+        Screen::Detail if app.rail_focus.is_some() => {
+            app.scroll_rail_by(delta);
+        }
         Screen::Detail | Screen::Preview => {
             let new = app.detail_scroll as isize + delta.signum() * delta.abs().max(1);
             app.detail_scroll = new.max(0) as u16;

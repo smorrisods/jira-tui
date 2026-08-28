@@ -1,10 +1,192 @@
 //! Opening an issue's full detail, by selection or directly by key.
 
 use crate::domain::{demo_detail, IssueDetail, Source};
+use crate::render::DetailPane;
+use crate::ui::detail_columns::{
+    detail_layout_for_width, rail_width_for, wrapped_row_count, DetailLayout,
+};
 
 use super::{async_ops, App, Screen};
 
+/// Which of the wide Detail layout's five side-rail panels currently has
+/// keyboard focus for scrolling (`Tab`/`Shift+Tab`, `App::cycle_rail_focus`)
+/// — a panel with more content than its allotted height, same problem
+/// `detail_scroll` solves for the main column. Mirrors `ListFocus`'s shape
+/// (a focus enum toggled by `Tab`, consumed by `nav()`), but over five
+/// targets instead of two, and skips panels that don't actually overflow —
+/// see `App::rail_overflow`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RailPanel {
+    Workflow,
+    Meta,
+    Links,
+    Children,
+    Attachments,
+}
+
+impl RailPanel {
+    pub(crate) const ALL: [RailPanel; 5] = [
+        RailPanel::Workflow,
+        RailPanel::Meta,
+        RailPanel::Links,
+        RailPanel::Children,
+        RailPanel::Attachments,
+    ];
+
+    /// Index into `App::rail_scroll`/`App::rail_overflow`, and the fixed
+    /// left-to-right/top-to-bottom order `Tab` cycles through — matches
+    /// `draw_rail`'s panel order in `ui::detail`.
+    pub fn index(self) -> usize {
+        Self::ALL
+            .iter()
+            .position(|&p| p == self)
+            .expect("RailPanel::ALL is exhaustive over RailPanel's own variants by construction")
+    }
+
+    /// The `DetailPane` this panel's content/links are tagged with — see
+    /// `app::mouse::link_at`.
+    pub(crate) fn pane(self) -> DetailPane {
+        match self {
+            RailPanel::Workflow => DetailPane::Workflow,
+            RailPanel::Meta => DetailPane::Meta,
+            RailPanel::Links => DetailPane::Links,
+            RailPanel::Children => DetailPane::Children,
+            RailPanel::Attachments => DetailPane::Attachments,
+        }
+    }
+}
+
 impl App {
+    /// `Tab`/`Shift+Tab` on the Detail screen: move keyboard focus among the
+    /// wide layout's side-rail panels that actually overflow their allotted
+    /// height (`App::rail_overflow`, refreshed every render by
+    /// `ui::detail::draw_rail`), with "no rail panel focused" (arrows scroll
+    /// the main column, same as always) as a stop in the cycle too — so
+    /// `Tab` from the last overflowing panel returns focus to the main
+    /// column instead of wrapping straight to the first one. A no-op in the
+    /// narrow layout, which has no rail at all.
+    pub fn cycle_rail_focus(&mut self, forward: bool) {
+        if !self.detail_rail_visible() {
+            return;
+        }
+        let overflow = self.rail_overflow.get();
+        let eligible: Vec<Option<RailPanel>> = std::iter::once(None)
+            .chain(
+                RailPanel::ALL
+                    .into_iter()
+                    .filter(|p| overflow[p.index()])
+                    .map(Some),
+            )
+            .collect();
+        if eligible.len() <= 1 {
+            self.rail_focus = None;
+            return;
+        }
+        let current = eligible
+            .iter()
+            .position(|&p| p == self.rail_focus)
+            .unwrap_or(0);
+        let len = eligible.len();
+        let next = if forward {
+            (current + 1) % len
+        } else {
+            (current + len - 1) % len
+        };
+        self.rail_focus = eligible[next];
+    }
+
+    fn detail_rail_visible(&self) -> bool {
+        detail_layout_for_width(self.detail_area.get().width) == DetailLayout::Wide
+    }
+
+    /// Arrow keys/PageUp/PageDown while a rail panel has keyboard focus —
+    /// see `cycle_rail_focus`. A no-op when nothing is focused.
+    pub fn scroll_rail_by(&mut self, delta: isize) {
+        if let Some(panel) = self.rail_focus {
+            self.scroll_rail_panel_by(panel, delta);
+        }
+    }
+
+    /// Scroll one rail panel directly, regardless of keyboard focus — used
+    /// by both `scroll_rail_by` (`Tab` focus) and mouse-wheel-over-the-panel
+    /// (`keys::mouse::scroll_at`, which follows the pointer independently of
+    /// `Tab` focus, same as quick view's own wheel handling).
+    ///
+    /// A panel that actually links to other issues (Links/Children, and
+    /// Meta when the issue has a parent) steps `link_index` between those
+    /// links one at a time instead of scrolling raw rows — the same "arrows
+    /// move a selection" shape List/Board already use, and it's what an
+    /// Epic's 30-child rail panel actually needs: jumping to a specific
+    /// child, not just paging through text. A panel with nothing to link to
+    /// (Workflow, and Attachments/Meta when they don't) falls back to plain
+    /// row scrolling.
+    pub fn scroll_rail_panel_by(&mut self, panel: RailPanel, delta: isize) {
+        if self.rail_panel_has_links(panel) {
+            self.step_rail_panel_link(panel, delta);
+        } else {
+            let idx = panel.index();
+            let new = self.rail_scroll[idx] as isize + delta;
+            self.rail_scroll[idx] = new.max(0) as u16;
+        }
+    }
+
+    fn rail_panel_has_links(&self, panel: RailPanel) -> bool {
+        self.active_links().iter().any(|t| t.pane == panel.pane())
+    }
+
+    /// Move `link_index` to the next/previous link belonging to `panel`
+    /// specifically (wrapping within just that pane's own links, not the
+    /// full cross-pane list `{`/`}` cycles through), then scrolls the panel
+    /// so the newly highlighted line is visible.
+    fn step_rail_panel_link(&mut self, panel: RailPanel, delta: isize) {
+        let links = self.active_links();
+        let indices: Vec<usize> = links
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.pane == panel.pane())
+            .map(|(i, _)| i)
+            .collect();
+        if indices.is_empty() {
+            return;
+        }
+        let len = indices.len() as isize;
+        let current = indices
+            .iter()
+            .position(|&i| i == self.link_index)
+            .map(|p| p as isize);
+        let next = match current {
+            Some(pos) => (pos + delta).rem_euclid(len),
+            None if delta > 0 => 0,
+            None => len - 1,
+        };
+        self.link_index = indices[next as usize];
+        self.scroll_rail_panel_to_line(panel, links[self.link_index].line);
+    }
+
+    /// Scroll `panel` just enough to bring `logical_line` (an index into
+    /// that pane's own `active_pane_lines`, e.g. `LinkTarget::line`) into
+    /// view — clamped, not jumped-to-top, so re-highlighting a link that's
+    /// already visible doesn't reposition the panel for no reason.
+    /// `wrapped_row_count` converts the logical line to the wrapped-row
+    /// units `rail_scroll`/`Paragraph::scroll` actually use, the same
+    /// technique `ui::detail::image_paint_offsets` uses for inline images.
+    fn scroll_rail_panel_to_line(&mut self, panel: RailPanel, logical_line: usize) {
+        let Some(lines) = self.active_pane_lines(panel.pane()) else {
+            return;
+        };
+        let content_width = rail_width_for(self.detail_area.get().width).saturating_sub(2);
+        let prefix_end = logical_line.min(lines.len());
+        let row = wrapped_row_count(&lines[..prefix_end], content_width);
+        let idx = panel.index();
+        let visible = self.rail_visible_rows.get()[idx].max(1);
+        let scroll = self.rail_scroll[idx];
+        if row < scroll {
+            self.rail_scroll[idx] = row;
+        } else if row >= scroll + visible {
+            self.rail_scroll[idx] = row + 1 - visible;
+        }
+    }
+
     /// `x` — fold/unfold the narrow Detail layout's facts panel to one line
     /// (SPEC.md §6). A no-op in the wide layout — there's no facts panel to
     /// fold there — so this is deliberately unguarded by screen width.
@@ -48,6 +230,8 @@ impl App {
         self.detail_scroll = 0;
         self.link_index = 0;
         self.facts_folded = false;
+        self.rail_focus = None;
+        self.rail_scroll = [0; 5];
         if !matches!(self.source, Source::Live { .. }) {
             let detail = self.load_detail(key);
             self.resolve_detail_sync(key, detail);

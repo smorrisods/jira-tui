@@ -10,14 +10,14 @@ use ratatui::style::Color;
 use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::app::App;
+use crate::app::{App, RailPanel};
 use crate::domain::IssueDetail;
 use crate::render::{self, DetailPane, Panel};
 
 use super::detail_columns::{
     detail_layout_for_width, rail_width_for, wrapped_row_count, DetailLayout,
 };
-use super::{accent, accent2, card};
+use super::{accent, accent2, card, card_bordered, muted};
 
 pub(crate) fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
     let Some(detail) = app.detail.as_ref() else {
@@ -139,6 +139,7 @@ fn draw_wide(
     };
     draw_rail(
         f,
+        app,
         cols[1],
         [
             (
@@ -146,47 +147,76 @@ fn draw_wide(
                 accent(),
                 wide.workflow,
                 &app.detail_workflow_area,
+                RailPanel::Workflow,
             ),
-            (meta_title, accent(), wide.meta, &app.detail_meta_area),
-            (links_title, accent2(), wide.links, &app.detail_links_area),
+            (
+                meta_title,
+                accent(),
+                wide.meta,
+                &app.detail_meta_area,
+                RailPanel::Meta,
+            ),
+            (
+                links_title,
+                accent2(),
+                wide.links,
+                &app.detail_links_area,
+                RailPanel::Links,
+            ),
             (
                 children_title,
                 accent2(),
                 wide.children,
                 &app.detail_children_area,
+                RailPanel::Children,
             ),
             (
                 attachments_title,
                 accent2(),
                 wide.attachments,
                 &app.detail_attachments_area,
+                RailPanel::Attachments,
             ),
         ],
     );
 }
 
-/// The static side rail: five bordered mini-panels (matching this app's
+/// The side rail: five bordered mini-panels (matching this app's
 /// established "titled card" look everywhere else — quick view, Board's
 /// cards, the outer Detail card itself), sized to their own wrapped content
 /// (via `wrapped_row_count`, against the *inner* content width now that a
 /// border eats 2 columns — the logical line count alone under-allocates
 /// height once a line wraps, silently clipping trailing lines) plus 2 rows
 /// for the top/bottom border, except the last panel, which takes whatever's
-/// left. Deliberately non-scrolling — panels are short/bounded, and
-/// clipping on genuine overflow (more content than the rail area has room
-/// for at all) is an accepted scope cut for this phase (see the module
-/// doc's plan reference).
-fn draw_rail(f: &mut Frame, area: Rect, panels: [(String, Color, Panel, &Cell<Rect>); 5]) {
+/// left.
+///
+/// A panel can still end up with less height than its content needs — the
+/// rail area itself might not be tall enough for the sum of all five
+/// requests, so the constraint solver shrinks them — so this also compares
+/// each panel's requested height against what it actually got and records
+/// the result in `App::rail_overflow`, letting `App::cycle_rail_focus`
+/// (`Tab`) skip panels that don't need scrolling and route arrow keys to
+/// the ones that do (`App::scroll_rail_by`).
+fn draw_rail(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    panels: [(String, Color, Panel, &Cell<Rect>, RailPanel); 5],
+) {
     let last = panels.len() - 1;
     let content_width = area.width.saturating_sub(2);
-    let constraints: Vec<Constraint> = panels
+    let needed: Vec<u16> = panels
+        .iter()
+        .map(|(_, _, panel, _, _)| wrapped_row_count(&panel.lines, content_width))
+        .collect();
+    let constraints: Vec<Constraint> = needed
         .iter()
         .enumerate()
-        .map(|(i, (_, _, panel, _))| {
+        .map(|(i, &n)| {
             if i == last {
                 Constraint::Min(3)
             } else {
-                Constraint::Length(wrapped_row_count(&panel.lines, content_width) + 2)
+                Constraint::Length(n + 2)
             }
         })
         .collect();
@@ -194,15 +224,41 @@ fn draw_rail(f: &mut Frame, area: Rect, panels: [(String, Color, Panel, &Cell<Re
         .direction(Direction::Vertical)
         .constraints(constraints)
         .split(area);
-    for (i, (title, colour, panel, area_cell)) in panels.into_iter().enumerate() {
-        draw_rail_panel(f, rows[i], &title, colour, panel, area_cell);
+    let mut overflow = [false; 5];
+    let mut visible_rows = [0u16; 5];
+    for (i, &n) in needed.iter().enumerate() {
+        let granted = rows[i].height.saturating_sub(2);
+        overflow[i] = n > granted;
+        visible_rows[i] = granted;
+    }
+    app.rail_overflow.set(overflow);
+    app.rail_visible_rows.set(visible_rows);
+    for (i, (title, colour, panel, area_cell, rail_panel)) in panels.into_iter().enumerate() {
+        let focused = app.rail_focus == Some(rail_panel);
+        let scroll = app.rail_scroll[rail_panel.index()];
+        draw_rail_panel(
+            f,
+            rows[i],
+            &title,
+            colour,
+            panel,
+            area_cell,
+            focused,
+            overflow[i],
+            scroll,
+        );
     }
 }
 
 /// `area_cell` records this panel's inner (post-border) area for mouse
-/// hit-testing (`app::mouse::link_at`) — the panel is deliberately
-/// non-scrolling (see `draw_rail`'s doc comment), so unlike
-/// `detail_main_area` no separate scroll-Rect is needed.
+/// hit-testing (`app::mouse::link_at`, `App::rail_panel_at`) — `scroll` is
+/// folded in there the same way `detail_main_area`'s is for the main
+/// column. `focused`/`overflow` (see `draw_rail`'s doc comment) only affect
+/// the title/border: a focused-but-non-overflowing panel can't happen
+/// (`App::cycle_rail_focus` only ever focuses an overflowing one), but an
+/// overflowing-and-unfocused panel gets a "tab to scroll" hint so it isn't
+/// silently clipped with no indication more content exists.
+#[allow(clippy::too_many_arguments)]
 fn draw_rail_panel(
     f: &mut Frame,
     area: Rect,
@@ -210,13 +266,24 @@ fn draw_rail_panel(
     colour: Color,
     panel: Panel,
     area_cell: &Cell<Rect>,
+    focused: bool,
+    overflow: bool,
+    scroll: u16,
 ) {
-    let block = card(&format!("  {title}  "), colour);
+    let hint = match (overflow, focused) {
+        (true, true) => " · ↑/↓ scroll",
+        (true, false) => " · tab to scroll",
+        (false, _) => "",
+    };
+    let border = if focused { colour } else { muted() };
+    let block = card_bordered(&format!("  {title}{hint}  "), colour, border);
     let inner = block.inner(area);
     area_cell.set(inner);
     f.render_widget(block, area);
     f.render_widget(
-        Paragraph::new(panel.lines).wrap(Wrap { trim: false }),
+        Paragraph::new(panel.lines)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll, 0)),
         inner,
     );
 }

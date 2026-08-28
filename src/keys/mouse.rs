@@ -75,6 +75,12 @@ fn scroll_at(app: &mut App, x: u16, y: u16, delta: isize) {
         app.quick_view_scroll_by(delta);
         return;
     }
+    if app.screen == Screen::Detail {
+        if let Some(panel) = app.rail_panel_at(x, y) {
+            app.scroll_rail_panel_by(panel, delta);
+            return;
+        }
+    }
     match app.screen {
         Screen::Home | Screen::List => app.move_selection(delta),
         Screen::Detail | Screen::Preview => {

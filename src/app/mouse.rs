@@ -6,7 +6,7 @@ use ratatui::layout::Rect;
 use crate::render::DetailPane;
 use crate::ui::quick_view_columns::{meta_width_for, quick_view_layout_for_width, QuickViewLayout};
 
-use super::{App, Field as OnboardingField, NewIssueField, Screen, WelcomePhase};
+use super::{App, Field as OnboardingField, NewIssueField, RailPanel, Screen, WelcomePhase};
 
 /// Which panel arrow keys/PageUp/PageDown affect when the quick-view panel is
 /// open; toggled with `Tab`.
@@ -175,9 +175,10 @@ impl App {
     /// wrapped description/comment text too, not just short field lines.
     ///
     /// On the Detail screen's wide layout, both the main column and the
-    /// five side-rail panels (workflow/meta/links/children/attachments —
-    /// deliberately non-scrolling, see `ui::detail::draw_rail`) are
-    /// clickable. The
+    /// five side-rail panels (workflow/meta/links/children/attachments) are
+    /// clickable — each rail panel's own `rail_scroll` offset (`RailPanel`)
+    /// is folded in the same way `detail_scroll` is for the main column, so
+    /// a click inside a scrolled panel still resolves to the right line. The
     /// returned index is still an index into `active_links()`'s full
     /// cross-pane ordering, so it stays consistent with
     /// `next_link`/`prev_link`/highlighting.
@@ -192,16 +193,14 @@ impl App {
             ) {
                 return Some(idx);
             }
-            for (pane, area) in [
-                (DetailPane::Workflow, self.detail_workflow_area.get()),
-                (DetailPane::Meta, self.detail_meta_area.get()),
-                (DetailPane::Links, self.detail_links_area.get()),
-                (DetailPane::Children, self.detail_children_area.get()),
-                (DetailPane::Attachments, self.detail_attachments_area.get()),
-            ] {
-                if let Some(idx) = self.link_at_pane(x, y, pane, area, 0) {
-                    return Some(idx);
-                }
+            if let Some(panel) = self.rail_panel_at(x, y) {
+                return self.link_at_pane(
+                    x,
+                    y,
+                    panel.pane(),
+                    self.rail_area(panel),
+                    self.rail_scroll[panel.index()] as usize,
+                );
             }
             return None;
         }
@@ -230,11 +229,31 @@ impl App {
         None
     }
 
+    /// Which side-rail panel (if any) contains the point, on the Detail
+    /// screen's wide layout — used both for click-to-link hit-testing
+    /// (`link_at`) and mouse-wheel-over-the-panel scrolling
+    /// (`keys::mouse::scroll_at`).
+    pub fn rail_panel_at(&self, x: u16, y: u16) -> Option<RailPanel> {
+        RailPanel::ALL
+            .into_iter()
+            .find(|&panel| Self::point_in(self.rail_area(panel), x, y))
+    }
+
+    fn rail_area(&self, panel: RailPanel) -> Rect {
+        match panel {
+            RailPanel::Workflow => self.detail_workflow_area.get(),
+            RailPanel::Meta => self.detail_meta_area.get(),
+            RailPanel::Links => self.detail_links_area.get(),
+            RailPanel::Children => self.detail_children_area.get(),
+            RailPanel::Attachments => self.detail_attachments_area.get(),
+        }
+    }
+
     /// Hit-tests one pane's recorded area: maps the click to a wrapped
     /// row/column via `active_pane_lines(pane)`, then `render::line_col_at_row`
     /// back to a logical line/column, then finds the matching `LinkTarget`
     /// in `active_links()`. `scroll` is a row offset into the pane's own
-    /// wrapped content (0 for the non-scrolling rail panels).
+    /// wrapped content.
     fn link_at_pane(
         &self,
         x: u16,

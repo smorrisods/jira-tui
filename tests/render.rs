@@ -1,8 +1,8 @@
 //! Headless rendering tests — drive the real `ui::draw` through a TestBackend
 //! and assert the composed screen text, so each screen is exercised in CI.
 
-use jira_tui::app::{App, Screen, WelcomePhase};
-use jira_tui::domain::{IssueSummary, Priority, Source};
+use jira_tui::app::{App, RailPanel, Screen, WelcomePhase};
+use jira_tui::domain::{ChildIssue, IssueSummary, Priority, Source};
 use jira_tui::ui;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -143,6 +143,58 @@ fn detail_screen_wide_layout_shows_the_attachments_rail_panel() {
     assert!(
         text.contains("accordion-mockup.png"),
         "the attachments panel should list the demo attachment's filename"
+    );
+}
+
+/// Regression test for the bug report behind `RailPanel`/`rail_scroll`: an
+/// issue with more children than the rail's children panel has room for
+/// used to just silently clip the trailing ones, with no way to see them —
+/// the panel was deliberately non-scrolling. Now `ui::detail::draw_rail`
+/// flags the overflow in `App::rail_overflow`, and scrolling the panel
+/// (`App::rail_scroll`, driven by `Tab`+arrows or the mouse wheel) actually
+/// changes what's rendered.
+#[test]
+fn many_children_overflow_the_rail_panel_and_scrolling_reveals_the_rest() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.open_by_key("DS-2722");
+    let mut detail = app.detail.clone().unwrap();
+    detail.children = (0..30)
+        .map(|i| ChildIssue {
+            key: format!("DS-{}", 9000 + i),
+            issue_type: "Sub-task".into(),
+            summary: format!("child number {i}"),
+            status: "To Do".into(),
+        })
+        .collect();
+    app.detail = Some(detail);
+
+    // 30 two-line child entries (~60 wrapped rows) can't possibly fit in the
+    // handful of rows the rail's other four panels leave the children panel
+    // at this viewport height.
+    let text = render_at(&app, 120, 40);
+    assert!(
+        text.contains("DS-9000"),
+        "the first child should be visible without any scrolling"
+    );
+    assert!(
+        !text.contains("DS-9029"),
+        "the last of 30 children shouldn't fit in this viewport without scrolling"
+    );
+    assert!(
+        app.rail_overflow.get()[RailPanel::Children.index()],
+        "the children panel should be flagged as overflowing after render"
+    );
+    assert!(
+        !app.rail_overflow.get()[RailPanel::Workflow.index()],
+        "a short panel like workflow shouldn't be flagged as overflowing"
+    );
+
+    app.rail_scroll[RailPanel::Children.index()] = 55;
+    let text = render_at(&app, 120, 40);
+    assert!(
+        text.contains("DS-9029"),
+        "scrolling the children panel should bring later children into view"
     );
 }
 
