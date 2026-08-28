@@ -557,13 +557,12 @@ pub(crate) fn dispatch_attachment_preview(
     url: String,
 ) {
     tokio::spawn(async move {
-        let id_for_result = attachment_id.clone();
         let image = tokio::task::spawn_blocking(move || fetch_attachment_preview_blocking(&url))
             .await
             .unwrap_or(None);
         let _ = tx.send(AppEvent::AttachmentPreviewLoaded {
             generation,
-            attachment_id: id_for_result,
+            attachment_id,
             image,
         });
     });
@@ -1174,6 +1173,18 @@ impl App {
                 return;
             }
         };
+        // Captured before the merge below — the id itself never changes,
+        // but reading "what's highlighted" is clearer done once, up front,
+        // than re-deriving it after `d.attachments` has already been
+        // mutated in place.
+        #[cfg(feature = "images")]
+        let highlighted_id = self
+            .detail
+            .as_ref()
+            .filter(|d| d.key == key)
+            .and_then(|d| d.attachments.get(self.attachment_index))
+            .map(|a| a.id.clone());
+
         if let Some(d) = self.detail.as_mut() {
             if d.key == key {
                 merge_attachments(&mut d.attachments, &uploaded);
@@ -1181,6 +1192,96 @@ impl App {
         }
         if let Some(cached) = self.detail_cache.get_mut(&key) {
             merge_attachments(&mut cached.attachments, &uploaded);
+        }
+        // Two code-review findings, both about a re-upload's image-cache
+        // invalidation being scoped wrong in opposite directions:
+        //
+        // 1. Under-invalidation: this used to only touch the attachment
+        //    picker's own preview, not `App::inline_images`/
+        //    `inline_image_protocols` — even though a re-uploaded
+        //    attachment's id can also be cached there (a media node whose
+        //    `alt` matches its filename, or a redirect-probe uuid match —
+        //    see `app::inline_images`). Left unfixed, the issue
+        //    description's own inline-rendered copy would keep showing
+        //    the pre-upload bytes indefinitely, the exact "same-id
+        //    attachment surviving a refresh with genuinely different
+        //    bytes" scenario `invalidate_inline_images`'s own doc comment
+        //    already names as what it exists to prevent — just never
+        //    called from here.
+        // 2. Over-invalidation: this used to invalidate the picker
+        //    preview for *any* upload to the current issue, even a brand
+        //    new, unrelated attachment — tearing down and re-fetching an
+        //    already-correct cached preview over the network for no
+        //    reason, a visible flicker on every upload regardless of
+        //    what it actually touched.
+        //
+        // Both are now scoped to "did this upload actually touch an id
+        // something has cached", not "did an upload happen to this issue
+        // at all".
+        #[cfg(feature = "images")]
+        {
+            if let Some(highlighted_id) = &highlighted_id {
+                if uploaded.iter().any(|a| &a.id == highlighted_id) {
+                    self.invalidate_attachment_preview();
+                    if self.attachments_open {
+                        self.refresh_attachment_preview();
+                    }
+                }
+            }
+            // Two more code-review findings, both about the inline-image
+            // half of this fix specifically:
+            //
+            // 1. Checks `inline_images_pending` as well as the decoded
+            //    `inline_images` cache itself: an inline fetch for this
+            //    same attachment id can still be in flight, dispatched
+            //    under the not-yet-invalidated generation, when the
+            //    upload lands. Missing that case would let the in-flight
+            //    response land later, pass `apply_inline_image_loaded`'s
+            //    generation check (since nothing had bumped it), and cache
+            //    the pre-upload bytes permanently.
+            // 2. Uses the scoped `invalidate_inline_image_key` (dropping
+            //    just this id) rather than the full `invalidate_inline_images`
+            //    (which would wipe every *other* recently-viewed issue's
+            //    still-valid cached images too — `inline_images` is
+            //    deliberately shared/retained across issues, see
+            //    `refresh_quick_view_inline_images`'s own doc comment) —
+            //    and only re-resolves if the touched issue is actually
+            //    what's live on screen right now (matching the
+            //    `attachments_open` guard on the preview branch above),
+            //    since `refresh_inline_images`/`refresh_quick_view_inline_images`
+            //    aren't themselves scoped to `key` — they just operate on
+            //    whatever `self.detail`/quick-view selection currently is.
+            //    If it's a *different* issue, the removal above is enough
+            //    on its own: `refresh_detail_images` resolves it fresh the
+            //    next time that issue is actually opened.
+            // `touched_an_inline_image` gates the refresh below the same
+            // way `highlighted_id`'s match gates the preview branch above
+            // — a code-review finding: without it, *any* upload to the
+            // issue on screen (even a brand-new, unrelated attachment that
+            // matched nothing in the loop) would still re-run the full
+            // description/comment resolve walk, including re-firing the
+            // uuid redirect-probe fallback for whatever's still
+            // unresolved — real, repeated network latency for an upload
+            // that touched nothing inline at all.
+            let mut touched_an_inline_image = false;
+            for a in &uploaded {
+                let inline_key = super::super::InlineImageKey::Attachment(a.id.clone());
+                if self.inline_images.borrow().contains_key(&inline_key)
+                    || self.inline_images_pending.contains(&inline_key)
+                {
+                    self.invalidate_inline_image_key(&inline_key);
+                    touched_an_inline_image = true;
+                }
+            }
+            if touched_an_inline_image {
+                if self.screen == Screen::Detail
+                    && self.detail.as_ref().is_some_and(|d| d.key == key)
+                {
+                    self.refresh_inline_images();
+                } else if self.quick_view && self.selected_issue().is_some_and(|i| i.key == key) {
+                    self.refresh_quick_view_inline_images();
+                }
+            }
         }
         self.status = format!("{key}: uploaded {filename}");
         self.flash(format!("✓ uploaded {filename}"));

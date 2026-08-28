@@ -87,16 +87,22 @@ impl App {
 
     pub fn close_attachments(&mut self) {
         self.attachments_open = false;
-        // Free the decoded image (if any) rather than leaving it around
-        // until the picker next opens and `refresh_attachment_preview`
-        // clears it anyway — no functional difference, just tidier. Also
-        // cancels any still-debounced move (`ensure_attachment_preview_dispatched`
-        // is itself guarded on `attachments_open`, so this isn't
-        // load-bearing for correctness, just avoids a pointless dispatch
-        // for a picker that's no longer showing).
+        // Free the decoded image (if any) and bump the generation — a
+        // code-review finding: without the bump, a preview fetch still
+        // in flight when the picker closes would later land tagged with
+        // a generation that's still current (nothing else bumps it
+        // between close and the next open/move) and pass
+        // `apply_attachment_preview_loaded`'s checks, silently
+        // repopulating `attachment_preview` while the picker is closed.
+        // Also cancels any still-debounced move
+        // (`ensure_attachment_preview_dispatched` is itself guarded on
+        // `attachments_open`, so this isn't load-bearing for correctness,
+        // just avoids a pointless dispatch for a picker that's no longer
+        // showing).
         #[cfg(feature = "images")]
         {
             *self.attachment_preview.get_mut() = None;
+            self.attachment_preview_generation += 1;
             self.attachment_preview_pending = false;
         }
     }

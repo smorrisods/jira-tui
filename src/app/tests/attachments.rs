@@ -2,6 +2,9 @@
 //! flash-message path. Also the upload flow (`u`): path-entry editing,
 //! stat-and-preview, and the demo-upload flash-message path.
 
+#[cfg(feature = "images")]
+use crate::domain::Attachment;
+
 use super::super::*;
 use super::support::*;
 
@@ -461,6 +464,434 @@ async fn a_direct_refresh_clears_a_still_pending_debounced_move() {
     assert_eq!(
         app.attachment_preview_generation, generation_after_direct_refresh,
         "the stale debounce must not fire a second, redundant fetch"
+    );
+}
+
+/// Code-review regression test: closing the picker must bump
+/// `attachment_preview_generation`, not just clear the cached preview —
+/// otherwise a fetch still in flight when the picker closes lands tagged
+/// with a generation that's still current (nothing else bumps it between
+/// close and the next open/move), passes
+/// `apply_attachment_preview_loaded`'s checks, and silently repopulates
+/// `attachment_preview` while the picker is closed.
+#[cfg(feature = "images")]
+#[tokio::test]
+async fn closing_the_picker_bumps_the_generation_so_a_late_response_is_dropped() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+    app.detail = Some(crate::domain::demo_detail(&key));
+    app.screen = Screen::Detail;
+    app.open_attachments();
+    let current_id = app.detail.as_ref().unwrap().attachments[0].id.clone();
+    let stale_generation = app.attachment_preview_generation;
+
+    app.close_attachments();
+    assert_ne!(
+        app.attachment_preview_generation, stale_generation,
+        "closing the picker must bump the generation, not just clear the cache"
+    );
+
+    app.apply_event(AppEvent::AttachmentPreviewLoaded {
+        generation: stale_generation,
+        attachment_id: current_id,
+        image: Some(image::DynamicImage::new_rgb8(1, 1)),
+    });
+
+    assert!(
+        app.attachment_preview.borrow().is_none(),
+        "a response dispatched before close must not repopulate the preview after close"
+    );
+}
+
+/// Code-review regression test: re-uploading a new version of the
+/// currently-cached-preview attachment must invalidate that cache — the
+/// old decoded bytes belong to the file that just got replaced.
+#[cfg(feature = "images")]
+#[tokio::test]
+async fn uploading_to_the_current_issue_invalidates_the_cached_preview() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+    app.detail = Some(crate::domain::demo_detail(&key));
+    app.screen = Screen::Detail;
+    app.open_attachments();
+    let current_id = app.detail.as_ref().unwrap().attachments[0].id.clone();
+    let generation = app.attachment_preview_generation;
+    app.apply_event(AppEvent::AttachmentPreviewLoaded {
+        generation,
+        attachment_id: current_id.clone(),
+        image: Some(image::DynamicImage::new_rgb8(1, 1)),
+    });
+    assert!(
+        app.attachment_preview.borrow().is_some(),
+        "setup: the preview must be cached before the upload lands"
+    );
+
+    let generation_before_upload = app.attachment_preview_generation;
+    app.apply_event(AppEvent::AttachmentUploaded {
+        key,
+        filename: "mockup.png".into(),
+        result: Ok(vec![app.detail.as_ref().unwrap().attachments[0].clone()]),
+    });
+
+    assert!(
+        app.attachment_preview.borrow().is_none(),
+        "a re-upload to the current issue must invalidate its cached preview"
+    );
+    // A code-review finding: invalidating alone (one generation bump)
+    // isn't enough while the picker is already open — a paired
+    // `attachments_open`-guarded refresh (a second bump) must also fire,
+    // the same shape `refresh_detail_images` uses, or the picker is left
+    // showing no preview until the user happens to move the selection.
+    assert_eq!(
+        app.attachment_preview_generation,
+        generation_before_upload + 2,
+        "an open picker must get both the invalidate and a re-dispatched refresh"
+    );
+}
+
+/// Code-review regression test: the sequence the review actually flagged
+/// as reachable — confirming an upload with the picker *closed* (the only
+/// way to reach it at all, since `attachments_open` swallows `u`), then
+/// opening the picker *while that upload is still in flight* (nothing
+/// guards `a` on an in-flight upload), then the response landing. The
+/// picker must still end up showing a re-dispatched preview, not a blank
+/// one left over from `invalidate_attachment_preview` alone.
+#[cfg(feature = "images")]
+#[tokio::test]
+async fn opening_the_picker_while_an_upload_is_in_flight_still_gets_a_refreshed_preview() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+    app.detail = Some(crate::domain::demo_detail(&key));
+    app.screen = Screen::Detail;
+
+    // Picker closed throughout the "confirm upload" step — matches the
+    // only reachable way to start one.
+    assert!(!app.attachments_open);
+
+    // The picker opens *after* the upload was dispatched but *before* its
+    // response lands.
+    app.open_attachments();
+    assert!(app.attachments_open);
+    let generation_before_upload = app.attachment_preview_generation;
+
+    app.apply_event(AppEvent::AttachmentUploaded {
+        key,
+        filename: "mockup.png".into(),
+        result: Ok(vec![app.detail.as_ref().unwrap().attachments[0].clone()]),
+    });
+
+    assert_eq!(
+        app.attachment_preview_generation,
+        generation_before_upload + 2,
+        "the now-open picker must get a re-dispatched refresh, not just an invalidate"
+    );
+}
+
+/// Code-review regression test: uploading a brand-new, unrelated
+/// attachment to the same issue must not tear down and re-fetch an
+/// already-correct cached preview for whatever's actually highlighted —
+/// only a re-upload that touches the highlighted id itself should.
+#[cfg(feature = "images")]
+#[tokio::test]
+async fn uploading_an_unrelated_new_attachment_does_not_disturb_the_cached_preview() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+    app.detail = Some(crate::domain::demo_detail(&key));
+    app.screen = Screen::Detail;
+    app.open_attachments();
+    let highlighted_id = app.detail.as_ref().unwrap().attachments[0].id.clone();
+    let generation = app.attachment_preview_generation;
+    app.apply_event(AppEvent::AttachmentPreviewLoaded {
+        generation,
+        attachment_id: highlighted_id,
+        image: Some(image::DynamicImage::new_rgb8(1, 1)),
+    });
+    assert!(
+        app.attachment_preview.borrow().is_some(),
+        "setup: the highlighted attachment's preview must be cached before the upload lands"
+    );
+    let generation_before_upload = app.attachment_preview_generation;
+
+    let new_attachment = Attachment {
+        id: "99999".into(),
+        filename: "brand-new.png".into(),
+        mime_type: "image/png".into(),
+        size: 100,
+        created: "2026-08-28".into(),
+        content_url: "https://example.atlassian.net/secure/attachment/99999/brand-new.png".into(),
+        thumbnail_url: None,
+    };
+    app.apply_event(AppEvent::AttachmentUploaded {
+        key,
+        filename: "brand-new.png".into(),
+        result: Ok(vec![new_attachment]),
+    });
+
+    assert_eq!(
+        app.attachment_preview_generation, generation_before_upload,
+        "an unrelated upload must not invalidate an already-correct cached preview"
+    );
+    assert!(
+        app.attachment_preview.borrow().is_some(),
+        "the highlighted attachment's preview must remain cached"
+    );
+}
+
+/// Code-review regression test: an attachment referenced inline in the
+/// description (its cached decoded bytes sitting in `App::inline_images`,
+/// independent of whatever the attachment picker itself has cached) must
+/// also get invalidated on re-upload, not just the picker's own preview —
+/// otherwise the description keeps rendering the pre-upload image
+/// indefinitely.
+#[cfg(feature = "images")]
+#[tokio::test]
+async fn re_uploading_an_attachment_cached_as_an_inline_image_invalidates_that_too() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+    let mut detail = crate::domain::demo_detail(&key);
+    // Cleared so the walk this test cares about isn't affected by the
+    // demo fixture's own baked-in comment media node (see
+    // `app::tests::inline_images`'s own doc comments on this exact
+    // pitfall).
+    detail.comments = vec![];
+    app.detail = Some(detail);
+    app.screen = Screen::Detail;
+    let reuploaded_id = app.detail.as_ref().unwrap().attachments[0].id.clone();
+
+    // Seeds the inline-image cache directly rather than driving the real
+    // resolve/fetch pipeline — isolates the invalidation behaviour this
+    // test actually cares about, mirroring how `app::tests::inline_images`
+    // seeds `inline_images` for its own render-lookup tests.
+    app.inline_images.borrow_mut().insert(
+        InlineImageKey::Attachment(reuploaded_id.clone()),
+        image::DynamicImage::new_rgb8(1, 1),
+    );
+    let inline_generation_before = app.inline_image_generation;
+
+    let reuploaded = app.detail.as_ref().unwrap().attachments[0].clone();
+    app.apply_event(AppEvent::AttachmentUploaded {
+        key,
+        filename: reuploaded.filename.clone(),
+        result: Ok(vec![reuploaded]),
+    });
+
+    assert!(
+        !app.inline_images
+            .borrow()
+            .contains_key(&InlineImageKey::Attachment(reuploaded_id)),
+        "the stale inline-cached image for the re-uploaded id must be dropped"
+    );
+    assert_ne!(
+        app.inline_image_generation, inline_generation_before,
+        "invalidating the inline-image cache must bump its generation"
+    );
+}
+
+/// Code-review regression test: an inline fetch still *in flight* (never
+/// landed, so not yet in `inline_images`) for the re-uploaded attachment
+/// id must also trigger invalidation — checking only the decoded cache
+/// missed this case entirely, letting the in-flight response later land
+/// under the un-bumped generation and permanently cache the pre-upload
+/// bytes with nothing left to ever invalidate it.
+#[cfg(feature = "images")]
+#[tokio::test]
+async fn re_uploading_an_attachment_with_an_in_flight_inline_fetch_invalidates_that_too() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+    let mut detail = crate::domain::demo_detail(&key);
+    detail.comments = vec![];
+    app.detail = Some(detail);
+    app.screen = Screen::Detail;
+    let reuploaded_id = app.detail.as_ref().unwrap().attachments[0].id.clone();
+
+    // Seeds the *pending* (in-flight, not yet decoded) tracker directly,
+    // rather than `inline_images` itself — the exact gap the review found.
+    app.inline_images_pending
+        .insert(InlineImageKey::Attachment(reuploaded_id.clone()));
+    let inline_generation_before = app.inline_image_generation;
+
+    let reuploaded = app.detail.as_ref().unwrap().attachments[0].clone();
+    app.apply_event(AppEvent::AttachmentUploaded {
+        key,
+        filename: reuploaded.filename.clone(),
+        result: Ok(vec![reuploaded]),
+    });
+
+    assert!(
+        !app.inline_images_pending
+            .contains(&InlineImageKey::Attachment(reuploaded_id)),
+        "the stale in-flight tracking for the re-uploaded id must be cleared"
+    );
+    assert_ne!(
+        app.inline_image_generation, inline_generation_before,
+        "an in-flight fetch for the re-uploaded id must also trigger invalidation"
+    );
+}
+
+/// Code-review regression test: invalidating one inline-cached attachment
+/// on re-upload must not leave a *different*, still-in-flight inline
+/// fetch marked pending under the now-stale generation — that would block
+/// any future re-dispatch for it (the resolve walk's own dedup treats
+/// "still pending" as "already being fetched correctly"), silently
+/// stranding it on its placeholder once its stale response gets dropped.
+#[cfg(feature = "images")]
+#[tokio::test]
+async fn re_uploading_one_attachment_does_not_strand_a_different_in_flight_inline_fetch() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+    let mut detail = crate::domain::demo_detail(&key);
+    detail.comments = vec![];
+    app.detail = Some(detail);
+    app.screen = Screen::Detail;
+    let reuploaded_id = app.detail.as_ref().unwrap().attachments[0].id.clone();
+
+    // The re-uploaded attachment is already cached...
+    app.inline_images.borrow_mut().insert(
+        InlineImageKey::Attachment(reuploaded_id.clone()),
+        image::DynamicImage::new_rgb8(1, 1),
+    );
+    // ...while a *different* image is still in flight for the same issue.
+    let sibling_key = InlineImageKey::Attachment("sibling-attachment-id".into());
+    app.inline_images_pending.insert(sibling_key.clone());
+
+    let reuploaded = app.detail.as_ref().unwrap().attachments[0].clone();
+    app.apply_event(AppEvent::AttachmentUploaded {
+        key,
+        filename: reuploaded.filename.clone(),
+        result: Ok(vec![reuploaded]),
+    });
+
+    assert!(
+        !app.inline_images_pending.contains(&sibling_key),
+        "a sibling in-flight fetch's pending marker must not survive the generation bump, \
+         or nothing will ever re-dispatch it once its now-stale response is dropped"
+    );
+}
+
+/// Code-review regression test: `inline_images` is deliberately shared and
+/// retained across recently-viewed issues (see
+/// `refresh_quick_view_inline_images`'s own doc comment) — re-uploading an
+/// attachment on one issue must drop only *that* id's stale entry, never
+/// wipe an unrelated issue's own still-valid cached inline image the way a
+/// full `invalidate_inline_images` clear would.
+#[cfg(feature = "images")]
+#[tokio::test]
+async fn re_uploading_an_attachment_does_not_disturb_an_unrelated_cached_inline_image() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+    let mut detail = crate::domain::demo_detail(&key);
+    detail.comments = vec![];
+    app.detail = Some(detail);
+    app.screen = Screen::Detail;
+    let reuploaded_id = app.detail.as_ref().unwrap().attachments[0].id.clone();
+
+    app.inline_images.borrow_mut().insert(
+        InlineImageKey::Attachment(reuploaded_id.clone()),
+        image::DynamicImage::new_rgb8(1, 1),
+    );
+    let unrelated_key = InlineImageKey::Attachment("unrelated-issue-attachment".into());
+    app.inline_images
+        .borrow_mut()
+        .insert(unrelated_key.clone(), image::DynamicImage::new_rgb8(1, 1));
+
+    let reuploaded = app.detail.as_ref().unwrap().attachments[0].clone();
+    app.apply_event(AppEvent::AttachmentUploaded {
+        key,
+        filename: reuploaded.filename.clone(),
+        result: Ok(vec![reuploaded]),
+    });
+
+    assert!(
+        !app.inline_images
+            .borrow()
+            .contains_key(&InlineImageKey::Attachment(reuploaded_id)),
+        "the touched id's stale entry must still be dropped"
+    );
+    assert!(
+        app.inline_images.borrow().contains_key(&unrelated_key),
+        "an unrelated issue's own cached inline image must not be wiped"
+    );
+}
+
+/// Code-review regression test: an upload that touches no cached/pending
+/// inline image at all must not trigger a full re-resolve of the issue's
+/// description — that would re-walk the whole document (and, for any
+/// still-unresolved media node, re-fire the uuid redirect-probe fallback)
+/// for every unrelated upload, real repeated network cost for nothing
+/// that actually changed.
+#[cfg(feature = "images")]
+#[tokio::test]
+async fn uploading_an_attachment_not_referenced_inline_does_not_trigger_a_resolve_walk() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+    let mut detail = crate::domain::demo_detail(&key);
+    detail.comments = vec![];
+    detail.attachments = vec![Attachment {
+        id: "10001".into(),
+        filename: "mockup.png".into(),
+        mime_type: "image/png".into(),
+        size: 100,
+        created: "2026-08-28".into(),
+        content_url: "https://example.atlassian.net/secure/attachment/10001/mockup.png".into(),
+        thumbnail_url: None,
+    }];
+    detail.description = serde_json::json!({
+        "type": "doc", "version": 1,
+        "content": [ { "type": "mediaSingle", "content": [
+            { "type": "media", "attrs": { "id": "x", "type": "file", "alt": "mockup.png" } }
+        ] } ]
+    });
+    app.detail = Some(detail);
+    app.screen = Screen::Detail;
+    // Never resolved yet — `refresh_inline_images` was never called (this
+    // test sets `app.detail` directly, bypassing `show_issue`/`open_by_key`).
+    assert!(app.inline_images_pending.is_empty());
+
+    let new_attachment = Attachment {
+        id: "99999".into(),
+        filename: "brand-new.png".into(),
+        mime_type: "image/png".into(),
+        size: 100,
+        created: "2026-08-28".into(),
+        content_url: "https://example.atlassian.net/secure/attachment/99999/brand-new.png".into(),
+        thumbnail_url: None,
+    };
+    app.apply_event(AppEvent::AttachmentUploaded {
+        key,
+        filename: "brand-new.png".into(),
+        result: Ok(vec![new_attachment]),
+    });
+
+    assert!(
+        app.inline_images_pending.is_empty(),
+        "an unrelated upload must not trigger a resolve walk of the description"
     );
 }
 
