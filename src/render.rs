@@ -118,12 +118,25 @@ pub struct WideDetail {
     pub links: Panel,
     pub children: Panel,
     pub attachments: Panel,
+    /// Line reservations for any description/acceptance-criteria/comment
+    /// `media` node `description_lines`/`activity_lines_cards` were told is
+    /// ready to render (see `adf::MediaSizing`) — indices into `main.lines`.
+    /// Populated whenever `wide_detail`'s caller passes a
+    /// `MediaSizing::Ready` (Phase 3 of issue #130 for description/
+    /// acceptance-criteria — see `App::with_detail_media_sizing` — extended
+    /// to comment bodies later in the same issue); still always empty for a
+    /// `Disabled` caller.
+    pub image_placements: Vec<adf::ImagePlacement>,
 }
 
 /// The Detail screen's narrow (< ~90 cols) layout: one scrollable document,
 /// identity → facts → description → linked → activity.
 pub struct NarrowDetail {
     pub lines: IssueLines,
+    /// As `WideDetail::image_placements`, rebased into `lines.lines` (the
+    /// description section doesn't start at index 0 here — identity/facts
+    /// come first).
+    pub image_placements: Vec<adf::ImagePlacement>,
 }
 
 fn identity_lines(detail: &IssueDetail) -> Vec<Line<'static>> {
@@ -451,18 +464,49 @@ fn linked_panel_title(detail: &IssueDetail) -> Line<'static> {
 /// `width` is the column width this description will actually be wrapped
 /// to (see `adf::render`'s doc comment) — needed so a blockquote/code-block
 /// bar can be pre-wrapped to survive line wrapping instead of vanishing on
-/// continuation rows.
-pub(crate) fn description_lines(detail: &IssueDetail, width: usize) -> Vec<Line<'static>> {
-    let mut lines = adf::render(&detail.description, width).lines;
+/// continuation rows. `media` is forwarded to `adf::render_with_media`
+/// as-is — a real `MediaSizing::Ready` yields a non-empty placement vec
+/// (Detail since Phase 3, quick view since Phase 5 of issue #130); the
+/// returned placements are already rebased to be relative to the *combined*
+/// description+acceptance-criteria lines this function returns, the same
+/// way `comment_starts` is rebased by its own callers.
+/// Shift every `ImagePlacement`'s `line_start` by `base` — the same rebase
+/// every caller that splices one line-producing section after another needs
+/// (see `ImagePlacement`'s own doc comment on why a caller must do this),
+/// pulled out once so the three call sites that need it (`description_lines`,
+/// `narrow_detail`, `quick_view_narrow`) don't each hand-roll the same
+/// `ImagePlacement { line_start: p.line_start + base, ..p }` map.
+fn rebase_placements(
+    placements: Vec<adf::ImagePlacement>,
+    base: usize,
+) -> Vec<adf::ImagePlacement> {
+    placements
+        .into_iter()
+        .map(|p| adf::ImagePlacement {
+            line_start: p.line_start + base,
+            ..p
+        })
+        .collect()
+}
+
+pub(crate) fn description_lines(
+    detail: &IssueDetail,
+    width: usize,
+    media: &adf::MediaSizing,
+) -> (Vec<Line<'static>>, Vec<adf::ImagePlacement>) {
+    let (mut lines, mut placements) = adf::render_with_media(&detail.description, width, media);
     if let Some(ac) = &detail.acceptance_criteria {
         lines.push(divider());
         lines.push(Line::from(Span::styled(
             "Acceptance Criteria",
             Style::default().fg(accent()).add_modifier(Modifier::BOLD),
         )));
-        lines.extend(adf::render(ac, width).lines);
+        let base = lines.len();
+        let (ac_lines, ac_placements) = adf::render_with_media(ac, width, media);
+        lines.extend(ac_lines);
+        placements.extend(rebase_placements(ac_placements, base));
     }
-    lines
+    (lines, placements)
 }
 
 /// The wide/narrow layouts' comment-card rendering (SPEC.md §6): a 2-cell
@@ -470,15 +514,28 @@ pub(crate) fn description_lines(detail: &IssueDetail, width: usize) -> Vec<Line<
 /// — ahead of the author/timestamp header and every ADF body line, each
 /// pre-wrapped to `width` (via `wrap_with_bar`) so the rule survives a long
 /// line wrapping instead of only showing on its first on-screen row. Same
-/// section-local-offset contract as `activity_lines_plain`.
+/// section-local-offset contract as `activity_lines_plain`. `media` is
+/// forwarded to `adf::render_with_media` for each comment body in turn
+/// (issue #130's comment-image phase) — the returned `Vec<ImagePlacement>`
+/// is already rebased to be relative to *this function's own* `lines`
+/// (i.e. as if it were the only thing on screen); `wide_detail`/
+/// `narrow_detail` rebase it again by their own comments-section `base`,
+/// the same way `comment_starts`/`comments_header` already are.
 fn activity_lines_cards(
     comments: &[Comment],
     current_user: &str,
     width: usize,
-) -> (Vec<Line<'static>>, Option<usize>, Vec<usize>) {
+    media: &adf::MediaSizing,
+) -> (
+    Vec<Line<'static>>,
+    Option<usize>,
+    Vec<usize>,
+    Vec<adf::ImagePlacement>,
+) {
     let mut lines = Vec::new();
     let mut header = None;
     let mut starts = Vec::with_capacity(comments.len());
+    let mut placements = Vec::new();
     if !comments.is_empty() {
         header = Some(lines.len());
         lines.push(Line::from(Span::styled(
@@ -515,12 +572,34 @@ fn activity_lines_cards(
             // any *inner* bar it adds is sized against the space actually
             // left over rather than the full column width.
             let body_width = width.saturating_sub(2).max(1);
-            for body_line in adf::render(&comment.body, body_width).lines {
-                lines.extend(wrap_with_bar(&body_line, width, "▌ ", rule));
+            let (body_lines, body_placements) =
+                adf::render_with_media(&comment.body, body_width, media);
+            // Same rebase problem the blockquote arm of `adf::render_block`
+            // already solves, one level up: each `body_placements` entry's
+            // `line_start` indexes into `body_lines` (this comment's own
+            // private buffer), and `wrap_with_bar` below can turn one
+            // `body_lines` entry into several wrapped rows once spliced
+            // into `lines` — so a placement can't just be shifted by
+            // `lines.len()`. Build the same per-line cumulative
+            // wrapped-row-count table and rebase through it.
+            let body_base = lines.len();
+            let mut cumulative_rows = Vec::with_capacity(body_lines.len() + 1);
+            cumulative_rows.push(0usize);
+            for body_line in &body_lines {
+                let rows = wrap_with_bar(body_line, width, "▌ ", rule);
+                cumulative_rows.push(cumulative_rows.last().copied().unwrap_or(0) + rows.len());
+                lines.extend(rows);
             }
+            placements.extend(body_placements.into_iter().map(|p| {
+                let offset = cumulative_rows.get(p.line_start).copied().unwrap_or(0);
+                adf::ImagePlacement {
+                    line_start: body_base + offset,
+                    ..p
+                }
+            }));
         }
     }
-    (lines, header, starts)
+    (lines, header, starts, placements)
 }
 
 /// Quick view's compact kv fields (SPEC.md §4): assignee, parent (if any),
@@ -615,11 +694,16 @@ fn linkify_panel(mut lines: Vec<Line<'static>>, pane: DetailPane) -> Panel {
 /// hit-testing (see `app::mouse::link_at`). `main_width` is the actual
 /// column width `main` will be rendered/wrapped at — see `adf::render`'s
 /// doc comment for why the description/comment bars need it up front.
+/// `media` is forwarded to `description_lines` as-is (see its own doc
+/// comment) — every caller of this function needs to agree on the same
+/// readiness, so `App::with_detail_media_sizing` is the one place that
+/// actually builds a real `MediaSizing::Ready`.
 pub fn wide_detail(
     detail: &IssueDetail,
     current_user: &str,
     updated: &str,
     main_width: usize,
+    media: &adf::MediaSizing,
 ) -> WideDetail {
     let identity = linkify_panel(identity_lines(detail), DetailPane::Identity);
     let workflow = linkify_panel(workflow_lines(detail), DetailPane::Workflow);
@@ -628,14 +712,15 @@ pub fn wide_detail(
     let children = linkify_panel(children_lines(detail), DetailPane::Children);
     let attachments = linkify_panel(attachments_lines(detail), DetailPane::Attachments);
 
-    let mut main_lines = description_lines(detail, main_width);
-    let (activity, header, starts) =
-        activity_lines_cards(&detail.comments, current_user, main_width);
+    let (mut main_lines, mut image_placements) = description_lines(detail, main_width, media);
+    let (activity, header, starts, activity_placements) =
+        activity_lines_cards(&detail.comments, current_user, main_width, media);
     if !activity.is_empty() {
         main_lines.push(divider());
     }
     let base = main_lines.len();
     main_lines.extend(activity);
+    image_placements.extend(rebase_placements(activity_placements, base));
     let comments_header = header.map(|h| h + base);
     let comment_starts = starts.into_iter().map(|s| s + base).collect();
     let main_links = linkify(&mut main_lines, DetailPane::Main);
@@ -653,6 +738,7 @@ pub fn wide_detail(
         links,
         children,
         attachments,
+        image_placements,
     }
 }
 
@@ -680,13 +766,15 @@ pub fn wide_detail_links(wide: &WideDetail) -> Vec<LinkTarget> {
 /// (foldable) → description → linked → activity, all one scrollable
 /// document (same single-pane model as `issue_detail_lines`). `width` is
 /// the actual column width this single pane will be rendered/wrapped at —
-/// see `wide_detail`'s `main_width` doc comment.
+/// see `wide_detail`'s `main_width` doc comment. `media` is forwarded to
+/// `description_lines` as-is — see `wide_detail`'s own doc comment.
 pub fn narrow_detail(
     detail: &IssueDetail,
     current_user: &str,
     updated: &str,
     facts_folded: bool,
     width: usize,
+    media: &adf::MediaSizing,
 ) -> NarrowDetail {
     let mut lines = identity_lines(detail);
     lines.push(facts_panel_title(facts_folded));
@@ -697,7 +785,10 @@ pub fn narrow_detail(
         lines.extend(workflow_lines(detail));
     }
     lines.push(divider());
-    lines.extend(description_lines(detail, width));
+    let description_base = lines.len();
+    let (description, placements) = description_lines(detail, width, media);
+    lines.extend(description);
+    let mut image_placements = rebase_placements(placements, description_base);
 
     let linked = linked_lines(detail);
     if !linked.is_empty() {
@@ -713,12 +804,14 @@ pub fn narrow_detail(
         lines.extend(attachments);
     }
 
-    let (activity, header, starts) = activity_lines_cards(&detail.comments, current_user, width);
+    let (activity, header, starts, activity_placements) =
+        activity_lines_cards(&detail.comments, current_user, width, media);
     if !activity.is_empty() {
         lines.push(divider());
     }
     let base = lines.len();
     lines.extend(activity);
+    image_placements.extend(rebase_placements(activity_placements, base));
     let comments_header = header.map(|h| h + base);
     let comment_starts = starts.into_iter().map(|s| s + base).collect();
 
@@ -730,6 +823,7 @@ pub fn narrow_detail(
             comment_starts,
             links,
         },
+        image_placements,
     }
 }
 
@@ -741,19 +835,24 @@ pub fn narrow_detail(
 pub struct QuickViewWide {
     pub description: Panel,
     pub meta: Panel,
+    /// As `WideDetail::image_placements` — indices into
+    /// `description.lines` (the description panel starts at index 0, so no
+    /// rebasing is needed here).
+    pub image_placements: Vec<adf::ImagePlacement>,
 }
 
 pub fn quick_view_wide(
     detail: &IssueDetail,
     updated: &str,
     description_width: usize,
+    media: &adf::MediaSizing,
 ) -> QuickViewWide {
+    let (description_lines_vec, image_placements) =
+        description_lines(detail, description_width, media);
     QuickViewWide {
-        description: linkify_panel(
-            description_lines(detail, description_width),
-            DetailPane::Main,
-        ),
+        description: linkify_panel(description_lines_vec, DetailPane::Main),
         meta: linkify_panel(quick_view_meta_lines(detail, updated), DetailPane::Meta),
+        image_placements,
     }
 }
 
@@ -776,19 +875,32 @@ pub fn quick_view_wide_links(wide: &QuickViewWide) -> Vec<LinkTarget> {
 /// `comment_starts` would always be empty here).
 pub struct QuickViewNarrow {
     pub panel: Panel,
+    /// As `WideDetail::image_placements`, rebased into `panel.lines` (the
+    /// description section doesn't start at index 0 here — the chip and kv
+    /// lines come first).
+    pub image_placements: Vec<adf::ImagePlacement>,
 }
 
-pub fn quick_view_narrow(detail: &IssueDetail, updated: &str, width: usize) -> QuickViewNarrow {
+pub fn quick_view_narrow(
+    detail: &IssueDetail,
+    updated: &str,
+    width: usize,
+    media: &adf::MediaSizing,
+) -> QuickViewNarrow {
     let mut lines = vec![
         quick_view_chip_line(detail),
         Line::default(),
         quick_view_inline_kv_line(detail, updated),
         Line::default(),
     ];
-    lines.extend(description_lines(detail, width));
+    let description_base = lines.len();
+    let (description, placements) = description_lines(detail, width, media);
+    lines.extend(description);
+    let image_placements = rebase_placements(placements, description_base);
     let links = linkify(&mut lines, DetailPane::Main);
     QuickViewNarrow {
         panel: Panel { lines, links },
+        image_placements,
     }
 }
 
@@ -1191,7 +1303,7 @@ mod link_tests {
     #[test]
     fn quick_view_narrow_finds_parent_and_link_and_body_keys() {
         let detail = demo_detail(&demo_issues()[1].key);
-        let rendered = quick_view_narrow(&detail, "12m ago", 120);
+        let rendered = quick_view_narrow(&detail, "12m ago", 120, &adf::MediaSizing::Disabled);
         assert!(!rendered.panel.links.is_empty());
         // Every recorded target actually points at text within its line's
         // bounds.
@@ -1206,7 +1318,7 @@ mod link_tests {
     #[test]
     fn quick_view_wide_meta_shows_only_the_seven_spec_fields() {
         let detail = demo_detail(&demo_issues()[1].key);
-        let wide = quick_view_wide(&detail, "12m ago", 120);
+        let wide = quick_view_wide(&detail, "12m ago", 120, &adf::MediaSizing::Disabled);
         let meta_text: String = wide
             .meta
             .lines
@@ -1229,7 +1341,7 @@ mod link_tests {
     #[test]
     fn quick_view_wide_links_reads_description_before_meta() {
         let detail = demo_detail(&demo_issues()[1].key);
-        let wide = quick_view_wide(&detail, "12m ago", 120);
+        let wide = quick_view_wide(&detail, "12m ago", 120, &adf::MediaSizing::Disabled);
         let combined = quick_view_wide_links(&wide);
         assert_eq!(
             combined.len(),
@@ -1293,7 +1405,7 @@ mod link_tests {
     #[test]
     fn wide_detail_main_offsets_are_valid_indices() {
         let detail = demo_detail(&demo_issues()[1].key);
-        let wide = wide_detail(&detail, "you", "12m ago", 120);
+        let wide = wide_detail(&detail, "you", "12m ago", 120, &adf::MediaSizing::Disabled);
         if let Some(header) = wide.main.comments_header {
             assert!(header < wide.main.lines.len());
         }
@@ -1317,9 +1429,74 @@ mod link_tests {
     #[test]
     fn narrow_detail_folded_facts_has_fewer_lines_than_unfolded() {
         let detail = demo_detail(&demo_issues()[1].key);
-        let folded = narrow_detail(&detail, "you", "12m ago", true, 120);
-        let unfolded = narrow_detail(&detail, "you", "12m ago", false, 120);
+        let folded = narrow_detail(
+            &detail,
+            "you",
+            "12m ago",
+            true,
+            120,
+            &adf::MediaSizing::Disabled,
+        );
+        let unfolded = narrow_detail(
+            &detail,
+            "you",
+            "12m ago",
+            false,
+            120,
+            &adf::MediaSizing::Disabled,
+        );
         assert!(folded.lines.lines.len() < unfolded.lines.lines.len());
+    }
+
+    /// Phase 2 (issue #130) success criterion: with `MediaSizing::Disabled`
+    /// (the only mode any call site actually passes this phase),
+    /// `description_lines` must produce output byte-identical to what it
+    /// produced before it grew a `media` parameter — reconstructed here as
+    /// plain `adf::render` calls concatenated the same way the old
+    /// implementation did, since there's no pre-existing golden fixture to
+    /// diff against.
+    #[test]
+    fn description_lines_disabled_matches_pre_phase_2_concatenation() {
+        let detail = demo_detail(&demo_issues()[1].key);
+        let width = 100;
+        let (lines, placements) = description_lines(&detail, width, &adf::MediaSizing::Disabled);
+        assert!(placements.is_empty());
+
+        let mut expected = adf::render(&detail.description, width).lines;
+        if let Some(ac) = &detail.acceptance_criteria {
+            expected.push(divider());
+            expected.push(Line::from(Span::styled(
+                "Acceptance Criteria",
+                Style::default().fg(accent()).add_modifier(Modifier::BOLD),
+            )));
+            expected.extend(adf::render(ac, width).lines);
+        }
+        assert_eq!(lines, expected);
+    }
+
+    /// A `Disabled` caller (quick view, still out of scope as of Phase 3 —
+    /// see issue #130) must always come back with an empty placement vec,
+    /// not just compile. `wide_detail`/`narrow_detail` themselves gained
+    /// real `Ready` support in Phase 3 (see `App::with_detail_media_sizing`
+    /// and its own tests), so only the `Disabled` path is re-asserted here.
+    #[test]
+    fn image_placements_are_empty_since_every_call_site_still_passes_disabled() {
+        let detail = demo_detail(&demo_issues()[1].key);
+        let wide = wide_detail(&detail, "you", "12m ago", 120, &adf::MediaSizing::Disabled);
+        assert!(wide.image_placements.is_empty());
+        let narrow = narrow_detail(
+            &detail,
+            "you",
+            "12m ago",
+            false,
+            120,
+            &adf::MediaSizing::Disabled,
+        );
+        assert!(narrow.image_placements.is_empty());
+        let qvw = quick_view_wide(&detail, "12m ago", 120, &adf::MediaSizing::Disabled);
+        assert!(qvw.image_placements.is_empty());
+        let qvn = quick_view_narrow(&detail, "12m ago", 120, &adf::MediaSizing::Disabled);
+        assert!(qvn.image_placements.is_empty());
     }
 
     /// Regression test: a comment's left rule (`▌ `) used to be added once
@@ -1342,7 +1519,8 @@ mod link_tests {
                 ]
             }),
         };
-        let (lines, _header, starts) = activity_lines_cards(&[comment], "someone else", 20);
+        let (lines, _header, starts, _placements) =
+            activity_lines_cards(&[comment], "someone else", 20, &adf::MediaSizing::Disabled);
         assert_eq!(starts.len(), 1);
         let comment_lines = &lines[starts[0]..];
         assert!(
@@ -1352,6 +1530,88 @@ mod link_tests {
         for l in comment_lines {
             assert_eq!(l.spans[0].content.as_ref(), "▌ ");
         }
+    }
+
+    /// Code-review-style regression test (issue #130's comment-image
+    /// phase), mirroring `adf::render_block`'s own blockquote rebase test:
+    /// a media node inside a comment body records its `line_start` against
+    /// `render_with_media`'s own private per-comment buffer (`body_lines`
+    /// inside `activity_lines_cards`), and — the actually tricky part —
+    /// `wrap_with_bar` can turn one *logical* line ahead of it (the
+    /// preceding paragraph) into *several* visual rows once bar-wrapped.
+    /// A naive rebase (`local_index + body_base`) would land on the wrong
+    /// row entirely whenever that happens; this proves the fix's
+    /// cumulative-wrapped-row-count table instead lands exactly on the
+    /// reserved row, accounting for the header row, every row the wrapped
+    /// paragraph actually produced, and the breathing-room row
+    /// `render_with_media` inserts between top-level blocks.
+    #[test]
+    fn media_inside_a_comment_body_rebases_past_a_wrapped_preceding_paragraph() {
+        let long_text = "word ".repeat(10);
+        let comment = Comment {
+            id: "1".into(),
+            author: "Ada".into(),
+            created: "1h ago".into(),
+            body: serde_json::json!({
+                "type": "doc", "version": 1,
+                "content": [
+                    { "type": "paragraph", "content": [ { "type": "text", "text": long_text.clone() } ] },
+                    { "type": "mediaSingle", "content": [
+                        { "type": "media", "attrs": { "id": "x", "type": "file", "alt": "shot" } }
+                    ] }
+                ]
+            }),
+        };
+        let width = 20;
+        let ready = |media: &adf::InlineMediaRef| -> Option<(u16, u16)> {
+            (media.alt == "shot").then_some((2, 14))
+        };
+        let media = adf::MediaSizing::Ready(&ready);
+        let (lines, _header, starts, placements) =
+            activity_lines_cards(&[comment], "someone else", width, &media);
+
+        assert_eq!(placements.len(), 1);
+        let placement = &placements[0];
+
+        // Independently recompute how many visual rows the long paragraph
+        // itself wraps into at this width, the same way
+        // `activity_lines_cards` does internally — must be more than one
+        // row for this test to actually exercise the wrap-expansion case,
+        // not just a flat per-line offset.
+        let paragraph_line = Line::from(long_text);
+        let wrapped_paragraph_rows = wrap_with_bar(&paragraph_line, width, "▌ ", accent2()).len();
+        assert!(
+            wrapped_paragraph_rows > 1,
+            "the fixture text must actually wrap across multiple rows at this width for this \
+             test to exercise anything, got {wrapped_paragraph_rows} row(s)"
+        );
+
+        // `starts[0]` is this comment's own author/timestamp header row
+        // (a short enough line to stay on one row at width 20); the body
+        // starts right after it.
+        let body_base = starts[0] + 1;
+        // Plus one breathing-room blank row (itself bar-wrapped to a
+        // single row) between the paragraph and the mediaSingle block, per
+        // `render_with_media`'s top-level block spacing.
+        let expected = body_base + wrapped_paragraph_rows + 1;
+
+        assert_eq!(
+            placement.line_start, expected,
+            "line_start must be rebased past every wrapped row of the preceding paragraph (not \
+             just its single logical line in render_with_media's own buffer) plus the \
+             breathing-room row between top-level blocks, got lines: {lines:?}"
+        );
+        let reserved_row_text: String = lines[placement.line_start]
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(
+            reserved_row_text, "▌ ",
+            "line_start must point at a reserved (blank, bar-prefixed) row, not the wrapped \
+             paragraph or the wrong row entirely, got: {:?}",
+            lines[placement.line_start]
+        );
     }
 }
 

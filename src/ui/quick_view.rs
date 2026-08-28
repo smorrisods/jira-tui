@@ -10,7 +10,7 @@ use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::app::{App, ListFocus};
-use crate::domain::IssueSummary;
+use crate::domain::{IssueDetail, IssueSummary};
 use crate::render::{self, DetailPane, Panel};
 
 use super::detail_columns::wrapped_row_count;
@@ -53,13 +53,7 @@ pub(crate) fn draw_quick_view(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn draw_wide(
-    f: &mut Frame,
-    app: &App,
-    area: Rect,
-    detail: &crate::domain::IssueDetail,
-    updated: &str,
-) {
+fn draw_wide(f: &mut Frame, app: &App, area: Rect, detail: &IssueDetail, updated: &str) {
     // Computed before `render::quick_view_wide` so the description column's
     // actual width is known up front — see `ui::detail::draw_wide`'s
     // matching comment.
@@ -71,7 +65,9 @@ fn draw_wide(
         ])
         .split(area);
 
-    let mut wide = render::quick_view_wide(detail, updated, cols[0].width as usize);
+    let mut wide = app.with_quick_view_media_sizing(cols[0].width, |media| {
+        render::quick_view_wide(detail, updated, cols[0].width as usize, media)
+    });
     if let Some(target) = render::quick_view_wide_links(&wide)
         .get(app.link_index)
         .cloned()
@@ -83,26 +79,40 @@ fn draw_wide(
         render::highlight_target(lines, &target);
     }
 
-    draw_with_overflow(f, cols[0], wide.description, app.quick_view_scroll);
+    draw_with_overflow(
+        f,
+        app,
+        cols[0],
+        wide.description,
+        app.quick_view_scroll,
+        &wide.image_placements,
+        Some(detail),
+    );
     // The meta column never scrolls (there's no dedicated scroll state for
     // it), so a fixed `scroll` of 0 here just means "show an overflow line
     // instead of silently clipping" whenever it doesn't fit — content that
-    // can't be scrolled to still gets a visible signal that it's there.
-    draw_with_overflow(f, cols[1], wide.meta, 0);
+    // can't be scrolled to still gets a visible signal that it's there. The
+    // meta grid never contains a `media` node, so it never has images to
+    // paint — an empty placement slice.
+    draw_with_overflow(f, app, cols[1], wide.meta, 0, &[], None);
 }
 
-fn draw_narrow(
-    f: &mut Frame,
-    app: &App,
-    area: Rect,
-    detail: &crate::domain::IssueDetail,
-    updated: &str,
-) {
-    let mut narrow = render::quick_view_narrow(detail, updated, area.width as usize);
+fn draw_narrow(f: &mut Frame, app: &App, area: Rect, detail: &IssueDetail, updated: &str) {
+    let mut narrow = app.with_quick_view_media_sizing(area.width, |media| {
+        render::quick_view_narrow(detail, updated, area.width as usize, media)
+    });
     if let Some(target) = narrow.panel.links.get(app.link_index).cloned() {
         render::highlight_target(&mut narrow.panel.lines, &target);
     }
-    draw_with_overflow(f, area, narrow.panel, app.quick_view_scroll);
+    draw_with_overflow(
+        f,
+        app,
+        area,
+        narrow.panel,
+        app.quick_view_scroll,
+        &narrow.image_placements,
+        Some(detail),
+    );
 }
 
 /// Renders `panel.lines` scrolled by `scroll`, appending a trailing
@@ -110,19 +120,43 @@ fn draw_narrow(
 /// below the visible area than fit — reusing `wrapped_row_count` (the same
 /// wrap-aware row counter Detail's side rail uses) rather than the raw
 /// logical line count, which would under-count as soon as any line wraps.
-fn draw_with_overflow(f: &mut Frame, area: Rect, panel: Panel, scroll: u16) {
+///
+/// `image_placements`/`detail` mirror `ui::detail::draw_wide`/`draw_narrow`'s
+/// own image-paint hookup (Phase 5 of issue #130): the paint pass runs after
+/// the `Paragraph` it overlays, against whichever area the paragraph was
+/// actually given — the *shrunk* `rows[0]` once an overflow fade row is
+/// showing, not the full `area`, so a reserved image doesn't get painted a
+/// row into where "… ↓ N more lines" is about to render. `detail` is `None`
+/// for the meta column (never has a `media` node to place an image for), and
+/// `#[cfg_attr]`-silenced when the `images` feature is off, the same way
+/// `ui::detail`'s own paint parameters are effectively unused there.
+#[cfg_attr(not(feature = "images"), allow(unused_variables))]
+fn draw_with_overflow(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    panel: Panel,
+    scroll: u16,
+    image_placements: &[crate::adf::ImagePlacement],
+    detail: Option<&IssueDetail>,
+) {
     if area.height == 0 {
         return;
     }
     let total = wrapped_row_count(&panel.lines, area.width);
     let overflow_at_full_height = total.saturating_sub(scroll).saturating_sub(area.height);
     if overflow_at_full_height == 0 {
+        #[cfg(feature = "images")]
+        let image_paints =
+            super::detail::image_paint_offsets(&panel.lines, image_placements, area.width, scroll);
         f.render_widget(
             Paragraph::new(panel.lines)
                 .wrap(Wrap { trim: false })
                 .scroll((scroll, 0)),
             area,
         );
+        #[cfg(feature = "images")]
+        super::detail::paint_inline_images(f, app, area, image_paints, detail);
         return;
     }
 
@@ -131,12 +165,17 @@ fn draw_with_overflow(f: &mut Frame, area: Rect, panel: Panel, scroll: u16) {
         .constraints([Constraint::Min(0), Constraint::Length(1)])
         .split(area);
     let remaining = total.saturating_sub(scroll).saturating_sub(rows[0].height);
+    #[cfg(feature = "images")]
+    let image_paints =
+        super::detail::image_paint_offsets(&panel.lines, image_placements, rows[0].width, scroll);
     f.render_widget(
         Paragraph::new(panel.lines)
             .wrap(Wrap { trim: false })
             .scroll((scroll, 0)),
         rows[0],
     );
+    #[cfg(feature = "images")]
+    super::detail::paint_inline_images(f, app, rows[0], image_paints, detail);
     let fade = Line::from(Span::styled(
         format!(
             "… ↓ {remaining} more line{}",

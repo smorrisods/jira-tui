@@ -18,6 +18,19 @@ use crate::infra;
 
 use super::{async_ops, App, Screen};
 
+/// The attachment picker's fetched-and-decoded image preview for the
+/// currently-highlighted attachment (`images` feature only) — see
+/// `App::refresh_attachment_preview`.
+#[cfg(feature = "images")]
+pub struct AttachmentPreview {
+    /// The attachment id this preview belongs to, so a fetch that lands
+    /// after the user has already moved the selection elsewhere can be told
+    /// apart from the current one (belt-and-suspenders alongside the
+    /// generation check — see `App::apply_attachment_preview_loaded`).
+    pub attachment_id: String,
+    pub protocol: ratatui_image::protocol::StatefulProtocol,
+}
+
 /// The upload flow's two stages. `Input` is a plain path-entry line;
 /// `Confirm` is the mandatory preview CLAUDE.md's "Preview before any
 /// mutating Jira call" requires before `App::confirm_attachment_upload`
@@ -57,10 +70,19 @@ impl App {
         }
         self.attachment_index = 0;
         self.attachments_open = true;
+        #[cfg(feature = "images")]
+        self.refresh_attachment_preview();
     }
 
     pub fn close_attachments(&mut self) {
         self.attachments_open = false;
+        // Free the decoded image (if any) rather than leaving it around
+        // until the picker next opens and `refresh_attachment_preview`
+        // clears it anyway — no functional difference, just tidier.
+        #[cfg(feature = "images")]
+        {
+            *self.attachment_preview.get_mut() = None;
+        }
     }
 
     /// Move the highlighted row by `delta`, clamped within bounds — same
@@ -81,7 +103,81 @@ impl App {
         if idx >= len as isize {
             idx = len as isize - 1;
         }
-        self.attachment_index = idx as usize;
+        let idx = idx as usize;
+        // A clamped move that lands back on the same row (e.g. holding Down
+        // at the last attachment) isn't a real selection change — refreshing
+        // the preview anyway would flicker the already-shown image and
+        // re-dispatch a redundant fetch/decode on every repeated keypress.
+        #[cfg(feature = "images")]
+        let changed = idx != self.attachment_index;
+        self.attachment_index = idx;
+        #[cfg(feature = "images")]
+        if changed {
+            self.refresh_attachment_preview();
+        }
+    }
+
+    /// Recompute the attachment picker's image preview for whichever
+    /// attachment is now highlighted (`images` feature only) — called after
+    /// opening the picker or moving the selection, and (guarded on
+    /// `attachments_open`) after `App::invalidate_attachment_preview` too,
+    /// so a detail refresh while the picker is already open re-dispatches a
+    /// fetch instead of leaving the picker blank until the user moves the
+    /// selection. Always clears the previous preview first and bumps
+    /// `attachment_preview_generation`, so every ineligible case (no
+    /// detected terminal capability, a demo/cache session with nothing real
+    /// to fetch, a non-image attachment) falls through to "no preview"
+    /// without any special-casing at the call sites — `ui::attachment_picker`
+    /// already renders its normal placeholder path whenever there's nothing
+    /// here.
+    #[cfg(feature = "images")]
+    pub(crate) fn refresh_attachment_preview(&mut self) {
+        *self.attachment_preview.get_mut() = None;
+        self.attachment_preview_generation += 1;
+        let generation = self.attachment_preview_generation;
+
+        let Some(attachment) = self
+            .detail
+            .as_ref()
+            .and_then(|d| d.attachments.get(self.attachment_index))
+        else {
+            return;
+        };
+        let Some(url) =
+            attachment_preview_url(self.image_picker.as_ref(), &self.source, attachment)
+        else {
+            return;
+        };
+        let id = attachment.id.clone();
+        let tx = self.events_tx.clone();
+        async_ops::dispatch_attachment_preview(tx, generation, id, url);
+    }
+
+    /// Drops any cached/in-flight attachment preview (`images` feature
+    /// only) — called wherever `self.detail` gets replaced wholesale by a
+    /// manual refresh (`App::refresh_detail`, `apply_detail_loaded`'s
+    /// navigate branch) rather than a fresh picker open/move. Bumping the
+    /// generation alone would drop a same-attachment-id response too (the
+    /// image itself may have changed); clearing the cached preview here
+    /// means the picker falls back to its placeholder rather than risking a
+    /// stale image surviving a refresh. Every caller pairs this with a
+    /// `self.attachments_open`-guarded `refresh_attachment_preview()` right
+    /// after, so a refresh that lands while the picker is already open
+    /// re-dispatches a fetch for whatever's still highlighted instead of
+    /// leaving the picker permanently blank until the user happens to move
+    /// the selection.
+    #[cfg(feature = "images")]
+    pub(crate) fn invalidate_attachment_preview(&mut self) {
+        *self.attachment_preview.get_mut() = None;
+        self.attachment_preview_generation += 1;
+        let len = self
+            .detail
+            .as_ref()
+            .map(|d| d.attachments.len())
+            .unwrap_or(0);
+        if self.attachment_index >= len {
+            self.attachment_index = len.saturating_sub(1);
+        }
     }
 
     /// `Enter`/`o` on the picker: open the highlighted attachment's
@@ -255,6 +351,44 @@ impl App {
     }
 }
 
+/// Whether — and from where — an attachment's image preview should be
+/// fetched (`images` feature only): `Some(url)` only when the terminal
+/// actually supports image rendering (`picker` was detected at startup),
+/// the session is genuinely live (demo/cache attachments' `content_url`/
+/// `thumbnail_url` aren't real, so fetching them would just fail), and the
+/// attachment's Jira-reported MIME type says it's an image — never attempt
+/// to decode a PDF or a zip. Split out from `App::refresh_attachment_preview`
+/// as a pure function so this gate is unit-testable on its own, without the
+/// generation/dispatch machinery around it.
+#[cfg(feature = "images")]
+fn attachment_preview_url(
+    picker: Option<&ratatui_image::picker::Picker>,
+    source: &Source,
+    attachment: &crate::domain::Attachment,
+) -> Option<String> {
+    if !images_eligible(picker, source) {
+        return None;
+    }
+    attachment.image_preview_url()
+}
+
+/// Whether image fetching is worth attempting at all (`images` feature
+/// only): a detected terminal image-rendering capability (`picker`, from
+/// `main::detect_image_picker`) and a genuine live session (demo/cache
+/// attachment URLs aren't real, so fetching them would just fail). Split out
+/// of `attachment_preview_url` so `app::inline_images::refresh_inline_images`
+/// can reuse the exact same coarse gate for its own eager-fetch batch,
+/// rather than re-deriving it — it already filters to image mimes during
+/// resolution (see `inline_images::resolve_inline_images`), so it only needs
+/// this picker/source half of the check, not the per-attachment mime half.
+#[cfg(feature = "images")]
+pub(crate) fn images_eligible(
+    picker: Option<&ratatui_image::picker::Picker>,
+    source: &Source,
+) -> bool {
+    picker.is_some() && matches!(source, Source::Live { .. })
+}
+
 /// Expand a leading `~` (or `~/...`) to the user's home directory, via the
 /// `dirs` crate already used for XDG paths elsewhere (see `config::mod`).
 /// Any other path — already absolute, plain relative, or a bare `~word`
@@ -321,6 +455,96 @@ pub(crate) fn dedupe_filename(dir: &Path, filename: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "images")]
+    fn test_attachment(mime_type: &str, thumbnail_url: Option<&str>) -> crate::domain::Attachment {
+        crate::domain::Attachment {
+            id: "10001".into(),
+            filename: "mockup.png".into(),
+            mime_type: mime_type.into(),
+            size: 1024,
+            created: "2026-08-25".into(),
+            content_url: "https://example.atlassian.net/secure/attachment/10001/mockup.png".into(),
+            thumbnail_url: thumbnail_url.map(String::from),
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "images")]
+    fn attachment_preview_url_is_none_without_a_detected_picker() {
+        let attachment = test_attachment("image/png", None);
+        let source = Source::Live {
+            site: "example".into(),
+            user: "me".into(),
+        };
+        assert_eq!(attachment_preview_url(None, &source, &attachment), None);
+    }
+
+    #[test]
+    #[cfg(feature = "images")]
+    fn attachment_preview_url_is_none_for_demo_or_cache_sessions() {
+        let picker = ratatui_image::picker::Picker::halfblocks();
+        let attachment = test_attachment("image/png", None);
+        assert_eq!(
+            attachment_preview_url(Some(&picker), &Source::Demo, &attachment),
+            None,
+            "demo attachment URLs aren't real — never attempt to fetch them"
+        );
+        assert_eq!(
+            attachment_preview_url(
+                Some(&picker),
+                &Source::Cache { user: "me".into() },
+                &attachment
+            ),
+            None
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "images")]
+    fn attachment_preview_url_is_none_for_a_non_image_mime_type() {
+        let picker = ratatui_image::picker::Picker::halfblocks();
+        let source = Source::Live {
+            site: "example".into(),
+            user: "me".into(),
+        };
+        let pdf = test_attachment("application/pdf", None);
+        assert_eq!(
+            attachment_preview_url(Some(&picker), &source, &pdf),
+            None,
+            "a non-image mime type must never be handed off for decoding"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "images")]
+    fn attachment_preview_url_prefers_content_over_the_thumbnail() {
+        let picker = ratatui_image::picker::Picker::halfblocks();
+        let source = Source::Live {
+            site: "example".into(),
+            user: "me".into(),
+        };
+        // content_url is preferred regardless of whether a thumbnail_url is
+        // also present — see Attachment::image_preview_url's own doc
+        // comment: the whole point of an in-app preview is to actually be
+        // visible at a useful size, and Jira's own thumbnail is
+        // deliberately too small a source for that once `Resize::Scale`
+        // stretches it to fill the reserved area.
+        let with_thumb = test_attachment(
+            "image/png",
+            Some("https://example.atlassian.net/secure/thumbnail/10001/mockup.png"),
+        );
+        assert_eq!(
+            attachment_preview_url(Some(&picker), &source, &with_thumb).as_deref(),
+            Some(with_thumb.content_url.as_str())
+        );
+
+        let without_thumb = test_attachment("image/png", None);
+        assert_eq!(
+            attachment_preview_url(Some(&picker), &source, &without_thumb).as_deref(),
+            Some(without_thumb.content_url.as_str())
+        );
+    }
 
     #[test]
     fn expand_home_resolves_a_bare_tilde_and_tilde_slash() {

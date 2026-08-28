@@ -75,6 +75,12 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Nerd info popup swallows input while open — same shape as show_help.
+    if app.nerd_info_open {
+        app.nerd_info_open = false;
+        return;
+    }
+
     // Modal: confirm discarding a non-empty in-TUI editor buffer (raised by
     // `Screen::Edit`'s Esc). `y`/`Y` confirms; anything else dismisses the
     // prompt and resumes editing.
@@ -779,6 +785,15 @@ fn run_palette_action(app: &mut App, action: &PaletteAction) {
         }
         PaletteAction::OpenAbout => app.open_about(),
         PaletteAction::OpenHelp => app.show_help = true,
+        PaletteAction::OpenNerdInfo => app.nerd_info_open = true,
+        PaletteAction::ToggleDebugLogging => {
+            let on = jira_tui::debug::toggle();
+            app.status = if on {
+                "debug logging on — traced to stderr".into()
+            } else {
+                "debug logging off".into()
+            };
+        }
         PaletteAction::NewIssue => app.open_new_issue(),
     }
 }
@@ -861,6 +876,32 @@ mod tests {
         handle_key(&mut app, KeyEvent::from(KeyCode::Char('j')));
 
         assert!(!app.show_help, "help overlay should close on any keypress");
+        assert_eq!(
+            app.selected, 0,
+            "the swallowed keypress must not also move the selection"
+        );
+    }
+
+    /// Same shape as `help_overlay_swallows_the_first_keypress_then_closes`
+    /// — the nerd info popup (`ui::nerd_info`) is palette-only, so this also
+    /// covers `PaletteAction::OpenNerdInfo` actually setting the flag.
+    #[test]
+    fn nerd_info_popup_opens_via_palette_and_swallows_the_first_keypress_then_closes() {
+        let mut app = demo_app();
+        app.selected = 0;
+
+        run_palette_action(&mut app, &PaletteAction::OpenNerdInfo);
+        assert!(
+            app.nerd_info_open,
+            "OpenNerdInfo should set the popup's open flag"
+        );
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('j')));
+
+        assert!(
+            !app.nerd_info_open,
+            "nerd info popup should close on any keypress"
+        );
         assert_eq!(
             app.selected, 0,
             "the swallowed keypress must not also move the selection"

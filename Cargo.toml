@@ -20,6 +20,13 @@ live = ["ureq", "dep:rusqlite"]
 # agents read and write Jira issues. Implies `live` (a Jira MCP server with
 # no way to reach Jira isn't useful).
 mcp = ["live", "dep:rmcp", "dep:schemars"]
+# `images` renders attachment thumbnails/previews in the terminal (Kitty/
+# Sixel/iTerm2 protocols, with a Unicode half-block fallback) via
+# `ratatui-image`. Optional because not every terminal supports any of
+# those protocols and the crate's transitive `image` decoder pulls in a
+# non-trivial dependency tree — `default` and `--no-default-features` stay
+# free of it. See issue #130.
+images = ["dep:ratatui-image", "dep:image"]
 
 [dependencies]
 ratatui = "0.30"
@@ -47,6 +54,18 @@ tokio-stream = "0.1.18"
 # `sys-locale`, etc.). See `src/spellcheck.rs` and `assets/dictionaries/en`
 # for the bundled dictionary.
 spellbook = "0.4"
+# Terminal image rendering for the attachment picker preview (`images`
+# feature — see issue #130): Kitty/Sixel/iTerm2 graphics protocols with a
+# Unicode half-block fallback, picked at runtime via capability detection.
+ratatui-image = { version = "11", optional = true, default-features = false, features = ["crossterm"] }
+# Image decoding backing `ratatui-image`'s previews. Not redundant with
+# `ratatui-image`'s own `image` dependency: that crate only requests the
+# `png` decoder for itself (`default-features = false, features = ["png"]`
+# in its own Cargo.toml) — cargo's feature unification takes the union
+# across every dependent, so this crate's explicit jpeg/gif/webp additions
+# are what actually puts those decoders in the binary, confirmed via
+# `cargo tree --features images -e features -i image`.
+image = { version = "0.25", optional = true, default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 
 [target.'cfg(unix)'.dependencies]
 # Only needed to `raise(SIGTSTP)` for the Ctrl+Z suspend-to-shell flow (see

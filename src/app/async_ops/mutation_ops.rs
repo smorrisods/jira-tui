@@ -488,6 +488,285 @@ fn upload_attachment_blocking(
     Err("this build has no live support".to_string())
 }
 
+/// Spawn an attachment preview image fetch+decode off the render thread
+/// (`images` feature only), sending the result back as
+/// `AppEvent::AttachmentPreviewLoaded`. Mirrors `dispatch_attachment_download`'s
+/// shape — the network fetch runs inside `spawn_blocking` since the Jira
+/// client is synchronous `ureq` — but the CPU-bound `image::load_from_memory`
+/// decode step is folded into the same blocking closure too, rather than
+/// happening back on the event/render thread. The resulting
+/// `StatefulProtocol` is deliberately *not* constructed here: that needs
+/// `App::image_picker`, which only exists on the render thread's `App`, so
+/// construction happens at apply-time instead (see
+/// `App::apply_attachment_preview_loaded`).
+#[cfg(feature = "images")]
+pub(crate) fn dispatch_attachment_preview(
+    tx: UnboundedSender<AppEvent>,
+    generation: u64,
+    attachment_id: String,
+    url: String,
+) {
+    tokio::spawn(async move {
+        let id_for_result = attachment_id.clone();
+        let image = tokio::task::spawn_blocking(move || fetch_attachment_preview_blocking(&url))
+            .await
+            .unwrap_or(None);
+        let _ = tx.send(AppEvent::AttachmentPreviewLoaded {
+            generation,
+            attachment_id: id_for_result,
+            image,
+        });
+    });
+}
+
+/// Downloads `url`'s bytes (`crate::jira::download_attachment`, which is
+/// really just a thin wrapper over the same `get_bytes` helper
+/// `download_attachment_blocking` above uses — it happens to already accept
+/// any absolute URL, not just a `content_url`, so it works unchanged for a
+/// `thumbnail_url` too) and decodes them. Any failure — no credentials, a
+/// network error, or bytes that don't decode as a supported image format —
+/// collapses to `None` rather than propagating an error: a failed preview
+/// fetch is never worth surfacing to the user, it just means the picker
+/// falls back to its normal metadata + placeholder rendering. Decoded
+/// images are downscaled (`downscale_for_preview`) before being handed
+/// back, bounding how much memory even a huge source image can occupy for
+/// what's only ever rendered at a handful of terminal cells.
+#[cfg(feature = "images")]
+#[allow(unused_variables)]
+fn fetch_attachment_preview_blocking(url: &str) -> Option<image::DynamicImage> {
+    #[cfg(feature = "live")]
+    {
+        let cfg = crate::jira::Config::load()?;
+        let bytes = crate::jira::download_attachment(&cfg, url).ok()?;
+        image::load_from_memory(&bytes)
+            .ok()
+            .map(downscale_for_preview)
+    }
+    #[cfg(not(feature = "live"))]
+    None
+}
+
+/// Issue #130 phase 4's `External`-keyed sibling of
+/// `fetch_attachment_preview_blocking` above: fetches `url` (an ADF `media`
+/// node's `type: "external"` `url`, potentially any third-party host) via
+/// `jira::get_bytes_public` instead of the authenticated attachment
+/// pipeline — no `Config` is loaded or needed at all, since there's no
+/// Jira credential to apply to an arbitrary external host in the first
+/// place (see `get_bytes_public`'s own doc comment for the full reasoning,
+/// including its `https://`-only restriction). Same downscale step as the
+/// attachment path — an external image is, if anything, more likely to be
+/// oversized, since nothing about it is shaped by Jira's own attachment
+/// handling.
+#[cfg(feature = "images")]
+#[allow(unused_variables)]
+fn fetch_external_image_blocking(url: &str) -> Option<image::DynamicImage> {
+    #[cfg(feature = "live")]
+    {
+        let bytes = crate::jira::get_bytes_public(url).ok()?;
+        image::load_from_memory(&bytes)
+            .ok()
+            .map(downscale_for_preview)
+    }
+    #[cfg(not(feature = "live"))]
+    None
+}
+
+/// Row/column-agnostic downscale cap applied to every decoded inline/preview
+/// image before it's cached (`fetch_attachment_preview_blocking`/
+/// `fetch_external_image_blocking` above) — an oversized `DynamicImage`
+/// sitting in `App::inline_images`/`App::attachment_preview` for the life of
+/// the session is a real memory cost for something that only ever renders
+/// at a handful of terminal rows/cols (see `inline_images::MAX_INLINE_IMAGE_ROWS`),
+/// so anything north of ~2 megapixels gets resized down before it's ever
+/// stored, not just before it's painted. Applies to the attachment-picker's
+/// single preview slot too, not just inline images — both share this same
+/// decode step, and bounding memory there is equally worth having, not a
+/// side effect to work around.
+#[cfg(feature = "images")]
+const MAX_PREVIEW_PIXELS: u32 = 2_000_000;
+
+/// Resize `img` down to at most `MAX_PREVIEW_PIXELS` total pixels,
+/// preserving aspect ratio, when it's bigger than that — a no-op otherwise.
+/// `DynamicImage::resize` (rather than `resize_exact`, which would distort
+/// the aspect ratio, or `thumbnail`, whose faster nearest-neighbour-ish
+/// filter trades away more quality than this needs to) fits the image
+/// within a same-aspect-ratio bounding box computed from the target pixel
+/// count, using a `Triangle` (bilinear) filter — a reasonable quality/speed
+/// tradeoff for a terminal preview image, not a final-quality asset.
+/// `target_w`/`target_h` are floored rather than rounded: since both are
+/// scaled down by the same factor, flooring each dimension independently
+/// can only shrink their product relative to the exact (unrounded) target,
+/// guaranteeing the result never rounds back up past `MAX_PREVIEW_PIXELS` —
+/// rounding instead could overshoot the cap by a few dozen pixels.
+#[cfg(feature = "images")]
+fn downscale_for_preview(img: image::DynamicImage) -> image::DynamicImage {
+    let (w, h) = (img.width().max(1), img.height().max(1));
+    if (w as u64) * (h as u64) <= MAX_PREVIEW_PIXELS as u64 {
+        return img;
+    }
+    let scale = (MAX_PREVIEW_PIXELS as f64 / (w as f64 * h as f64)).sqrt();
+    let target_w = ((w as f64 * scale).floor() as u32).max(1);
+    let target_h = ((h as f64 * scale).floor() as u32).max(1);
+    img.resize(target_w, target_h, image::imageops::FilterType::Triangle)
+}
+
+/// Spawn an eager inline-image fetch+decode off the render thread (`images`
+/// feature only), sending the result back as `AppEvent::InlineImageLoaded`.
+/// One dispatch per resolved `(key, url)` pair from
+/// `App::refresh_inline_images` — the byte-fetch-and-decode step branches on
+/// `key`'s variant: `Attachment` reuses the existing authenticated
+/// `fetch_attachment_preview_blocking` (it already takes nothing but a URL,
+/// so there's no attachment-specific logic to parameterize around);
+/// `External` (issue #130 phase 4) instead uses
+/// `fetch_external_image_blocking`, which fetches credential-free via
+/// `jira::get_bytes_public` rather than the authenticated attachment
+/// pipeline. Either way the result comes back tagged with the same
+/// `InlineImageKey` it was dispatched under.
+#[cfg(feature = "images")]
+pub(crate) fn dispatch_inline_image(
+    tx: UnboundedSender<AppEvent>,
+    generation: u64,
+    key: super::super::InlineImageKey,
+    url: String,
+) {
+    tokio::spawn(async move {
+        let key_for_result = key.clone();
+        let image = tokio::task::spawn_blocking(move || match key {
+            super::super::InlineImageKey::Attachment(_) => fetch_attachment_preview_blocking(&url),
+            super::super::InlineImageKey::External(_) => fetch_external_image_blocking(&url),
+        })
+        .await
+        .unwrap_or(None);
+        let _ = tx.send(AppEvent::InlineImageLoaded {
+            generation,
+            key: key_for_result,
+            image,
+        });
+    });
+}
+
+/// Spawn the redirect-probe uuid fallback off the render thread (`images`
+/// feature only) for whatever candidates `resolve_inline_images_with_candidates`
+/// couldn't resolve via `alt` matching — see `App::resolve_unmatched_media_by_uuid`,
+/// which is this dispatch's only caller. Resolves *identity* only (which
+/// candidate uuid belongs to which attachment); each resolved pair still
+/// needs its own byte-fetch, which `App::apply_inline_image_uuids_resolved`
+/// hands off to the existing `dispatch_inline_image` once this lands.
+#[cfg(feature = "images")]
+pub(crate) fn dispatch_uuid_resolve(
+    tx: UnboundedSender<AppEvent>,
+    generation: u64,
+    candidates: Vec<String>,
+    attachments: Vec<Attachment>,
+) {
+    tokio::spawn(async move {
+        let resolved =
+            tokio::task::spawn_blocking(move || resolve_uuids_blocking(&candidates, &attachments))
+                .await
+                .unwrap_or_default();
+        let _ = tx.send(AppEvent::InlineImageUuidsResolved {
+            generation,
+            resolved,
+        });
+    });
+}
+
+/// Blocking body of `dispatch_uuid_resolve`: probes each image-mime
+/// attachment's `content_url` redirect (`jira::media_uuid_for` — see that
+/// fn's own doc comment for the mechanism, confirmed live on issue #122)
+/// to build a `{uuid -> Attachment}` map, then looks up each of
+/// `candidates` in it. Only image attachments are probed at all — a
+/// candidate media node can never resolve to a non-image attachment (see
+/// `resolve_inline_images_with_candidates`'s own alt-matching path, which
+/// applies the same restriction), so probing one would just be a wasted
+/// request that can never match. `None`/error from any single probe just
+/// drops that attachment from the map — one attachment Jira won't redirect
+/// for shouldn't block resolving the rest.
+///
+/// Traced via `crate::debug_trace!` (see `crate::debug`'s own doc comment)
+/// every step of the way — candidates in, each attachment's probe outcome,
+/// the resulting uuid map, final match count — since every failure mode
+/// here otherwise collapses silently to "no match" by design (a failed
+/// preview fetch is never worth surfacing to the user), which made
+/// diagnosing a live-only mismatch like issue #130's DS-1880 follow-up
+/// otherwise impossible.
+#[cfg(feature = "images")]
+#[allow(unused_variables)]
+fn resolve_uuids_blocking(
+    candidates: &[String],
+    attachments: &[Attachment],
+) -> Vec<(String, super::super::InlineImageKey, String)> {
+    #[cfg(feature = "live")]
+    {
+        crate::debug_trace!(
+            "uuid-probe: {} candidate(s) {candidates:?}, {} attachment(s)",
+            candidates.len(),
+            attachments.len()
+        );
+        let Some(cfg) = crate::jira::Config::load() else {
+            crate::debug_trace!("uuid-probe: no Config loaded, aborting");
+            return Vec::new();
+        };
+        let mut uuid_map: std::collections::HashMap<String, &Attachment> =
+            std::collections::HashMap::new();
+        for attachment in attachments {
+            if !attachment.mime_type.starts_with("image/") {
+                continue;
+            }
+            match crate::jira::media_uuid_for(&cfg, &attachment.content_url) {
+                Ok(Some(uuid)) => {
+                    crate::debug_trace!(
+                        "uuid-probe: {:?} ({}) -> uuid {uuid}",
+                        attachment.filename,
+                        attachment.content_url
+                    );
+                    uuid_map.insert(uuid, attachment);
+                }
+                Ok(None) => {
+                    crate::debug_trace!(
+                        "uuid-probe: {:?} ({}) -> no redirect (not a 3xx, or no Location header)",
+                        attachment.filename,
+                        attachment.content_url
+                    );
+                }
+                Err(e) => {
+                    crate::debug_trace!(
+                        "uuid-probe: {:?} ({}) -> error: {e}",
+                        attachment.filename,
+                        attachment.content_url
+                    );
+                }
+            }
+        }
+        crate::debug_trace!(
+            "uuid-probe: uuid map has {} entr{}: {:?}",
+            uuid_map.len(),
+            if uuid_map.len() == 1 { "y" } else { "ies" },
+            uuid_map.keys().collect::<Vec<_>>()
+        );
+        let resolved: Vec<_> = candidates
+            .iter()
+            .filter_map(|candidate| {
+                let attachment = uuid_map.get(candidate)?;
+                let url = attachment.image_preview_url()?;
+                Some((
+                    candidate.clone(),
+                    super::super::InlineImageKey::Attachment(attachment.id.clone()),
+                    url,
+                ))
+            })
+            .collect();
+        crate::debug_trace!(
+            "uuid-probe: matched {}/{} candidate(s)",
+            resolved.len(),
+            candidates.len()
+        );
+        resolved
+    }
+    #[cfg(not(feature = "live"))]
+    Vec::new()
+}
+
 /// Merge `uploaded` (Jira's response to a successful `upload_attachment`
 /// call) into `existing`: replacing any attachment that already shares an
 /// id (re-uploading to an existing entry, which Jira allows) and appending
@@ -823,5 +1102,167 @@ impl App {
         }
         self.status = format!("{key}: uploaded {filename}");
         self.flash(format!("✓ uploaded {filename}"));
+    }
+
+    /// Applies `AppEvent::AttachmentPreviewLoaded` (`images` feature only) —
+    /// see `dispatch_attachment_preview`/`App::refresh_attachment_preview`
+    /// above. Guarded two ways against a stale response: the usual
+    /// generation check (a newer picker move bumped
+    /// `attachment_preview_generation` since this fetch was dispatched), and
+    /// the highlighted attachment's id still matching the one this preview
+    /// was fetched for. The id check is load-bearing, not redundant: a
+    /// manual `r` refresh (`App::refresh_detail`/`apply_detail_loaded`)
+    /// replaces `self.detail` wholesale and calls
+    /// `App::invalidate_attachment_preview` to bump the generation, but
+    /// `attachment_index` itself isn't reset — if the refreshed issue's
+    /// attachment list changed shape, the same index could now point at a
+    /// different attachment than this response was fetched for.
+    #[cfg(feature = "images")]
+    pub(super) fn apply_attachment_preview_loaded(
+        &mut self,
+        generation: u64,
+        attachment_id: String,
+        image: Option<image::DynamicImage>,
+    ) {
+        if generation != self.attachment_preview_generation {
+            return;
+        }
+        let Some(image) = image else {
+            return;
+        };
+        let still_current = self
+            .detail
+            .as_ref()
+            .and_then(|d| d.attachments.get(self.attachment_index))
+            .is_some_and(|a| a.id == attachment_id);
+        if !still_current {
+            return;
+        }
+        let Some(picker) = self.image_picker.as_ref() else {
+            return;
+        };
+        let protocol = picker.new_resize_protocol(image);
+        *self.attachment_preview.get_mut() = Some(super::super::attachments::AttachmentPreview {
+            attachment_id,
+            protocol,
+        });
+    }
+
+    /// Applies `AppEvent::InlineImageLoaded` (`images` feature only) — see
+    /// `App::refresh_inline_images`/`dispatch_inline_image` above. Only the
+    /// usual generation check guards whether the response is *applied*,
+    /// unlike `apply_attachment_preview_loaded`'s extra "still the
+    /// highlighted attachment" recheck: there's no single currently-selected
+    /// slot this cache tracks, every resolved key is independently valid for
+    /// as long as the generation matches, since `App::invalidate_inline_images`
+    /// clears the whole map on invalidation rather than one slot getting
+    /// overwritten out from under a stale response.
+    ///
+    /// `key` is freed from `inline_images_pending` unconditionally, before
+    /// the generation check — even a since-superseded response means this
+    /// particular fetch is no longer in flight, and leaving the key marked
+    /// pending forever would permanently block `refresh_inline_images`/
+    /// `refresh_quick_view_inline_images` from ever retrying it (Phase 5 of
+    /// issue #130's idempotency design — see either function's own doc
+    /// comment).
+    #[cfg(feature = "images")]
+    pub(super) fn apply_inline_image_loaded(
+        &mut self,
+        generation: u64,
+        key: super::super::InlineImageKey,
+        image: Option<image::DynamicImage>,
+    ) {
+        self.inline_images_pending.remove(&key);
+        if generation != self.inline_image_generation {
+            return;
+        }
+        let Some(image) = image else {
+            return;
+        };
+        self.inline_images.borrow_mut().insert(key, image);
+    }
+
+    /// Applies `AppEvent::InlineImageUuidsResolved` (`images` feature only)
+    /// — see `App::refresh_inline_images`/`dispatch_uuid_resolve` above.
+    /// Dropped whole under a since-superseded generation, the same as every
+    /// other apply here — `invalidate_inline_images` already cleared
+    /// `self.inline_image_uuid_matches` for the new issue, and applying a
+    /// stale response would just write a wrong uuid mapping straight back
+    /// into it. Otherwise, for each `(uuid, key, url)` triple: records
+    /// `uuid -> key` in `self.inline_image_uuid_matches` first — the
+    /// render-side lookup a media node with no (or a mismatched) `alt`
+    /// needs in order to ever find its own cached image
+    /// (`App::inline_image_key_for`) — then, if `key` isn't already cached
+    /// or in flight, marks it pending and hands it to the same
+    /// `dispatch_inline_image` the alt-matched path already uses, so the
+    /// actual fetch/decode/cache pipeline is shared rather than duplicated.
+    #[cfg(feature = "images")]
+    pub(super) fn apply_inline_image_uuids_resolved(
+        &mut self,
+        generation: u64,
+        resolved: Vec<(String, super::super::InlineImageKey, String)>,
+    ) {
+        if generation != self.inline_image_generation {
+            return;
+        }
+        for (uuid, key, url) in resolved {
+            self.inline_image_uuid_matches.insert(uuid, key.clone());
+            if self.inline_images.borrow().contains_key(&key)
+                || self.inline_images_pending.contains(&key)
+            {
+                continue;
+            }
+            self.inline_images_pending.insert(key.clone());
+            let tx = self.events_tx.clone();
+            dispatch_inline_image(tx, generation, key, url);
+        }
+    }
+}
+
+#[cfg(all(test, feature = "images"))]
+mod tests {
+    use super::*;
+
+    /// Issue #130 phase 4's memory-bounding step: a decoded image bigger
+    /// than `MAX_PREVIEW_PIXELS` gets resized down (preserving aspect ratio)
+    /// before it's ever handed back to be cached — constructs a synthetic
+    /// oversized image directly (no network/decode involved) and runs it
+    /// through the same `downscale_for_preview` both
+    /// `fetch_attachment_preview_blocking` and `fetch_external_image_blocking`
+    /// call before returning.
+    #[test]
+    fn downscale_for_preview_shrinks_an_oversized_image_to_the_pixel_cap() {
+        // 3000x2000 = 6,000,000 px, well past the ~2,000,000px cap.
+        let oversized = image::DynamicImage::new_rgb8(3000, 2000);
+
+        let result = downscale_for_preview(oversized);
+
+        let pixels = result.width() as u64 * result.height() as u64;
+        assert!(
+            pixels <= MAX_PREVIEW_PIXELS as u64,
+            "expected at most {MAX_PREVIEW_PIXELS} px, got {pixels} ({}x{})",
+            result.width(),
+            result.height()
+        );
+        // Aspect ratio (3:2) must survive the resize, not just the pixel count.
+        let original_ratio = 3000.0 / 2000.0;
+        let result_ratio = result.width() as f64 / result.height() as f64;
+        assert!(
+            (original_ratio - result_ratio).abs() < 0.01,
+            "aspect ratio should be preserved: expected {original_ratio}, got {result_ratio}"
+        );
+    }
+
+    /// An image already at or under the cap is returned unchanged — no
+    /// pointless resize (and no possibility of a rounding-driven upscale)
+    /// for images that were already a reasonable size.
+    #[test]
+    fn downscale_for_preview_leaves_a_small_image_untouched() {
+        let small = image::DynamicImage::new_rgb8(100, 80);
+
+        let result = downscale_for_preview(small);
+
+        assert_eq!(result.width(), 100);
+        assert_eq!(result.height(), 80);
     }
 }

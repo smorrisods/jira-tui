@@ -41,6 +41,35 @@ impl App {
         self.issues.get(self.selected)
     }
 
+    /// Whether any modal/overlay is currently capturing input — the single
+    /// source of truth for "a click must be swallowed rather than reaching
+    /// the screen underneath" (`keys::mouse::handle_mouse`'s own guard) and
+    /// for "an overlay-covered inline image needs a scoped repaint once
+    /// this closes" (`main`'s render loop, `images` feature only). Was
+    /// previously a hand-copied flag list at the one call site it had; two
+    /// real modals (`new_issue_type_picker_open`, `project_picker_open`)
+    /// had drifted out of sync with that list — both are genuine overlays
+    /// per `ui::mod`'s own draw dispatch, just missed when the list was
+    /// last extended. Consolidating here is exactly the fix a prior code
+    /// review applied to a different hand-copied-in-three-places bug this
+    /// session (see `App::refresh_detail_images`) — a second call site
+    /// needing the same list was the sign to stop copying it.
+    pub fn any_modal_open(&self) -> bool {
+        self.show_help
+            || self.nerd_info_open
+            || self.picker_open
+            || self.view_picker_open
+            || self.assignee_picker_open
+            || self.version_picker_open
+            || self.spell_suggest_open
+            || self.palette_open
+            || self.confirm_discard
+            || self.attachments_open
+            || self.attachment_upload.is_some()
+            || self.new_issue_type_picker_open
+            || self.project_picker_open
+    }
+
     /// `a` (or the command palette's "about"): open the About screen,
     /// remembering where it was opened from (issue #38) so backing out
     /// restores it — but only when not already in About, or a second call

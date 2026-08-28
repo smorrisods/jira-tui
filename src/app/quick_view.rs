@@ -24,11 +24,30 @@ impl App {
             return;
         };
         if self.detail_cache.contains_key(&key) {
+            // Already cached — still worth a cheap re-check for any inline
+            // image that never landed: `apply_inline_image_loaded` drops a
+            // response whose generation was bumped out from under it by an
+            // intervening Detail navigate, and a plain failed/undecodable
+            // fetch is never automatically retried otherwise, since this was
+            // the only site that ever dispatched one for this issue. This
+            // runs every frame while quick view is open (see this method's
+            // own doc comment), and `refresh_quick_view_inline_images` is a
+            // no-op for anything already resolved or still in flight, so
+            // re-checking here costs nothing beyond a cache/pending lookup.
+            #[cfg(feature = "images")]
+            self.refresh_quick_view_inline_images();
             return;
         }
         if !matches!(self.source, Source::Live { .. }) {
             let detail = self.load_detail(&key);
             self.detail_cache.insert(key, detail);
+            // A demo/cache session never actually dispatches an inline-image
+            // fetch (`attachments::images_eligible` gates on `Source::Live`),
+            // so this is a no-op there — but calling it unconditionally
+            // keeps this one call site the single "detail just landed for
+            // quick view" trigger, mirroring `open_by_key`'s non-live branch.
+            #[cfg(feature = "images")]
+            self.refresh_quick_view_inline_images();
             return;
         }
         self.dispatch_detail_fetch(key, false);

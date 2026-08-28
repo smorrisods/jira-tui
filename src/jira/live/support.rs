@@ -42,6 +42,87 @@ pub(super) fn get_bytes(cfg: &Config, url: &str) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
+/// Cap on how many bytes `get_bytes_public` will read from an externally
+/// hosted image before giving up. `get_bytes`/`get_bytes_public`'s Jira
+/// counterpart above has no such cap — it only ever talks to Jira's own
+/// trusted API/attachment endpoints — but a `get_bytes_public` request can
+/// land on any host an attacker chooses to put in a description's inline
+/// image URL, so an unbounded read is a real resource-exhaustion risk. 20MB
+/// is generous for what's meant to be a lightweight inline preview image,
+/// not a hard technical limit copied from elsewhere in this codebase (there
+/// is no existing convention for a byte cap to match).
+const MAX_PUBLIC_BYTES: u64 = 20 * 1024 * 1024;
+
+/// Like `get_bytes`, but for an externally hosted URL rather than one of
+/// Jira's own API/attachment endpoints (an ADF `media` node's `type:
+/// "external"` `url`, embedded in an issue description). Deliberately
+/// attaches no `Authorization` header at all — no `Config` is even taken as
+/// a parameter, since there's nothing to authenticate an arbitrary
+/// third-party host with, and reusing `get_bytes`' Basic-auth header the way
+/// the attachment-download path does would leak the user's Jira credential
+/// to that third party.
+///
+/// Restricted to `https://` — any other scheme (bare `http://` in
+/// particular) is rejected before a request is ever attempted, so a hostile
+/// inline-image URL embedded in a description can't make this app reach
+/// into an internal/local-network `http://` host (basic SSRF hardening, not
+/// just a style choice). Redirects are disabled outright
+/// (`AgentBuilder::redirects(0)`) rather than merely re-checked per hop:
+/// `ureq` gives no hook to inspect a redirect's target scheme before
+/// following it, so the only way to rule out an `https -> http` downgrade
+/// that would bypass this same scheme check is to never follow a redirect
+/// at all — any 3xx response is treated as a failure, same as any other
+/// non-2xx status.
+pub fn get_bytes_public(url: &str) -> Result<Vec<u8>> {
+    let scheme_is_https = url
+        .split_once("://")
+        .is_some_and(|(scheme, _)| scheme.eq_ignore_ascii_case("https"));
+    if !scheme_is_https {
+        return Err(anyhow!("refusing to fetch a non-https URL: {url}"));
+    }
+    fetch_public_bytes(url)
+}
+
+/// The redirect-disabled agent every `fetch_public_bytes` call reuses,
+/// built once rather than per call — an external description may embed
+/// several inline images (often on the same host/CDN), and a fresh
+/// `ureq::Agent` per fetch would pay a new connection-pool/TLS setup for
+/// each one instead of reusing keep-alive connections the way `get`/
+/// `get_bytes` already do via `ureq`'s own default agent.
+fn public_agent() -> &'static ureq::Agent {
+    static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+    AGENT.get_or_init(|| ureq::AgentBuilder::new().redirects(0).build())
+}
+
+/// The request/response half of `get_bytes_public`, split out so tests can
+/// exercise it directly against a plain-`http` `mockito` server without
+/// weakening `get_bytes_public`'s own `https://`-only gate to accommodate
+/// the test — `mockito` has no TLS support, so there is no way to drive a
+/// real request through that gate.
+fn fetch_public_bytes(url: &str) -> Result<Vec<u8>> {
+    let resp = public_agent()
+        .get(url)
+        .call()
+        .map_err(|e| anyhow!("public image fetch failed: {e}"))?;
+    if resp.status() >= 300 {
+        return Err(anyhow!(
+            "public image fetch was redirected (status {}); refusing to follow it",
+            resp.status()
+        ));
+    }
+    let mut buf = Vec::new();
+    resp.into_reader()
+        .take(MAX_PUBLIC_BYTES + 1)
+        .read_to_end(&mut buf)
+        .context("reading public image bytes")?;
+    if buf.len() as u64 > MAX_PUBLIC_BYTES {
+        return Err(anyhow!(
+            "public image exceeds the {MAX_PUBLIC_BYTES}-byte cap"
+        ));
+    }
+    Ok(buf)
+}
+
 pub(super) fn send(cfg: &Config, method: &str, path: &str, body: Value) -> Result<()> {
     post_or_put(cfg, method, path, body)?;
     Ok(())
@@ -337,6 +418,58 @@ mod tests {
         let a = multipart_boundary();
         let b = multipart_boundary();
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn fetch_public_bytes_sends_no_authorization_header() {
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("GET", "/image.png")
+            .match_header("authorization", mockito::Matcher::Missing)
+            .with_status(200)
+            .with_header("content-type", "image/png")
+            .with_body(b"public-image-bytes".as_slice())
+            .create();
+
+        let url = format!("{}/image.png", server.url());
+        let bytes = fetch_public_bytes(&url).unwrap();
+
+        mock.assert();
+        assert_eq!(bytes, b"public-image-bytes");
+    }
+
+    #[test]
+    fn get_bytes_public_rejects_a_non_https_url_without_attempting_a_request() {
+        let mut server = mockito::Server::new();
+        let mock = server.mock("GET", "/image.png").expect(0).create();
+
+        // `server.url()` is a plain `http://` URL, which is exactly the
+        // scheme this must reject before ever reaching the network.
+        let url = format!("{}/image.png", server.url());
+        assert!(get_bytes_public(&url).is_err());
+
+        mock.assert();
+    }
+
+    #[test]
+    fn fetch_public_bytes_refuses_to_follow_a_redirect() {
+        // Regression guard for an `https -> http` scheme-downgrade bypass:
+        // even a same-scheme redirect must never be followed, since `ureq`
+        // gives this code no way to re-check a redirect's target scheme
+        // before following it.
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("GET", "/redirect.png")
+            .with_status(302)
+            .with_header("location", "/final.png")
+            .create();
+        let final_mock = server.mock("GET", "/final.png").expect(0).create();
+
+        let url = format!("{}/redirect.png", server.url());
+        assert!(fetch_public_bytes(&url).is_err());
+
+        mock.assert();
+        final_mock.assert();
     }
 
     #[test]

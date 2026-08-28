@@ -35,17 +35,126 @@ const TABLE_MAX_COL_WIDTH: usize = 28;
 /// avoids that.
 const TABLE_MIN_COL_WIDTH: usize = 6;
 
+/// Tells `render_with_media` whether a `media` node's image is already
+/// decoded and ready to have terminal rows reserved for it, or whether it
+/// should keep emitting today's `[image: alt]`/`[embedded media]`
+/// placeholder text.
+///
+/// `Disabled` is today's behaviour and this phase's only production
+/// caller — `description_lines`'s four call sites (`wide_detail`,
+/// `narrow_detail`, `quick_view_wide`, `quick_view_narrow`) all pass it,
+/// since nothing yet computes real readiness: that requires knowing which
+/// images are actually decoded, which lives on `App::inline_images` (an
+/// `App`-specific, `image`-crate-typed cache) — wiring a real `Ready`
+/// context through from there is a later phase's job, not this one's.
+///
+/// A borrowed callback rather than an owned `HashMap<InlineMediaRef, (u16,
+/// u16)>`: `render_block` recurses through arbitrarily nested containers
+/// (lists, blockquotes, `mediaGroup`) via `&mut RenderCtx`, so a borrowed
+/// `sizing` threads through that recursion exactly the way `width` already
+/// does, with nothing to clone at each call — and it leaves a future
+/// caller free to back the callback with a `HashMap` lookup, an `App`
+/// method call, or anything else, without this module caring which.
+pub enum MediaSizing<'a> {
+    Disabled,
+    /// `Some((rows, cols))` if this media node's image is decoded and
+    /// ready to reserve space for; `None` to keep the placeholder (e.g.
+    /// still fetching, failed to decode, or past the eager-fetch cap).
+    Ready(&'a dyn Fn(&InlineMediaRef) -> Option<(u16, u16)>),
+}
+
+/// Identifies one `media` node for `MediaSizing::Ready`'s callback, and for
+/// the `ImagePlacement` recorded when it reports readiness — carrying
+/// enough for a caller to look the node back up in whatever readiness
+/// source it built, without `adf` needing to re-parse the node itself.
+///
+/// Deliberately narrower than `app::inline_images::InlineImageKey` (which
+/// is keyed by a resolved attachment id or an external URL): this module has
+/// no `IssueDetail`/attachment list to resolve against, only the ADF node in
+/// front of it, so it's keyed the same way `resolve_inline_images` itself
+/// matches a media node in the first place — an attachment-backed node's
+/// (non-empty) `alt` text, or an external node's `url` (issue #130 phase 4).
+/// `url` is `None` for an attachment-backed node and `Some` for an external
+/// one; the two never collide because `render_block`'s `"media"` arm only
+/// ever sets one or the other, never both — see the callers below.
+///
+/// `id` is the node's own `attrs.id` Media Services uuid (issue #130's
+/// DS-1880 follow-up) — always `None` for an external node (nothing to
+/// probe there), and `Some` whenever a `type: "file"` node carries one,
+/// independent of whether `alt` also matched. Jira doesn't always stamp a
+/// node's `alt` to the original filename (confirmed live), so the
+/// readiness lookup this feeds (`App::inline_image_key_for`) tries `alt`
+/// first and falls back to `id` — carrying both lets a node with no (or a
+/// mismatched) `alt` still resolve.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct InlineMediaRef {
+    pub alt: String,
+    pub url: Option<String>,
+    pub id: Option<String>,
+}
+
+/// One media node's reserved space, recorded by `render_with_media`
+/// whenever `MediaSizing::Ready` reports a node decoded and ready — in
+/// place of its usual placeholder line, `rows` blank `Line`s are emitted
+/// instead (so wrapped-text-based scroll math still counts them as real
+/// lines) and this records where. `line_start` is an index into the
+/// `Vec<Line>` returned alongside it from the *same* `render_with_media`
+/// call — a caller that concatenates multiple line-producing sections
+/// (e.g. `description_lines` composing with activity/comments) must rebase
+/// it, the same way `comment_starts`/`comments_header` already get rebased
+/// by their own callers.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImagePlacement {
+    pub media: InlineMediaRef,
+    pub line_start: usize,
+    pub rows: u16,
+    pub cols: u16,
+}
+
+/// The width/sizing-context/placement-accumulator threaded through
+/// `render_block`'s recursion, bundled into one struct rather than three
+/// separate parameters growing every call site. `depth` stays its own
+/// parameter (it varies per call, e.g. `depth + 1` for a nested list);
+/// everything in here is constant for a whole `render_with_media` call
+/// except `placements`, which only ever grows.
+struct RenderCtx<'a, 'b> {
+    width: usize,
+    sizing: &'a MediaSizing<'b>,
+    placements: Vec<ImagePlacement>,
+}
+
 /// Render an ADF document into styled lines. `width` is the column width
 /// the caller is about to hand these lines to a `Paragraph::wrap(Wrap {
 /// trim: false })` at — needed so blockquote/code-block content can be
 /// pre-wrapped ourselves (see `crate::render::wrap_with_bar`) rather than
 /// left to ratatui's own wrap, which has no way to repeat a left-margin bar
 /// span on a line's wrapped continuation rows.
+///
+/// Exactly `render_with_media(doc, width, &MediaSizing::Disabled).0` —
+/// the two share every bit of block-walking logic; `Disabled` guarantees
+/// this keeps producing byte-identical output to before `render_with_media`
+/// existed (see the `media_sizing_disabled_matches_render` test).
 pub fn render(doc: &Value, width: usize) -> Text<'static> {
+    Text::from(render_with_media(doc, width, &MediaSizing::Disabled).0)
+}
+
+/// As `render`, but reserves blank rows for any `media` node `sizing`
+/// reports ready instead of emitting its usual `[image: alt]` placeholder,
+/// and returns where each reservation landed alongside the lines.
+pub fn render_with_media(
+    doc: &Value,
+    width: usize,
+    sizing: &MediaSizing<'_>,
+) -> (Vec<Line<'static>>, Vec<ImagePlacement>) {
     let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut ctx = RenderCtx {
+        width,
+        sizing,
+        placements: Vec::new(),
+    };
     if let Some(content) = doc.get("content").and_then(|c| c.as_array()) {
         for (i, node) in content.iter().enumerate() {
-            render_block(node, &mut lines, 0, width);
+            render_block(node, &mut lines, 0, &mut ctx);
             // breathing room between top-level blocks
             if i + 1 < content.len() {
                 lines.push(Line::from(""));
@@ -58,14 +167,14 @@ pub fn render(doc: &Value, width: usize) -> Text<'static> {
             Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
         )));
     }
-    Text::from(lines)
+    (lines, ctx.placements)
 }
 
 fn indent(depth: usize) -> String {
     "  ".repeat(depth)
 }
 
-fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize, width: usize) {
+fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize, ctx: &mut RenderCtx) {
     let ty = node.get("type").and_then(|t| t.as_str()).unwrap_or("");
     match ty {
         "heading" => {
@@ -99,7 +208,7 @@ fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize, width:
                     } else {
                         "• ".to_string()
                     };
-                    render_list_item(item, out, depth, &marker, width);
+                    render_list_item(item, out, depth, &marker, ctx);
                 }
             }
         }
@@ -146,7 +255,7 @@ fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize, width:
             let text = collect_text(node.get("content"));
             for raw in text.split('\n') {
                 let line = Line::from(Span::styled(raw.to_string(), Style::default().fg(CODE_FG)));
-                out.extend(crate::render::wrap_with_bar(&line, width, "│ ", MUTED));
+                out.extend(crate::render::wrap_with_bar(&line, ctx.width, "│ ", MUTED));
             }
             out.push(Line::from(Span::styled("```", Style::default().fg(MUTED))));
         }
@@ -158,20 +267,44 @@ fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize, width:
         }
         "blockquote" => {
             let mut inner: Vec<Line<'static>> = Vec::new();
+            let placements_before = ctx.placements.len();
             if let Some(content) = node.get("content").and_then(|c| c.as_array()) {
                 for child in content {
-                    render_block(child, &mut inner, depth, width);
+                    render_block(child, &mut inner, depth, ctx);
                 }
             }
-            for line in inner {
-                out.extend(crate::render::wrap_with_bar(&line, width, "┃ ", MUTED));
+            // Any `ImagePlacement` recorded while rendering into `inner`
+            // above has a `line_start` indexed into that private buffer,
+            // not `out` — and bar-wrapping below can turn one `inner` line
+            // into several wrapped rows, so a placement can't simply be
+            // shifted by `out.len()` either. Build a per-line cumulative
+            // wrapped-row-count table so each placement's `line_start`
+            // rebases onto the row it actually lands on in `out`, the same
+            // way `comment_starts`/`comments_header` get rebased by their
+            // own callers (see this struct's own doc comment).
+            let base = out.len();
+            let mut cumulative_rows = Vec::with_capacity(inner.len() + 1);
+            cumulative_rows.push(0usize);
+            let mut wrapped: Vec<Line<'static>> = Vec::new();
+            for line in &inner {
+                let rows = crate::render::wrap_with_bar(line, ctx.width, "┃ ", MUTED);
+                cumulative_rows.push(cumulative_rows.last().copied().unwrap_or(0) + rows.len());
+                wrapped.extend(rows);
             }
+            for placement in &mut ctx.placements[placements_before..] {
+                let offset = cumulative_rows
+                    .get(placement.line_start)
+                    .copied()
+                    .unwrap_or(0);
+                placement.line_start = base + offset;
+            }
+            out.extend(wrapped);
         }
-        "table" => render_table(node, out, width),
+        "table" => render_table(node, out, ctx.width),
         "mediaSingle" | "mediaGroup" => {
             if let Some(content) = node.get("content").and_then(|c| c.as_array()) {
                 for child in content {
-                    render_block(child, out, depth, width);
+                    render_block(child, out, depth, ctx);
                 }
             }
         }
@@ -184,6 +317,50 @@ fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize, width:
             let external_url =
                 attrs.and_then(|a| a.get("type")).and_then(|t| t.as_str()) == Some("external");
             let url = attrs.and_then(|a| a.get("url")).and_then(|u| u.as_str());
+            let id = attrs.and_then(|a| a.get("id")).and_then(|i| i.as_str());
+
+            // An attachment-backed node is identified by its (non-empty)
+            // `alt` text where possible, matching `resolve_inline_images`'s
+            // own matching, falling back to its own Media Services uuid
+            // (`id`) when there's no `alt` to go on at all — see
+            // `InlineMediaRef::id`'s own doc comment. An external node is
+            // identified by its `url` instead — its `alt` may be empty or
+            // absent, but the `url` *is* the fetch target, so it alone is
+            // enough to ask for readiness.
+            let media_ref = if external_url {
+                url.map(|url| InlineMediaRef {
+                    alt: alt.unwrap_or_default().to_string(),
+                    url: Some(url.to_string()),
+                    id: None,
+                })
+            } else if alt.is_some() || id.is_some() {
+                Some(InlineMediaRef {
+                    alt: alt.unwrap_or_default().to_string(),
+                    url: None,
+                    id: id.map(str::to_string),
+                })
+            } else {
+                None
+            };
+
+            if let Some(media_ref) = media_ref {
+                if let MediaSizing::Ready(ready) = ctx.sizing {
+                    if let Some((rows, cols)) = ready(&media_ref) {
+                        let line_start = out.len();
+                        for _ in 0..rows {
+                            out.push(Line::default());
+                        }
+                        ctx.placements.push(ImagePlacement {
+                            media: media_ref,
+                            line_start,
+                            rows,
+                            cols,
+                        });
+                        return;
+                    }
+                }
+            }
+
             let text = if let Some(alt) = alt {
                 format!("[image: {alt}]")
             } else if external_url {
@@ -208,7 +385,7 @@ fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize, width:
             // generic container: descend if possible
             if let Some(content) = node.get("content").and_then(|c| c.as_array()) {
                 for child in content {
-                    render_block(child, out, depth, width);
+                    render_block(child, out, depth, ctx);
                 }
             }
         }
@@ -220,7 +397,7 @@ fn render_list_item(
     out: &mut Vec<Line<'static>>,
     depth: usize,
     marker: &str,
-    width: usize,
+    ctx: &mut RenderCtx,
 ) {
     let content = match item.get("content").and_then(|c| c.as_array()) {
         Some(c) => c,
@@ -230,7 +407,7 @@ fn render_list_item(
     for child in content {
         let ty = child.get("type").and_then(|t| t.as_str()).unwrap_or("");
         if ty == "bulletList" || ty == "orderedList" || ty == "taskList" {
-            render_block(child, out, depth + 1, width);
+            render_block(child, out, depth + 1, ctx);
             continue;
         }
         let mut spans = vec![
@@ -592,6 +769,255 @@ mod tests {
         let s = flat(&doc);
         assert!(s.contains("[image: first]"));
         assert!(s.contains("[image: second]"));
+    }
+
+    fn single_media_doc(alt: &str) -> serde_json::Value {
+        json!({
+            "type": "doc",
+            "content": [
+                { "type": "mediaSingle", "content": [
+                    { "type": "media", "attrs": { "id": "abc-123", "type": "file", "alt": alt } }
+                ] }
+            ]
+        })
+    }
+
+    /// Locks in this phase's success criterion: `Disabled` must produce
+    /// output byte-identical to plain `render`, for a doc containing a
+    /// media node — the only sizing mode any production call site actually
+    /// uses this phase.
+    #[test]
+    fn media_sizing_disabled_matches_render() {
+        let doc = single_media_doc("a screenshot");
+        let plain = render(&doc, 120);
+        let (with_media_lines, placements) = render_with_media(&doc, 120, &MediaSizing::Disabled);
+        assert_eq!(plain.lines, with_media_lines);
+        assert!(placements.is_empty());
+    }
+
+    /// A `Ready` context reporting readiness for the doc's one media node:
+    /// the placeholder line is replaced by the reported number of blank
+    /// lines, and the returned placement correctly identifies the node and
+    /// its line range.
+    #[test]
+    fn media_sizing_ready_reserves_blank_lines_and_records_a_placement() {
+        let doc = single_media_doc("a screenshot");
+        let ready = |media: &InlineMediaRef| -> Option<(u16, u16)> {
+            (media.alt == "a screenshot").then_some((3, 40))
+        };
+        let sizing = MediaSizing::Ready(&ready);
+        let (lines, placements) = render_with_media(&doc, 120, &sizing);
+
+        assert_eq!(placements.len(), 1);
+        let placement = &placements[0];
+        assert_eq!(
+            placement.media,
+            InlineMediaRef {
+                alt: "a screenshot".into(),
+                url: None,
+                id: Some("abc-123".into()),
+            }
+        );
+        assert_eq!(placement.rows, 3);
+        assert_eq!(placement.cols, 40);
+        assert_eq!(placement.line_start, 0);
+
+        assert_eq!(lines.len(), 3, "exactly the reserved rows, nothing else");
+        for line in &lines {
+            assert!(
+                line.spans.is_empty() || line.spans.iter().all(|s| s.content.is_empty()),
+                "a reserved row should be blank, got {line:?}"
+            );
+        }
+        let s: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(!s.contains("[image:"), "placeholder must not appear");
+    }
+
+    /// DS-1880 follow-up: a `type: "file"` node with no `alt` at all (Jira
+    /// doesn't always stamp one, confirmed live) must still get an
+    /// `InlineMediaRef` built — carrying its `id` — so a `Ready` context
+    /// keyed off the node's own uuid (rather than its now-missing `alt`)
+    /// can still report it ready. Before this, a `None` `alt` short-circuited
+    /// `render_block`'s `"media"` arm straight to `[embedded media]` with no
+    /// `InlineMediaRef` ever built, so no readiness lookup was even
+    /// possible.
+    #[test]
+    fn a_media_node_with_no_alt_still_builds_a_ref_keyed_by_its_id() {
+        let doc = json!({
+            "type": "doc",
+            "content": [
+                { "type": "mediaSingle", "content": [
+                    { "type": "media", "attrs": { "id": "be2818ad-2e36-4d40-94f1-c6826e1def49", "type": "file" } }
+                ] }
+            ]
+        });
+        let ready = |media: &InlineMediaRef| -> Option<(u16, u16)> {
+            (media.id.as_deref() == Some("be2818ad-2e36-4d40-94f1-c6826e1def49")).then_some((3, 40))
+        };
+        let sizing = MediaSizing::Ready(&ready);
+        let (lines, placements) = render_with_media(&doc, 120, &sizing);
+
+        assert_eq!(placements.len(), 1);
+        assert_eq!(
+            placements[0].media,
+            InlineMediaRef {
+                alt: String::new(),
+                url: None,
+                id: Some("be2818ad-2e36-4d40-94f1-c6826e1def49".into()),
+            }
+        );
+        let s: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(
+            !s.contains("[embedded media]"),
+            "placeholder must not appear"
+        );
+    }
+
+    /// A `mediaGroup` with two children, only one reported ready: the ready
+    /// one gets blank rows + a placement, the other still shows its
+    /// placeholder text, and line-index bookkeeping stays correct for both
+    /// (the placement's `line_start` must land on the reserved rows, not
+    /// wherever the still-placeholder sibling ended up).
+    #[test]
+    fn media_group_mixed_readiness_only_reserves_the_ready_child() {
+        let doc = json!({
+            "type": "doc",
+            "content": [
+                { "type": "mediaGroup", "content": [
+                    { "type": "media", "attrs": { "id": "one", "type": "file", "alt": "ready one" } },
+                    { "type": "media", "attrs": { "id": "two", "type": "file", "alt": "not ready" } }
+                ] }
+            ]
+        });
+        let ready = |media: &InlineMediaRef| -> Option<(u16, u16)> {
+            (media.alt == "ready one").then_some((2, 30))
+        };
+        let sizing = MediaSizing::Ready(&ready);
+        let (lines, placements) = render_with_media(&doc, 120, &sizing);
+
+        assert_eq!(placements.len(), 1, "only the ready child gets a placement");
+        let placement = &placements[0];
+        assert_eq!(
+            placement.media,
+            InlineMediaRef {
+                alt: "ready one".into(),
+                url: None,
+                id: Some("one".into()),
+            }
+        );
+        assert_eq!(placement.line_start, 0);
+        assert_eq!(placement.rows, 2);
+        assert_eq!(placement.cols, 30);
+
+        // Lines 0..2 are the reserved blank rows for "ready one"; line 2 is
+        // "not ready"'s placeholder, still showing its alt text.
+        assert_eq!(lines.len(), 3);
+        for line in &lines[0..2] {
+            assert!(line.spans.iter().all(|s| s.content.is_empty()));
+        }
+        let placeholder_text: String = lines[2].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(placeholder_text, "[image: not ready]");
+    }
+
+    /// Code-review regression test: a media node nested inside a
+    /// blockquote used to record a `line_start` indexed into the
+    /// blockquote's own private line buffer (see the `"blockquote"` arm's
+    /// `inner`) rather than the final `out` the caller actually receives —
+    /// so a placement for an image inside (or after enough of) a blockquote
+    /// landed at the wrong row, or a row that didn't even exist yet, once
+    /// bar-wrapping and preceding content were accounted for. Here the
+    /// blockquote holds two paragraphs before the image, so a correct
+    /// `line_start` must land on the third bar-wrapped row (index 2), not 0.
+    #[test]
+    fn media_inside_a_blockquote_rebases_its_line_start_past_preceding_content() {
+        // A top-level paragraph (plus the breathing-room blank line between
+        // top-level blocks) precedes the blockquote, so a correct
+        // `line_start` must account for both `out.len()` *before* the
+        // blockquote started (2) and the one quoted paragraph line ahead of
+        // the image *inside* the blockquote (1) — landing on row 3. Before
+        // this was fixed, `line_start` was computed against the blockquote's
+        // own private `inner` buffer and never rebased at all, so it would
+        // have come out as 1 (the media node's position within `inner`
+        // alone), pointing at the quoted paragraph's own bar-wrapped row
+        // instead of the image's reserved space.
+        let doc = json!({
+            "type": "doc",
+            "content": [
+                { "type": "paragraph", "content": [{ "type": "text", "text": "intro" }] },
+                { "type": "blockquote", "content": [
+                    { "type": "paragraph", "content": [{ "type": "text", "text": "quoted line" }] },
+                    { "type": "mediaSingle", "content": [
+                        { "type": "media", "attrs": { "id": "x", "type": "file", "alt": "quoted shot" } }
+                    ] }
+                ] }
+            ]
+        });
+        let ready = |media: &InlineMediaRef| -> Option<(u16, u16)> {
+            (media.alt == "quoted shot").then_some((2, 30))
+        };
+        let sizing = MediaSizing::Ready(&ready);
+        let (lines, placements) = render_with_media(&doc, 120, &sizing);
+
+        assert_eq!(placements.len(), 1);
+        let placement = &placements[0];
+        assert_eq!(
+            placement.line_start, 3,
+            "line_start must be rebased past the intro paragraph, the breathing-room blank \
+             line, and the one quoted paragraph line ahead of the image, got lines: {lines:?}"
+        );
+        let reserved_row_text: String = lines[placement.line_start]
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(
+            reserved_row_text, "┃ ",
+            "line_start must point at a reserved (blank, bar-prefixed) row, not quoted text or \
+             the wrong row entirely, got: {:?}",
+            lines[placement.line_start]
+        );
+    }
+
+    /// Issue #130 phase 4: an external (`type: "external"`) media node with
+    /// no `alt` at all is still offered readiness, keyed by its `url` —
+    /// unlike an attachment-backed node (gated on a non-empty `alt`), the
+    /// URL alone is enough identity to reserve space for it.
+    #[test]
+    fn media_sizing_ready_reserves_space_for_an_external_node_by_url() {
+        let doc = json!({
+            "type": "doc",
+            "content": [
+                { "type": "media", "attrs": {
+                    "id": "x", "type": "external",
+                    "url": "https://third-party.example.com/pic.png"
+                } }
+            ]
+        });
+        let ready = |media: &InlineMediaRef| -> Option<(u16, u16)> {
+            (media.url.as_deref() == Some("https://third-party.example.com/pic.png"))
+                .then_some((4, 20))
+        };
+        let sizing = MediaSizing::Ready(&ready);
+        let (lines, placements) = render_with_media(&doc, 120, &sizing);
+
+        assert_eq!(placements.len(), 1);
+        assert_eq!(
+            placements[0].media,
+            InlineMediaRef {
+                alt: String::new(),
+                url: Some("https://third-party.example.com/pic.png".into()),
+                id: None,
+            }
+        );
+        assert_eq!(placements[0].rows, 4);
+        assert_eq!(placements[0].cols, 20);
+        assert_eq!(lines.len(), 4, "exactly the reserved rows, nothing else");
     }
 
     #[test]
