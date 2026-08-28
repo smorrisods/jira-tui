@@ -1173,40 +1173,69 @@ impl App {
                 return;
             }
         };
+        // Captured before the merge below — the id itself never changes,
+        // but reading "what's highlighted" is clearer done once, up front,
+        // than re-deriving it after `d.attachments` has already been
+        // mutated in place.
         #[cfg(feature = "images")]
-        let mut touched_current = false;
+        let highlighted_id = self
+            .detail
+            .as_ref()
+            .filter(|d| d.key == key)
+            .and_then(|d| d.attachments.get(self.attachment_index))
+            .map(|a| a.id.clone());
+
         if let Some(d) = self.detail.as_mut() {
             if d.key == key {
                 merge_attachments(&mut d.attachments, &uploaded);
-                #[cfg(feature = "images")]
-                {
-                    touched_current = true;
-                }
             }
         }
         if let Some(cached) = self.detail_cache.get_mut(&key) {
             merge_attachments(&mut cached.attachments, &uploaded);
         }
-        // A code-review finding: re-uploading a new version to an existing
-        // attachment id updates `self.detail.attachments` in place without
-        // invalidating a cached preview for that id, unlike every other
-        // `self.detail` mutation in this file. Genuinely reachable, despite
-        // `attachments_open` swallowing the `u` keybinding while the picker
-        // is open (an earlier version of this comment claimed otherwise):
-        // that only blocks *starting* a new upload while the picker is
-        // open, not opening the picker while a previously-started upload —
-        // dispatched with the picker closed — is still resolving. `u`
-        // itself has no `self.loading`/upload-in-flight guard, so `a` right
-        // after confirming an upload is a real, reachable sequence. Pairs
-        // with an `attachments_open`-guarded refresh, the same shape
-        // `refresh_detail_images` already uses, so a response landing
-        // while the picker is now open re-dispatches instead of leaving it
-        // blank.
+        // Two code-review findings, both about a re-upload's image-cache
+        // invalidation being scoped wrong in opposite directions:
+        //
+        // 1. Under-invalidation: this used to only touch the attachment
+        //    picker's own preview, not `App::inline_images`/
+        //    `inline_image_protocols` — even though a re-uploaded
+        //    attachment's id can also be cached there (a media node whose
+        //    `alt` matches its filename, or a redirect-probe uuid match —
+        //    see `app::inline_images`). Left unfixed, the issue
+        //    description's own inline-rendered copy would keep showing
+        //    the pre-upload bytes indefinitely, the exact "same-id
+        //    attachment surviving a refresh with genuinely different
+        //    bytes" scenario `invalidate_inline_images`'s own doc comment
+        //    already names as what it exists to prevent — just never
+        //    called from here.
+        // 2. Over-invalidation: this used to invalidate the picker
+        //    preview for *any* upload to the current issue, even a brand
+        //    new, unrelated attachment — tearing down and re-fetching an
+        //    already-correct cached preview over the network for no
+        //    reason, a visible flicker on every upload regardless of
+        //    what it actually touched.
+        //
+        // Both are now scoped to "did this upload actually touch an id
+        // something has cached", not "did an upload happen to this issue
+        // at all".
         #[cfg(feature = "images")]
-        if touched_current {
-            self.invalidate_attachment_preview();
-            if self.attachments_open {
-                self.refresh_attachment_preview();
+        {
+            if let Some(highlighted_id) = &highlighted_id {
+                if uploaded.iter().any(|a| &a.id == highlighted_id) {
+                    self.invalidate_attachment_preview();
+                    if self.attachments_open {
+                        self.refresh_attachment_preview();
+                    }
+                }
+            }
+            let touches_a_cached_inline_image = uploaded.iter().any(|a| {
+                self.inline_images
+                    .borrow()
+                    .contains_key(&super::super::InlineImageKey::Attachment(a.id.clone()))
+            });
+            if touches_a_cached_inline_image {
+                self.invalidate_inline_images();
+                self.refresh_inline_images();
             }
         }
         self.status = format!("{key}: uploaded {filename}");
