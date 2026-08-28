@@ -2,7 +2,7 @@
 //! highlighted one in the browser or download it to disk. Modelled closely
 //! on `transition_picker`.
 
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
@@ -56,11 +56,11 @@ pub(crate) fn draw_attachment_picker(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(block, popup);
 
     let (list_area, preview_area) = if preview_rows > 0 {
-        let chunks = ratatui::layout::Layout::default()
-            .direction(ratatui::layout::Direction::Vertical)
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
             .constraints([
-                ratatui::layout::Constraint::Length(list_rows.min(inner.height)),
-                ratatui::layout::Constraint::Min(0),
+                Constraint::Length(list_rows.min(inner.height)),
+                Constraint::Min(0),
             ])
             .split(inner);
         (chunks[0], Some(chunks[1]))
