@@ -1490,6 +1490,42 @@ fn in_tui_editor_renders_buffer() {
     );
 }
 
+/// Regression test: the editor's title bar used to read `app.detail`
+/// (whatever the Detail screen last showed) rather than `App::edit_key`
+/// (the issue the compose session actually targets), so composing a
+/// comment from the quick-view panel after previously visiting a
+/// *different* issue's Detail screen mislabelled the editor with that
+/// stale issue instead of the one quick view — and the actual post — was
+/// really about.
+#[test]
+fn composing_a_comment_from_quick_view_titles_the_editor_with_the_quick_viewed_issue() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    // Visit a different issue's Detail screen first, so `app.detail` holds
+    // a stale key by the time we go back and comment from quick view.
+    let stale_key = app.issues[1].key.clone();
+    app.open_by_key(&stale_key);
+    app.screen = Screen::Home;
+
+    app.quick_view = true;
+    app.selected = 0;
+    let target_key = app.issues[0].key.clone();
+    assert_ne!(target_key, stale_key, "sanity: the two issues must differ");
+    app.ensure_quick_view_loaded();
+
+    app.begin_comment();
+    assert_eq!(app.screen, Screen::Edit);
+    let text = render(&app);
+    assert!(
+        text.contains(&format!("editing {target_key}")),
+        "the editor should be titled with the quick-viewed issue"
+    );
+    assert!(
+        !text.contains(&format!("editing {stale_key}")),
+        "must not show the previously-viewed Detail issue's key instead"
+    );
+}
+
 #[test]
 fn preview_screen_wording_matches_the_edit_target() {
     // Regression test: the preview's explanatory line used to hard-code

@@ -16,7 +16,13 @@ pub(crate) fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
     let title = if app.edit_target == crate::app::EditTarget::NewIssue {
         format!("  new issue in {} · Markdown  ", app.new_issue.project)
     } else {
-        let key = app.detail.as_ref().map(|d| d.key.as_str()).unwrap_or("");
+        // `edit_key`, not `app.detail` — a comment composed from the
+        // quick-view panel (Home/List) targets the quick-viewed issue, which
+        // can differ from whatever `app.detail` last held from a previous
+        // Detail-screen visit. `edit_key` is what `apply_comment`/
+        // `apply_description_edit` actually post to, so the title must
+        // agree with it or the label lies about which issue is being edited.
+        let key = app.edit_key.as_deref().unwrap_or("");
         format!("  editing {key} · Markdown  ")
     };
     let border_colour = if app.confirm_discard {
