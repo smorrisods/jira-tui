@@ -7,7 +7,7 @@
 use serde_json::Value;
 
 use super::super::config::Config;
-use super::support::{get, get_bytes, post_multipart, str_field};
+use super::support::{get, get_bytes, is_same_origin, post_multipart, str_field};
 use crate::domain::Attachment;
 
 /// Parse a `fields.attachment` JSON array (Jira's shape:
@@ -80,7 +80,22 @@ pub fn download_attachment(cfg: &Config, content_url: &str) -> anyhow::Result<Ve
 /// that doesn't redirect this way just can't be matched by uuid, same as
 /// one that was never fetched at all; the caller falls back to leaving the
 /// media node as a placeholder, never treats this as fatal.
+///
+/// Refuses to attach the Basic-auth `Authorization` header unless
+/// `content_url` is on the configured Jira instance, same guard
+/// `get_bytes` applies — a code-review finding: this sends its own request
+/// with the same credential, so it had the exact
+/// send-credentials-to-an-attacker-controlled-host gap `get_bytes` was
+/// separately patched for, and it's reached automatically (via
+/// `app::inline_images`' redirect-probe fallback) whenever an issue has an
+/// unmatched inline image, not just from an explicit download action.
 pub fn media_uuid_for(cfg: &Config, content_url: &str) -> anyhow::Result<Option<String>> {
+    if !is_same_origin(content_url, &cfg.base_url) {
+        return Err(anyhow::anyhow!(
+            "refusing to send Jira credentials to {content_url}: it isn't the configured Jira instance ({})",
+            cfg.base_url
+        ));
+    }
     let resp = media_probe_agent()
         .get(content_url)
         .set("Authorization", &super::support::auth_header(cfg))
@@ -387,6 +402,21 @@ mod tests {
         let cfg = test_config(server.url());
         let url = format!("{}/rest/api/3/attachment/content/119842", server.url());
         assert_eq!(media_uuid_for(&cfg, &url).unwrap(), None);
+    }
+
+    #[test]
+    fn media_uuid_for_refuses_a_url_on_a_different_host_than_the_configured_jira_instance() {
+        // A code-review finding: this sends the same Basic-auth credential
+        // `get_bytes` does, via its own request, so it needs the same
+        // origin guard rather than relying on `get_bytes`'s to somehow
+        // also cover this separate code path.
+        let mut server = mockito::Server::new();
+        let mock = server.mock("GET", mockito::Matcher::Any).expect(0).create();
+        let cfg = test_config(server.url());
+
+        assert!(media_uuid_for(&cfg, "http://evil.example.com/secure/attachment/1").is_err());
+
+        mock.assert();
     }
 
     #[test]
