@@ -1228,10 +1228,20 @@ impl App {
                     }
                 }
             }
+            // Checks `inline_images_pending` as well as the decoded
+            // `inline_images` cache itself (a code-review finding): an
+            // inline fetch for this same attachment id can still be in
+            // flight, dispatched under the not-yet-invalidated generation,
+            // when the upload lands. Missing that case here meant the
+            // in-flight response would later land, pass
+            // `apply_inline_image_loaded`'s generation check (since nothing
+            // had bumped it), and cache the pre-upload bytes permanently —
+            // with no later invalidation ever triggered to catch it, unlike
+            // an already-decoded entry this same upload would have caught.
             let touches_a_cached_inline_image = uploaded.iter().any(|a| {
-                self.inline_images
-                    .borrow()
-                    .contains_key(&super::super::InlineImageKey::Attachment(a.id.clone()))
+                let key = super::super::InlineImageKey::Attachment(a.id.clone());
+                self.inline_images.borrow().contains_key(&key)
+                    || self.inline_images_pending.contains(&key)
             });
             if touches_a_cached_inline_image {
                 self.invalidate_inline_images();

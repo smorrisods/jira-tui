@@ -551,6 +551,50 @@ async fn re_uploading_an_attachment_cached_as_an_inline_image_invalidates_that_t
     );
 }
 
+/// Code-review regression test: an inline fetch still *in flight* (never
+/// landed, so not yet in `inline_images`) for the re-uploaded attachment
+/// id must also trigger invalidation — checking only the decoded cache
+/// missed this case entirely, letting the in-flight response later land
+/// under the un-bumped generation and permanently cache the pre-upload
+/// bytes with nothing left to ever invalidate it.
+#[cfg(feature = "images")]
+#[tokio::test]
+async fn re_uploading_an_attachment_with_an_in_flight_inline_fetch_invalidates_that_too() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+    let mut detail = crate::domain::demo_detail(&key);
+    detail.comments = vec![];
+    app.detail = Some(detail);
+    app.screen = Screen::Detail;
+    let reuploaded_id = app.detail.as_ref().unwrap().attachments[0].id.clone();
+
+    // Seeds the *pending* (in-flight, not yet decoded) tracker directly,
+    // rather than `inline_images` itself — the exact gap the review found.
+    app.inline_images_pending
+        .insert(InlineImageKey::Attachment(reuploaded_id.clone()));
+    let inline_generation_before = app.inline_image_generation;
+
+    let reuploaded = app.detail.as_ref().unwrap().attachments[0].clone();
+    app.apply_event(AppEvent::AttachmentUploaded {
+        key,
+        filename: reuploaded.filename.clone(),
+        result: Ok(vec![reuploaded]),
+    });
+
+    assert!(
+        !app.inline_images_pending
+            .contains(&InlineImageKey::Attachment(reuploaded_id)),
+        "the stale in-flight tracking for the re-uploaded id must be cleared"
+    );
+    assert_ne!(
+        app.inline_image_generation, inline_generation_before,
+        "an in-flight fetch for the re-uploaded id must also trigger invalidation"
+    );
+}
+
 /// A non-image attachment (the demo PDF) must never be handed off for
 /// decoding — `attachment_preview_url` (the pure eligibility gate) already
 /// has direct unit tests in `app::attachments`; this end-to-end version
