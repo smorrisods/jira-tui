@@ -157,12 +157,15 @@ impl App {
             return;
         }
         self.attachment_preview_pending = false;
-        // If the highlighted row's preview is already cached — e.g. the
-        // user moved away and back to the same row within the debounce
-        // window — there's nothing to fetch; refreshing anyway would just
-        // flicker the already-shown image and redispatch a redundant
-        // fetch/decode, the same waste the debounce itself exists to avoid.
-        let already_cached = self
+        // If the highlighted row's preview is already cached, *or* already
+        // in flight — e.g. the user moved away and back to the same row
+        // within the debounce window, before or after its first fetch
+        // landed — there's nothing new to fetch; refreshing anyway would
+        // just flicker the already-shown image (cached case) or dispatch a
+        // second, redundant concurrent fetch/decode for the exact same
+        // attachment (in-flight case, a code-review finding) — either way
+        // exactly the waste the debounce itself exists to avoid.
+        let already_handled = self
             .detail
             .as_ref()
             .and_then(|d| d.attachments.get(self.attachment_index))
@@ -171,8 +174,9 @@ impl App {
                     .borrow()
                     .as_ref()
                     .is_some_and(|p| p.attachment_id == a.id)
+                    || self.attachment_preview_inflight_id.as_deref() == Some(a.id.as_str())
             });
-        if already_cached {
+        if already_handled {
             return;
         }
         self.refresh_attachment_preview();
@@ -202,6 +206,7 @@ impl App {
     #[cfg(feature = "images")]
     pub(crate) fn refresh_attachment_preview(&mut self) {
         self.attachment_preview_pending = false;
+        self.attachment_preview_inflight_id = None;
         *self.attachment_preview.get_mut() = None;
         self.attachment_preview_generation += 1;
         let generation = self.attachment_preview_generation;
@@ -219,6 +224,7 @@ impl App {
             return;
         };
         let id = attachment.id.clone();
+        self.attachment_preview_inflight_id = Some(id.clone());
         let tx = self.events_tx.clone();
         async_ops::dispatch_attachment_preview(tx, generation, id, url);
     }

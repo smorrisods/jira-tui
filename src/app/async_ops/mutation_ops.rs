@@ -1209,6 +1209,10 @@ impl App {
         if generation != self.attachment_preview_generation {
             return;
         }
+        // The current generation's fetch just landed — nothing's in flight
+        // for it anymore, whether or not it actually decoded (see
+        // `attachment_preview_inflight_id`'s own doc comment).
+        self.attachment_preview_inflight_id = None;
         let Some(image) = image else {
             return;
         };

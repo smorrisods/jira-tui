@@ -351,6 +351,18 @@ pub struct App {
     /// at — mirrors `SearchState`'s own `dispatch_at_tick`.
     #[cfg(feature = "images")]
     pub(crate) attachment_preview_dispatch_at_tick: u64,
+    /// The attachment id `refresh_attachment_preview`'s current-generation
+    /// fetch is outstanding for, if any — a code-review finding on the
+    /// debounce itself: `attachment_preview_pending`'s own "already cached"
+    /// check only catches a *landed* result, not one still in flight, so
+    /// moving away and back to the same still-loading row within the
+    /// debounce window used to dispatch a second, redundant fetch for it.
+    /// Set right before the actual dispatch in `refresh_attachment_preview`,
+    /// cleared once that generation's response lands in
+    /// `apply_attachment_preview_loaded` (success or not — either way
+    /// nothing's in flight for it anymore).
+    #[cfg(feature = "images")]
+    pub(crate) attachment_preview_inflight_id: Option<String>,
     /// Fetched-and-decoded inline description images (`images` feature
     /// only), keyed by `InlineImageKey` rather than one single slot like
     /// `attachment_preview` — every media node the description/acceptance
@@ -687,6 +699,8 @@ impl App {
             attachment_preview_pending: false,
             #[cfg(feature = "images")]
             attachment_preview_dispatch_at_tick: 0,
+            #[cfg(feature = "images")]
+            attachment_preview_inflight_id: None,
             #[cfg(feature = "images")]
             inline_images: RefCell::new(BoundedCache::new(inline_images::INLINE_IMAGE_CACHE_CAP)),
             #[cfg(feature = "images")]
