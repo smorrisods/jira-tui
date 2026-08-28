@@ -18,6 +18,17 @@ use crate::infra;
 
 use super::{async_ops, App, Screen};
 
+/// How many run-loop iterations the attachment picker's highlighted row
+/// must sit unchanged before its preview is actually fetched (`images`
+/// feature only) — restarted on every move, so holding an arrow key
+/// through several image attachments only ever dispatches once, for
+/// whatever's highlighted when the user stops. Mirrors
+/// `search::SEARCH_DEBOUNCE_TICKS`'s own reasoning (an approximate
+/// ~360ms debounce, not a precise one, since `app.tick` advances on any
+/// run-loop iteration, not on a fixed clock).
+#[cfg(feature = "images")]
+const ATTACHMENT_PREVIEW_DEBOUNCE_TICKS: u64 = 4;
+
 /// The attachment picker's fetched-and-decoded image preview for the
 /// currently-highlighted attachment (`images` feature only) — see
 /// `App::refresh_attachment_preview`.
@@ -78,10 +89,15 @@ impl App {
         self.attachments_open = false;
         // Free the decoded image (if any) rather than leaving it around
         // until the picker next opens and `refresh_attachment_preview`
-        // clears it anyway — no functional difference, just tidier.
+        // clears it anyway — no functional difference, just tidier. Also
+        // cancels any still-debounced move (`ensure_attachment_preview_dispatched`
+        // is itself guarded on `attachments_open`, so this isn't
+        // load-bearing for correctness, just avoids a pointless dispatch
+        // for a picker that's no longer showing).
         #[cfg(feature = "images")]
         {
             *self.attachment_preview.get_mut() = None;
+            self.attachment_preview_pending = false;
         }
     }
 
@@ -113,8 +129,57 @@ impl App {
         self.attachment_index = idx;
         #[cfg(feature = "images")]
         if changed {
-            self.refresh_attachment_preview();
+            // Debounced, not immediate (a code-review finding) — holding an
+            // arrow key through several image attachments would otherwise
+            // fire one uncancelled network fetch + image decode per row.
+            // See `App::ensure_attachment_preview_dispatched`, which
+            // actually fires this once the highlighted row's sat still for
+            // `ATTACHMENT_PREVIEW_DEBOUNCE_TICKS`.
+            self.attachment_preview_pending = true;
+            self.attachment_preview_dispatch_at_tick =
+                self.tick + ATTACHMENT_PREVIEW_DEBOUNCE_TICKS;
         }
+    }
+
+    /// Called every run-loop iteration (mirrors `App::ensure_search_dispatched`):
+    /// if a debounced picker move is due, dispatch its preview fetch. A
+    /// no-op almost every tick — only fires once the highlighted row's sat
+    /// unchanged for `ATTACHMENT_PREVIEW_DEBOUNCE_TICKS`, and only while the
+    /// picker is still actually open (closing cancels the pending dispatch
+    /// outright, via `App::close_attachments`, rather than letting this
+    /// still fire a fetch for a picker no longer showing).
+    #[cfg(feature = "images")]
+    pub fn ensure_attachment_preview_dispatched(&mut self) {
+        if !self.attachment_preview_pending || !self.attachments_open {
+            return;
+        }
+        if self.tick < self.attachment_preview_dispatch_at_tick {
+            return;
+        }
+        self.attachment_preview_pending = false;
+        // If the highlighted row's preview is already cached, *or* already
+        // in flight — e.g. the user moved away and back to the same row
+        // within the debounce window, before or after its first fetch
+        // landed — there's nothing new to fetch; refreshing anyway would
+        // just flicker the already-shown image (cached case) or dispatch a
+        // second, redundant concurrent fetch/decode for the exact same
+        // attachment (in-flight case, a code-review finding) — either way
+        // exactly the waste the debounce itself exists to avoid.
+        let already_handled = self
+            .detail
+            .as_ref()
+            .and_then(|d| d.attachments.get(self.attachment_index))
+            .is_some_and(|a| {
+                self.attachment_preview
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|p| p.attachment_id == a.id)
+                    || self.attachment_preview_inflight_id.as_deref() == Some(a.id.as_str())
+            });
+        if already_handled {
+            return;
+        }
+        self.refresh_attachment_preview();
     }
 
     /// Recompute the attachment picker's image preview for whichever
@@ -130,8 +195,18 @@ impl App {
     /// without any special-casing at the call sites — `ui::attachment_picker`
     /// already renders its normal placeholder path whenever there's nothing
     /// here.
+    ///
+    /// Also clears `attachment_preview_pending` (a code-review finding): a
+    /// caller reaching this directly (`App::open_attachments`, or a manual
+    /// refresh via `refresh_detail_images`) fully supersedes whatever move
+    /// `App::attachments_move` may still have debounced — leaving the flag
+    /// set would let `App::ensure_attachment_preview_dispatched` fire a
+    /// second, redundant fetch once that debounce window elapses, exactly
+    /// the duplicate-dispatch waste the debounce itself exists to avoid.
     #[cfg(feature = "images")]
     pub(crate) fn refresh_attachment_preview(&mut self) {
+        self.attachment_preview_pending = false;
+        self.attachment_preview_inflight_id = None;
         *self.attachment_preview.get_mut() = None;
         self.attachment_preview_generation += 1;
         let generation = self.attachment_preview_generation;
@@ -149,6 +224,7 @@ impl App {
             return;
         };
         let id = attachment.id.clone();
+        self.attachment_preview_inflight_id = Some(id.clone());
         let tx = self.events_tx.clone();
         async_ops::dispatch_attachment_preview(tx, generation, id, url);
     }

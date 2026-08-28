@@ -201,6 +201,10 @@ async fn run(terminal: &mut Term, app: &mut App) -> Result<()> {
         // Fire the Search screen's debounced live text search, if one's due.
         app.ensure_search_dispatched();
 
+        // Fire the attachment picker's debounced preview fetch, if one's due.
+        #[cfg(feature = "images")]
+        app.ensure_attachment_preview_dispatched();
+
         app.tick = app.tick.wrapping_add(1);
 
         if app.should_quit {

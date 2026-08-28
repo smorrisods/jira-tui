@@ -262,7 +262,12 @@ async fn attachment_preview_drops_a_stale_response_after_moving_again() {
     let first_id = app.detail.as_ref().unwrap().attachments[0].id.clone();
     let stale_generation = app.attachment_preview_generation;
 
+    // Moving now only *schedules* a debounced fetch (see
+    // `App::ensure_attachment_preview_dispatched`) rather than dispatching
+    // immediately — settle it before asserting the generation moved on.
     app.attachments_move(1);
+    app.tick += 100;
+    app.ensure_attachment_preview_dispatched();
     assert_ne!(
         app.attachment_preview_generation, stale_generation,
         "moving the selection must bump the preview generation"
@@ -311,6 +316,152 @@ async fn attachment_preview_applies_a_current_response() {
         Some(p) => assert_eq!(p.attachment_id, current_id),
         None => panic!("a current, matching response should populate the preview"),
     }
+}
+
+/// Code-review regression test: holding an arrow key through several rows
+/// must not fire one uncancelled fetch per row — only a single dispatch,
+/// once the highlighted row's sat still for the debounce window, for
+/// whichever row that settles on.
+#[cfg(feature = "images")]
+#[tokio::test]
+async fn holding_through_several_moves_only_dispatches_once_after_the_debounce_settles() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+    app.detail = Some(crate::domain::demo_detail(&key));
+    app.screen = Screen::Detail;
+    app.open_attachments();
+    let after_open = app.attachment_preview_generation;
+
+    app.attachments_move(1);
+    app.attachments_move(-1);
+    app.attachments_move(1);
+    assert_eq!(
+        app.attachment_preview_generation, after_open,
+        "moving must not dispatch anything until the debounce window elapses"
+    );
+
+    app.tick += 100;
+    app.ensure_attachment_preview_dispatched();
+    assert_eq!(
+        app.attachment_preview_generation,
+        after_open + 1,
+        "settling should dispatch exactly once, not once per move"
+    );
+
+    // Already-cleared pending flag: a second call in the same tick must be
+    // a no-op, not a second dispatch.
+    app.ensure_attachment_preview_dispatched();
+    assert_eq!(app.attachment_preview_generation, after_open + 1);
+}
+
+/// Code-review regression test: the `already_cached` check only caught a
+/// *landed* result — moving away and back to a row whose first fetch is
+/// still in flight (never landed, so nothing's cached yet) used to
+/// dispatch a second, redundant concurrent fetch for the exact same
+/// attachment.
+#[cfg(feature = "images")]
+#[tokio::test]
+async fn revisiting_a_still_in_flight_row_does_not_dispatch_a_duplicate_fetch() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+    app.detail = Some(crate::domain::demo_detail(&key));
+    app.screen = Screen::Detail;
+    app.open_attachments();
+    // `open_attachments` dispatches an immediate fetch for row 0 — never
+    // awaited/polled here, so within this test it never actually lands.
+    let generation_after_open = app.attachment_preview_generation;
+    let row_zero_id = app.detail.as_ref().unwrap().attachments[0].id.clone();
+    assert_eq!(
+        app.attachment_preview_inflight_id.as_deref(),
+        Some(row_zero_id.as_str()),
+        "setup: opening must mark row 0's fetch as in flight"
+    );
+
+    // Move away and back to row 0 within the debounce window, before its
+    // still-in-flight fetch has landed.
+    app.attachments_move(1);
+    app.attachments_move(-1);
+
+    app.tick += 100;
+    app.ensure_attachment_preview_dispatched();
+
+    assert_eq!(
+        app.attachment_preview_generation, generation_after_open,
+        "a still-in-flight fetch for the same row must not be duplicated"
+    );
+}
+
+/// Closing the picker mid-debounce must cancel the pending move outright,
+/// not just rely on `ensure_attachment_preview_dispatched`'s own
+/// `attachments_open` guard to happen to also catch it.
+#[cfg(feature = "images")]
+#[tokio::test]
+async fn closing_the_picker_cancels_a_pending_debounced_move() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+    app.detail = Some(crate::domain::demo_detail(&key));
+    app.screen = Screen::Detail;
+    app.open_attachments();
+    app.attachments_move(1);
+    assert!(
+        app.attachment_preview_pending,
+        "setup: the move should have scheduled a debounced fetch"
+    );
+
+    app.close_attachments();
+    assert!(
+        !app.attachment_preview_pending,
+        "closing must cancel a still-pending debounced move"
+    );
+}
+
+/// Code-review regression test: a direct call to `refresh_attachment_preview`
+/// (e.g. a manual `r` detail refresh landing via `refresh_detail_images`
+/// while the picker happens to still be settling a debounced move) must
+/// supersede that pending debounce outright, not just fetch immediately
+/// and leave the flag set — otherwise the debounce still fires a second,
+/// redundant fetch once its window elapses.
+#[cfg(feature = "images")]
+#[tokio::test]
+async fn a_direct_refresh_clears_a_still_pending_debounced_move() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    app.selected = 0;
+    let key = app.issues[0].key.clone();
+    app.detail = Some(crate::domain::demo_detail(&key));
+    app.screen = Screen::Detail;
+    app.open_attachments();
+    app.attachments_move(1);
+    assert!(
+        app.attachment_preview_pending,
+        "setup: the move should have scheduled a debounced fetch"
+    );
+
+    // Simulates a manual refresh landing mid-debounce, the same direct
+    // call `refresh_detail_images` makes.
+    app.refresh_attachment_preview();
+    assert!(
+        !app.attachment_preview_pending,
+        "a direct refresh must clear the superseded debounce"
+    );
+    let generation_after_direct_refresh = app.attachment_preview_generation;
+
+    app.tick += 100;
+    app.ensure_attachment_preview_dispatched();
+    assert_eq!(
+        app.attachment_preview_generation, generation_after_direct_refresh,
+        "the stale debounce must not fire a second, redundant fetch"
+    );
 }
 
 /// A non-image attachment (the demo PDF) must never be handed off for
