@@ -5,6 +5,8 @@
 
 use serde_json::Value;
 
+use super::media;
+
 /// Serialise an ADF document to Markdown.
 pub fn to_markdown(doc: &Value) -> String {
     let mut blocks: Vec<String> = Vec::new();
@@ -87,6 +89,46 @@ fn block_to_md(node: &Value, depth: usize) -> Option<String> {
             Some(format!("```{lang}\n{body}\n```"))
         }
         "rule" => Some("---".to_string()),
+        "mediaSingle" => {
+            let ms_attrs = node.get("attrs").unwrap_or(&Value::Null);
+            node.get("content")
+                .and_then(|c| c.as_array())
+                .and_then(|children| children.first())
+                .filter(|m| m.get("type").and_then(|t| t.as_str()) == Some("media"))
+                .map(|m| {
+                    media::encode(
+                        m.get("attrs").unwrap_or(&Value::Null),
+                        media::Wrapper::Single(ms_attrs),
+                    )
+                })
+        }
+        "mediaGroup" => {
+            let lines: Vec<String> = node
+                .get("content")
+                .and_then(|c| c.as_array())
+                .map(|children| {
+                    children
+                        .iter()
+                        .filter(|m| m.get("type").and_then(|t| t.as_str()) == Some("media"))
+                        .map(|m| {
+                            media::encode(
+                                m.get("attrs").unwrap_or(&Value::Null),
+                                media::Wrapper::Group,
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            if lines.is_empty() {
+                None
+            } else {
+                Some(lines.join("\n"))
+            }
+        }
+        "media" => Some(media::encode(
+            node.get("attrs").unwrap_or(&Value::Null),
+            media::Wrapper::None,
+        )),
         "blockquote" => {
             let mut inner = Vec::new();
             if let Some(content) = node.get("content").and_then(|c| c.as_array()) {
@@ -233,4 +275,94 @@ fn collect_text(content: Option<&Value>) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn media_single_encodes_an_adf_media_token() {
+        let doc = json!({
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {
+                    "type": "mediaSingle",
+                    "attrs": { "layout": "center" },
+                    "content": [
+                        {
+                            "type": "media",
+                            "attrs": {
+                                "type": "file",
+                                "id": "abc-123",
+                                "collection": "",
+                                "alt": "a screenshot"
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+        let md = to_markdown(&doc);
+        assert!(md.starts_with("![a screenshot](adf-media://file/abc-123?"));
+        assert!(md.contains("collection="));
+        assert!(md.contains("wrapper=single"));
+        assert!(md.contains("layout=center"));
+    }
+
+    #[test]
+    fn media_group_emits_one_line_per_child_in_order() {
+        let doc = json!({
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {
+                    "type": "mediaGroup",
+                    "content": [
+                        { "type": "media", "attrs": { "type": "file", "id": "one", "alt": "first" } },
+                        { "type": "media", "attrs": { "type": "file", "id": "two", "alt": "second" } }
+                    ]
+                }
+            ]
+        });
+        let md = to_markdown(&doc);
+        let lines: Vec<&str> = md.trim_end().lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("adf-media://file/one"));
+        assert!(lines[1].contains("adf-media://file/two"));
+        assert!(lines[0].contains("wrapper=group"));
+    }
+
+    #[test]
+    fn bare_media_node_encodes_without_a_wrapper_marker() {
+        let doc = json!({
+            "type": "doc",
+            "version": 1,
+            "content": [
+                { "type": "media", "attrs": { "type": "external", "url": "https://example.com/img.png" } }
+            ]
+        });
+        let md = to_markdown(&doc);
+        assert!(md.contains("adf-media://external?url=https%3A%2F%2Fexample.com%2Fimg.png"));
+        assert!(!md.contains("wrapper="));
+    }
+
+    #[test]
+    fn absent_attrs_stay_absent_after_encoding() {
+        // No `alt`, no `collection` on the source node — the encoded token
+        // shouldn't fabricate empty query params for attrs that were never
+        // there in the first place.
+        let doc = json!({
+            "type": "doc",
+            "version": 1,
+            "content": [
+                { "type": "media", "attrs": { "type": "file", "id": "abc-123" } }
+            ]
+        });
+        let md = to_markdown(&doc);
+        assert!(!md.contains("alt="));
+        assert!(!md.contains("collection="));
+    }
 }
