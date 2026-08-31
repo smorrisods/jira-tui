@@ -86,6 +86,30 @@ impl EditorState {
         self.cx += 1;
     }
 
+    /// Bulk-insert `s` at the cursor — the paste counterpart to
+    /// `insert_char`, used by `App::handle_paste`'s `Screen::Edit` arm so a
+    /// whole pasted string lands in one go rather than one call per
+    /// crossterm key event. Splits `s` on `\n` and applies each segment
+    /// with the same `insert_char`/`newline()` semantics those per-key
+    /// paths already use — looping `insert_char` over the raw string
+    /// (including embedded newlines) would insert literal `\n` characters
+    /// into a line instead of actually splitting it. Leaves the cursor
+    /// positioned at the end of the inserted text.
+    pub fn insert_str(&mut self, s: &str) {
+        let mut segments = s.split('\n');
+        if let Some(first) = segments.next() {
+            for c in first.chars() {
+                self.insert_char(c);
+            }
+        }
+        for segment in segments {
+            self.newline();
+            for c in segment.chars() {
+                self.insert_char(c);
+            }
+        }
+    }
+
     pub fn newline(&mut self) {
         let byte = self.cursor_byte_index();
         let line = self.lines[self.cy].clone();

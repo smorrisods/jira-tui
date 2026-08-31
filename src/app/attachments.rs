@@ -506,6 +506,36 @@ impl App {
         }
     }
 
+    /// `App::handle_paste`'s `Browse`-stage integration: given a normalized
+    /// pasted/dropped path, jump the open file browser straight to it
+    /// instead of leaving the user to navigate there by hand — descending
+    /// into it (mirroring `attachment_browse_activate`'s directory branch)
+    /// if it's a directory, or finalizing it straight into `Confirm`
+    /// (mirroring `attachment_browse_activate`'s file branch) if it's a
+    /// file, without requiring the extra Enter that same path would need
+    /// via `attachment_browse_activate`. A silent no-op — same convention
+    /// as `try_auto_attach` — if the flow isn't in the `Browse` stage, or
+    /// the path doesn't resolve to anything on disk (a paste that isn't
+    /// actually a file/directory drop might just be unrelated text).
+    pub(crate) fn paste_into_attachment_browser(&mut self, normalized: &str) {
+        let Some(AttachmentUpload::Browse { browser }) = self.attachment_upload.as_mut() else {
+            return;
+        };
+        let resolved = expand_home(normalized);
+        if resolved.is_dir() {
+            if let Some(e) = browser.descend(resolved) {
+                self.status = e;
+            }
+            return;
+        }
+        if resolved.is_file() {
+            match finalize_attachment_selection(normalized.to_string(), resolved) {
+                Ok(confirm) => self.attachment_upload = Some(confirm),
+                Err(msg) => self.status = msg,
+            }
+        }
+    }
+
     /// `Esc` from `Confirm`: back to `Input`, keeping the previously-typed/
     /// picked path so a stray Esc doesn't lose it — same "go back, don't
     /// discard" semantics as `App::back_out_of_preview` for the edit-preview

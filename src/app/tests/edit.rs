@@ -195,6 +195,55 @@ fn editor_newline_and_backspace_merge_lines() {
 }
 
 #[test]
+fn insert_str_splits_on_embedded_newlines_instead_of_inserting_them_literally() {
+    let mut ed = EditorState::from_text("");
+    ed.insert_str("line one\nline two\nline three");
+    assert_eq!(
+        ed.lines,
+        vec![
+            "line one".to_string(),
+            "line two".to_string(),
+            "line three".to_string(),
+        ]
+    );
+    assert_eq!(
+        (ed.cy, ed.cx),
+        (2, "line three".chars().count()),
+        "cursor should land at the end of the inserted text"
+    );
+}
+
+#[test]
+fn insert_str_splits_mid_line_at_the_cursor() {
+    let mut ed = EditorState::from_text("hello world");
+    ed.cx = 5; // just after "hello"
+    ed.insert_str(" there\nfriend");
+    assert_eq!(
+        ed.lines,
+        vec!["hello there".to_string(), "friend world".to_string()]
+    );
+    assert_eq!((ed.cy, ed.cx), (1, "friend".chars().count()));
+}
+
+#[test]
+fn insert_str_with_no_newlines_behaves_like_a_run_of_insert_char() {
+    let mut ed = EditorState::from_text("ac");
+    ed.cx = 1;
+    ed.insert_str("b");
+    assert_eq!(ed.lines, vec!["abc".to_string()]);
+    assert_eq!((ed.cy, ed.cx), (0, 2));
+}
+
+#[test]
+fn insert_str_of_an_empty_string_is_a_noop() {
+    let mut ed = EditorState::from_text("abc");
+    ed.cx = 1;
+    ed.insert_str("");
+    assert_eq!(ed.lines, vec!["abc".to_string()]);
+    assert_eq!((ed.cy, ed.cx), (0, 1));
+}
+
+#[test]
 fn begin_external_comment_primes_the_target_without_opening_the_tui_editor() {
     let mut app = demo_app();
     app.selected = 0;
