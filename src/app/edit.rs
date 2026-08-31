@@ -521,6 +521,32 @@ impl App {
         );
     }
 
+    /// `Ctrl+V` (Edit screen only, see `src/keys/mod.rs`): best-effort read
+    /// of an image off the OS clipboard into a stable temp file, via
+    /// `infra::clipboard_image`. This is only the capture step — flashing
+    /// the resulting path is a placeholder for a later, separate piece of
+    /// work that actually uploads the file and inserts an image reference
+    /// into the buffer at the cursor; see that module's doc comment for the
+    /// full rationale (why this needs external tools at all, what's tried on
+    /// which platform).
+    pub fn paste_clipboard_image(&mut self) {
+        use crate::infra::clipboard_image::{capture_clipboard_image, ClipboardImageOutcome};
+        match capture_clipboard_image() {
+            ClipboardImageOutcome::Captured(path) => {
+                self.flash(format!("captured image → {}", path.display()));
+            }
+            ClipboardImageOutcome::NoToolAvailable(hint) => {
+                self.status = hint;
+            }
+            ClipboardImageOutcome::NoImage => {
+                self.status = "clipboard has no image".into();
+            }
+            ClipboardImageOutcome::Failed(e) => {
+                self.status = format!("couldn't read clipboard image: {e}");
+            }
+        }
+    }
+
     /// Display name to attribute a locally-composed comment to before any
     /// live response comes back (or in demo/cache mode, where there is none).
     /// Also the "who am I" `render::wide_detail`/`narrow_detail` use to pick

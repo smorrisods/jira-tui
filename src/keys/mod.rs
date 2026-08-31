@@ -374,6 +374,11 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             // this toggle. `⌃T` has no such collision and isn't otherwise
             // bound on this screen.
             KeyCode::Char('t') if ctrl => app.toggle_editor_image_view(),
+            // Best-effort clipboard image capture (see
+            // `infra::clipboard_image`) — just the capture mechanism for
+            // now; a later, separate piece of work wires the resulting temp
+            // file into an actual upload/embed.
+            KeyCode::Char('v') if ctrl => app.paste_clipboard_image(),
             KeyCode::Enter => app.editor.newline(),
             KeyCode::Backspace => app.editor.backspace(),
             KeyCode::Left => app.editor.left(),
@@ -1924,5 +1929,34 @@ mod tests {
         let mut app = demo_app();
         handle_key(&mut app, KeyEvent::from(KeyCode::Char('m')));
         assert!(!app.mouse.enabled, "'m' should no longer toggle mouse mode");
+    }
+
+    /// `Ctrl+V` in the editor dispatches into `App::paste_clipboard_image`
+    /// (never a panic, always leaves a status/flash behind — see that
+    /// method's own test in `app::tests::edit`) rather than falling through
+    /// to `KeyCode::Char(c) if !ctrl`'s plain-typing arm, which would insert
+    /// a literal `v` into the buffer instead.
+    #[test]
+    fn ctrl_v_on_the_editor_captures_a_clipboard_image_instead_of_typing_v() {
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        app.begin_comment();
+        app.status.clear();
+
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL),
+        );
+
+        assert_eq!(app.screen, Screen::Edit);
+        assert!(
+            !app.editor.to_text().contains('v'),
+            "Ctrl+V must not fall through to plain typing"
+        );
+        assert!(
+            !app.status.is_empty() || app.active_flash().is_some(),
+            "must leave either a status line or a flash behind, never silently no-op"
+        );
     }
 }

@@ -427,3 +427,26 @@ async fn begin_tui_edit_refuses_to_start_while_an_edit_is_in_flight() {
     assert!(text.contains("First edit"));
     assert_eq!(app.edit_generation, generation);
 }
+
+/// `Ctrl+V`'s handler (`App::paste_clipboard_image`) must never panic and
+/// must always leave a status message behind, whatever
+/// `infra::clipboard_image::capture_clipboard_image` reports — CI (and most
+/// dev sandboxes) has none of the external clipboard tools installed, so
+/// this exercises the "no tool found" branch specifically, matching the
+/// requirement that an unsupported environment resolves cleanly rather than
+/// silently no-opping.
+#[test]
+fn paste_clipboard_image_flashes_a_status_instead_of_panicking() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.begin_tui_edit();
+    app.status.clear();
+
+    app.paste_clipboard_image();
+
+    assert!(
+        !app.status.is_empty() || app.active_flash().is_some(),
+        "must leave either a status line or a flash behind, never silently no-op"
+    );
+}
