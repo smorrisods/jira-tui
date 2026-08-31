@@ -10,7 +10,11 @@ fn paste_while_input_is_open_sets_the_normalized_path() {
     let mut app = demo_app();
     app.selected = 0;
     app.open_detail();
-    app.open_attachment_upload();
+    // `u` now opens `Browse` by default — seed `Input` directly, since
+    // that's the stage this test actually exercises.
+    app.attachment_upload = Some(AttachmentUpload::Input {
+        path: String::new(),
+    });
 
     app.handle_paste("\"C:\\Users\\scott\\notes.txt\"".to_string());
 
@@ -80,7 +84,11 @@ fn paste_of_multiple_lines_flashes_a_note_and_uses_the_first() {
     let mut app = demo_app();
     app.selected = 0;
     app.open_detail();
-    app.open_attachment_upload();
+    // `u` now opens `Browse` by default — seed `Input` directly, since
+    // that's the stage this test actually exercises.
+    app.attachment_upload = Some(AttachmentUpload::Input {
+        path: String::new(),
+    });
 
     app.handle_paste("/home/scott/a.txt\n/home/scott/b.txt".to_string());
 
