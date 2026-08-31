@@ -2750,7 +2750,7 @@ fn help_overlay_shows_every_row_without_clipping() {
     // (see `ui::help::draw_help_overlay`'s clamp-to-frame-height comment) —
     // tall enough that every row, including the trailing close hint, fits
     // without clipping.
-    let text = render_at(&app, 120, 51);
+    let text = render_at(&app, 120, 56);
     assert!(
         text.contains("? / q") && text.contains("toggle help"),
         "the last help row (close help/quit) must not be clipped"
