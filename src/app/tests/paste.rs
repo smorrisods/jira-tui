@@ -183,6 +183,91 @@ fn paste_of_a_file_while_browse_is_open_finalizes_straight_to_confirm() {
 }
 
 #[test]
+fn paste_of_an_image_path_while_editing_stages_the_embed_confirm_instead_of_inserting_text() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.begin_comment();
+    assert_eq!(app.screen, Screen::Edit);
+
+    let dir = std::env::temp_dir().join(format!(
+        "jira-tui-paste-image-test-{}-{}",
+        std::process::id(),
+        line!()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("screenshot.png");
+    std::fs::write(&path, b"not really a png, just test bytes").unwrap();
+
+    app.handle_paste(path.to_str().unwrap().to_string());
+
+    assert_eq!(
+        app.pending_image_embed,
+        Some(path.clone()),
+        "a pasted/dropped image path should stage the upload-and-embed confirm"
+    );
+    assert!(
+        app.editor.to_text().is_empty(),
+        "the image path must not land in the buffer while confirmation is pending"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn paste_of_a_non_image_path_while_editing_still_inserts_as_plain_text() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.begin_comment();
+
+    let dir = std::env::temp_dir().join(format!(
+        "jira-tui-paste-nonimage-test-{}-{}",
+        std::process::id(),
+        line!()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("notes.txt");
+    std::fs::write(&path, b"hello").unwrap();
+
+    app.handle_paste(path.to_str().unwrap().to_string());
+
+    assert!(
+        app.pending_image_embed.is_none(),
+        "a non-image file path must not trigger the embed pipeline"
+    );
+    assert_eq!(
+        app.editor.to_text(),
+        path.to_str().unwrap(),
+        "a non-image path pastes as ordinary text, exactly as before this pipeline existed"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn paste_while_an_image_embed_confirmation_is_pending_is_swallowed() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.begin_comment();
+    app.pending_image_embed = Some(std::path::PathBuf::from("/tmp/whatever.png"));
+
+    app.handle_paste("some more text".to_string());
+
+    assert!(
+        app.editor.to_text().is_empty(),
+        "a paste while the embed confirm is pending must not slip into the buffer, \
+         mirroring confirm_discard's own swallow-the-next-input shape"
+    );
+    assert_eq!(
+        app.pending_image_embed,
+        Some(std::path::PathBuf::from("/tmp/whatever.png")),
+        "the pending confirmation itself must be untouched by the swallowed paste"
+    );
+}
+
+#[test]
 fn paste_of_multiple_lines_flashes_a_note_and_uses_the_first() {
     let mut app = demo_app();
     app.selected = 0;

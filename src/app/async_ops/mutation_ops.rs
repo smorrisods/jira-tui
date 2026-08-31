@@ -579,6 +579,96 @@ fn upload_attachment_blocking(
     Err("this build has no live support".to_string())
 }
 
+/// Spawn the in-TUI editor's image-embed pipeline off the render thread —
+/// see `App::confirm_image_embed`. Uploads `path` as an attachment on `key`
+/// (mirrors `dispatch_attachment_upload` exactly for that half), then, only
+/// once that upload succeeds, best-effort resolves a Media Services UUID for
+/// the freshly-uploaded attachment and encodes an `adf-media://` embed token
+/// for it — see `image_embed_blocking`. Sends the result back as
+/// `AppEvent::ImageEmbedded`.
+pub(crate) fn dispatch_image_embed(
+    tx: UnboundedSender<AppEvent>,
+    generation: u64,
+    key: String,
+    path: std::path::PathBuf,
+    filename: String,
+    mime: &'static str,
+) {
+    tokio::spawn(async move {
+        let key_for_result = key.clone();
+        let filename_for_result = filename.clone();
+        let result =
+            tokio::task::spawn_blocking(move || image_embed_blocking(&key, &path, &filename, mime))
+                .await
+                .unwrap_or_else(|_| Err("internal error: task panicked".into()));
+        let _ = tx.send(AppEvent::ImageEmbedded {
+            generation,
+            key: key_for_result,
+            filename: filename_for_result,
+            result,
+        });
+    });
+}
+
+/// Uploads `path`'s bytes as an attachment on `key` (mirrors
+/// `upload_attachment_blocking` above), then — only on a successful upload —
+/// probes the newly-created attachment's `content_url` for its Media
+/// Services UUID (`jira::media_uuid_for`, the same redirect-probe
+/// `app::inline_images` already uses for existing media) and, if one
+/// resolves, encodes an `adf-media://` embed token for it
+/// (`build_embed_token`). An upload failure short-circuits with `Err` before
+/// any probe is attempted; a upload success with no resolvable uuid still
+/// returns `Ok` with a `None` token — the file is genuinely attached either
+/// way, `None` just means it can't be embedded as inline media (yet); the
+/// caller (`App::apply_image_embedded`) falls back to inserting the plain
+/// filename as text in that case.
+#[allow(unused_variables)]
+fn image_embed_blocking(
+    key: &str,
+    path: &std::path::Path,
+    filename: &str,
+    mime: &str,
+) -> Result<(Vec<Attachment>, Option<String>), String> {
+    #[cfg(feature = "live")]
+    {
+        let cfg =
+            crate::jira::Config::load().ok_or_else(|| "no credentials configured".to_string())?;
+        let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+        let uploaded = crate::jira::upload_attachment(&cfg, key, filename, mime, &bytes)
+            .map_err(|e| e.to_string())?;
+        let token = uploaded.first().and_then(|attachment| {
+            crate::jira::media_uuid_for(&cfg, &attachment.content_url)
+                .ok()
+                .flatten()
+                .map(|uuid| build_embed_token(&uuid, filename))
+        });
+        Ok((uploaded, token))
+    }
+    #[cfg(not(feature = "live"))]
+    Err("this build has no live support".to_string())
+}
+
+/// Build an `adf-media://` embed token for a just-uploaded attachment's
+/// resolved Media Services `uuid` — a bare `file`-type media node (no
+/// `mediaSingle` wrapper: Jira's own editor typically wraps a solo image
+/// that way, but a bare node is still valid ADF and simpler to construct
+/// here from just an id/alt pair, with no layout/width to source from a
+/// wrapper Jira never gave this freshly-uploaded file in the first place).
+/// `collection` is deliberately omitted: unconfirmed against a real Jira
+/// instance whether the classic attachments collection name needs to be
+/// supplied for a freshly-uploaded file's media node to render, or whether
+/// Jira resolves it from the uuid alone — flagged in this branch's PR
+/// description as needing live verification.
+#[cfg(feature = "live")]
+fn build_embed_token(uuid: &str, filename: &str) -> String {
+    let attrs = serde_json::json!({
+        "type": "file",
+        "id": uuid,
+        "alt": filename,
+    });
+    crate::adf::media::encode(&attrs, crate::adf::media::Wrapper::None)
+}
+
 /// Spawn an attachment preview image fetch+decode off the render thread
 /// (`images` feature only), sending the result back as
 /// `AppEvent::AttachmentPreviewLoaded`. Mirrors `dispatch_attachment_download`'s
@@ -1349,6 +1439,68 @@ impl App {
         }
         self.status = format!("{key}: uploaded {filename}");
         self.flash(format!("✓ uploaded {filename}"));
+    }
+
+    /// Applies `AppEvent::ImageEmbedded` — see
+    /// `App::confirm_image_embed`/`dispatch_image_embed` above. Dropped
+    /// whole under a since-superseded `image_embed_generation` (a second
+    /// embed staged and confirmed before the first resolved), the same as
+    /// every other generation-guarded apply here. Reuses
+    /// `apply_attachment_uploaded` for the upload half — the freshly
+    /// uploaded attachment must show up in the picker/inline caches and get
+    /// merged into `self.detail`/`detail_cache` exactly like any other
+    /// upload would, so there's no reason to duplicate that logic — then
+    /// handles the embed-specific half: inserting the resolved token (or,
+    /// if no uuid could be resolved, the plain filename as a fallback) into
+    /// the editor buffer. That insert only happens while still on
+    /// `Screen::Edit` editing the very same issue this dispatch was for — a
+    /// response landing after the user has backed out of the editor (or
+    /// started editing something else entirely) must never insert into
+    /// whatever the buffer holds by then; it still gets attached to the
+    /// issue (via the `apply_attachment_uploaded` call above), just not
+    /// embedded, and the status line says so.
+    pub(super) fn apply_image_embedded(
+        &mut self,
+        generation: u64,
+        key: String,
+        filename: String,
+        result: Result<(Vec<Attachment>, Option<String>), String>,
+    ) {
+        if generation != self.image_embed_generation {
+            return;
+        }
+        self.loading = false;
+        self.image_embed_pending = false;
+        let (uploaded, token) = match result {
+            Ok(v) => v,
+            Err(e) => {
+                self.status = format!("image upload failed: {e}");
+                return;
+            }
+        };
+        self.apply_attachment_uploaded(key.clone(), filename.clone(), Ok(uploaded));
+
+        let still_editing_this_issue =
+            self.screen == Screen::Edit && self.edit_key.as_deref() == Some(key.as_str());
+        if !still_editing_this_issue {
+            self.status = format!(
+                "{key}: uploaded {filename}, but the editor moved on — attach it manually if still needed"
+            );
+            return;
+        }
+        match token {
+            Some(token) => {
+                self.editor.insert_str(&token);
+                self.status = format!("embedded {filename}");
+                self.flash(format!("✓ embedded {filename}"));
+            }
+            None => {
+                self.editor.insert_str(&filename);
+                self.status = format!(
+                    "uploaded {filename}, but couldn't resolve it as inline media — inserted as plain text"
+                );
+            }
+        }
     }
 
     /// Applies `AppEvent::AttachmentPreviewLoaded` (`images` feature only) —

@@ -445,8 +445,288 @@ fn paste_clipboard_image_flashes_a_status_instead_of_panicking() {
 
     app.paste_clipboard_image();
 
+    // A successful capture now feeds the upload-and-embed pipeline
+    // (`App::begin_image_embed`) instead of flashing a placeholder path —
+    // that's a visible confirm prompt of its own (see `ui::editor`), not a
+    // silent no-op, even though it leaves `status`/the flash untouched. Every
+    // other outcome (no tool installed, an empty clipboard, a read failure)
+    // still leaves a status/flash behind exactly as before.
     assert!(
-        !app.status.is_empty() || app.active_flash().is_some(),
-        "must leave either a status line or a flash behind, never silently no-op"
+        !app.status.is_empty() || app.active_flash().is_some() || app.pending_image_embed.is_some(),
+        "must leave a status line, a flash, or a pending image-embed confirmation \
+         behind — never silently no-op"
     );
+}
+
+/// `Esc` on a pending image-embed confirmation (`App::decline_image_embed`)
+/// falls back to inserting the staged path as plain text — the same place
+/// in the buffer a non-image pasted path already lands, so declining an
+/// embed never just silently loses the reference.
+#[test]
+fn decline_image_embed_inserts_the_path_as_plain_text() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.begin_comment();
+    let path = std::path::PathBuf::from("/tmp/shot.png");
+    app.begin_image_embed(path.clone());
+    assert_eq!(app.pending_image_embed, Some(path.clone()));
+
+    app.decline_image_embed();
+
+    assert!(
+        app.pending_image_embed.is_none(),
+        "declining should close the pending confirmation"
+    );
+    assert_eq!(
+        app.editor.to_text(),
+        path.display().to_string(),
+        "the raw path should land in the buffer, matching how a non-image \
+         pasted path already lands via insert_str"
+    );
+}
+
+/// `App::decline_image_embed` is a no-op when nothing is actually pending —
+/// mirrors every other `Option::take`-guarded confirm/cancel method in this
+/// codebase (e.g. `App::back_out_of_attachment_upload_confirm`).
+#[test]
+fn decline_image_embed_is_a_noop_with_nothing_pending() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.begin_comment();
+    assert!(app.pending_image_embed.is_none());
+
+    app.decline_image_embed();
+
+    assert!(app.editor.to_text().is_empty());
+}
+
+/// Demo/cache sessions can't actually upload anything — `App::confirm_image_embed`
+/// must flash the same "not available" message `App::confirm_attachment_upload`
+/// uses for the dedicated attachment-upload flow, and must not attempt any
+/// I/O (no dispatch, no `loading` flag, nothing inserted into the buffer).
+#[test]
+fn confirm_image_embed_on_demo_data_flashes_and_does_no_io() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.begin_comment();
+    assert!(matches!(app.source, crate::domain::Source::Demo));
+    let path = std::path::PathBuf::from("/tmp/shot.png");
+    app.begin_image_embed(path);
+
+    app.confirm_image_embed();
+
+    assert_eq!(
+        app.active_flash(),
+        Some("demo mode — uploading needs live Jira credentials"),
+        "a demo/cache session should flash a friendly message instead of attempting I/O"
+    );
+    assert!(
+        app.pending_image_embed.is_none(),
+        "the confirmation should close either way, success or not"
+    );
+    assert!(
+        !app.loading,
+        "no async upload should have been dispatched for demo data"
+    );
+    assert!(
+        app.editor.to_text().is_empty(),
+        "nothing should be inserted into the buffer for a refused demo-mode confirm"
+    );
+}
+
+/// The full round trip against a mocked live Jira instance: staging a
+/// captured/pasted image raises the confirm prompt, confirming it dispatches
+/// the real upload-and-embed pipeline (`App::confirm_image_embed` →
+/// `dispatch_image_embed`), and applying the result merges the uploaded
+/// attachment into `self.detail` (reusing `apply_attachment_uploaded`,
+/// exactly as any other upload would) *and* resolves the redirect-probe uuid
+/// (`jira::media_uuid_for`) into a real `adf-media://` token inserted at the
+/// cursor. Mirrors `upload_attachment`'s and `media_uuid_for`'s own mockito
+/// tests in `jira::live::attachments`, just driven through the full
+/// App-level dispatch/apply cycle rather than calling the REST functions
+/// directly — `mockito::Server::new_async` (not the sync `Server::new`) is
+/// required here specifically because this test body already runs inside a
+/// tokio runtime (`#[tokio::test]`); the sync constructor builds its own
+/// nested runtime internally and panics if called from within one.
+#[cfg(feature = "live")]
+#[tokio::test]
+async fn confirm_image_embed_against_a_live_source_uploads_probes_the_uuid_and_inserts_the_token() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let base = std::env::temp_dir().join(format!(
+        "jira-tui-image-embed-cfg-{}-{}",
+        std::process::id(),
+        line!()
+    ));
+    let _ = std::fs::remove_dir_all(&base);
+    std::env::set_var("XDG_CONFIG_HOME", &base);
+
+    let mut server = mockito::Server::new_async().await;
+    let content_url = format!("{}/secure/attachment/10099/shot.png", server.url());
+    let upload_mock = server
+        .mock("POST", "/rest/api/3/issue/DS-1/attachments")
+        .match_header("x-atlassian-token", "no-check")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"[{{
+                "id": "10099",
+                "filename": "shot.png",
+                "size": 4,
+                "mimeType": "image/png",
+                "created": "2026-08-31T10:00:00.000-0400",
+                "content": "{content_url}"
+            }}]"#
+        ))
+        .create();
+    let redirect_mock = server
+        .mock("GET", "/secure/attachment/10099/shot.png")
+        .with_status(303)
+        .with_header(
+            "location",
+            "https://api.media.atlassian.com/file/uuid-123/binary?token=y",
+        )
+        .create();
+
+    std::env::set_var("JIRA_BASE_URL", server.url());
+    std::env::set_var("JIRA_EMAIL", "me@example.com");
+    std::env::set_var("JIRA_API_TOKEN", "secret");
+
+    let mut app = demo_app();
+    app.source = crate::domain::Source::Live {
+        site: "demo.atlassian.net".into(),
+        user: "me".into(),
+    };
+    app.detail = Some(crate::domain::demo_detail("DS-1"));
+    app.screen = Screen::Detail;
+    app.begin_tui_edit();
+    assert_eq!(app.screen, Screen::Edit);
+
+    let dir = std::env::temp_dir().join(format!(
+        "jira-tui-image-embed-file-{}-{}",
+        std::process::id(),
+        line!()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("shot.png");
+    std::fs::write(&path, b"fake").unwrap();
+
+    app.begin_image_embed(path.clone());
+    assert_eq!(app.pending_image_embed, Some(path.clone()));
+
+    app.confirm_image_embed();
+    assert!(
+        app.pending_image_embed.is_none(),
+        "confirming should close the pending prompt immediately, before the \
+         upload even resolves"
+    );
+    assert!(app.image_embed_pending);
+    assert!(app.loading);
+
+    let event = next_event(&mut app).await;
+    app.apply_event(event);
+
+    upload_mock.assert();
+    redirect_mock.assert();
+    assert!(!app.image_embed_pending);
+    assert!(!app.loading);
+    assert!(
+        app.editor.to_text().contains("adf-media://file/uuid-123"),
+        "expected the resolved media token in the buffer, got: {}",
+        app.editor.to_text()
+    );
+    assert!(
+        app.detail
+            .as_ref()
+            .unwrap()
+            .attachments
+            .iter()
+            .any(|a| a.id == "10099"),
+        "the uploaded attachment should also be merged into the issue's \
+         attachment list, exactly like any other upload"
+    );
+
+    for var in ["JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN"] {
+        std::env::remove_var(var);
+    }
+    std::env::remove_var("XDG_CONFIG_HOME");
+    let _ = std::fs::remove_dir_all(&base);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A upload failure (mocked as a 413, mirroring `upload_attachment_surfaces_http_errors`
+/// in `jira::live::attachments`) must surface as a status message and leave
+/// nothing inserted into the buffer — no partial token, no plain-text
+/// fallback either, since there's nothing real to reference.
+#[cfg(feature = "live")]
+#[tokio::test]
+async fn confirm_image_embed_surfaces_an_upload_failure_and_inserts_nothing() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let base = std::env::temp_dir().join(format!(
+        "jira-tui-image-embed-fail-cfg-{}-{}",
+        std::process::id(),
+        line!()
+    ));
+    let _ = std::fs::remove_dir_all(&base);
+    std::env::set_var("XDG_CONFIG_HOME", &base);
+
+    let mut server = mockito::Server::new_async().await;
+    server
+        .mock("POST", "/rest/api/3/issue/DS-1/attachments")
+        .with_status(413)
+        .create();
+
+    std::env::set_var("JIRA_BASE_URL", server.url());
+    std::env::set_var("JIRA_EMAIL", "me@example.com");
+    std::env::set_var("JIRA_API_TOKEN", "secret");
+
+    let mut app = demo_app();
+    app.source = crate::domain::Source::Live {
+        site: "demo.atlassian.net".into(),
+        user: "me".into(),
+    };
+    app.detail = Some(crate::domain::demo_detail("DS-1"));
+    app.screen = Screen::Detail;
+    // `begin_comment` (unlike `begin_tui_edit`) seeds an empty buffer, so
+    // "nothing got inserted" is a meaningful assertion below — a fresh
+    // description edit is preloaded with the existing description and would
+    // never read as empty regardless of what this test does.
+    app.begin_comment();
+
+    let dir = std::env::temp_dir().join(format!(
+        "jira-tui-image-embed-fail-file-{}-{}",
+        std::process::id(),
+        line!()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("shot.png");
+    std::fs::write(&path, b"fake").unwrap();
+
+    app.begin_image_embed(path);
+    app.confirm_image_embed();
+
+    let event = next_event(&mut app).await;
+    app.apply_event(event);
+
+    assert!(!app.image_embed_pending);
+    assert!(!app.loading);
+    assert!(
+        app.status.contains("image upload failed"),
+        "expected a failure status, got: {}",
+        app.status
+    );
+    assert!(
+        app.editor.to_text().is_empty(),
+        "a failed upload has nothing real to reference, so nothing should \
+         be inserted"
+    );
+
+    for var in ["JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN"] {
+        std::env::remove_var(var);
+    }
+    std::env::remove_var("XDG_CONFIG_HOME");
+    let _ = std::fs::remove_dir_all(&base);
+    let _ = std::fs::remove_dir_all(&dir);
 }

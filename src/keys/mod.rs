@@ -92,6 +92,23 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Modal: confirm uploading and embedding a captured/pasted image in the
+    // in-TUI editor (`Ctrl+V` clipboard capture, or a dropped/pasted image
+    // path via `app::paste` — see `App::begin_image_embed`). Unlike
+    // `confirm_discard` above, this doesn't dismiss on *any* other key: a
+    // stray keypress swallowing a pending upload confirmation (rather than
+    // just being ignored) would be a much more surprising loss than
+    // dismissing a discard prompt is, so only its own two bound keys do
+    // anything here.
+    if app.pending_image_embed.is_some() {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Enter => app.confirm_image_embed(),
+            KeyCode::Esc => app.decline_image_embed(),
+            _ => {}
+        }
+        return;
+    }
+
     // Onboarding has its own key map (including a text-entry form).
     if app.screen == Screen::Welcome {
         welcome::handle_welcome_key(app, key);
@@ -1954,9 +1971,18 @@ mod tests {
             !app.editor.to_text().contains('v'),
             "Ctrl+V must not fall through to plain typing"
         );
+        // A successful capture now raises the upload-and-embed confirm
+        // prompt (`App::begin_image_embed`) instead of flashing a
+        // placeholder path — a visible modal of its own, not a silent
+        // no-op, even though it leaves `status`/the flash untouched. Every
+        // other outcome (no tool installed, an empty clipboard, a read
+        // failure) still leaves a status/flash behind exactly as before.
         assert!(
-            !app.status.is_empty() || app.active_flash().is_some(),
-            "must leave either a status line or a flash behind, never silently no-op"
+            !app.status.is_empty()
+                || app.active_flash().is_some()
+                || app.pending_image_embed.is_some(),
+            "must leave a status line, a flash, or a pending image-embed confirmation \
+             behind — never silently no-op"
         );
     }
 }

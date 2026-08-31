@@ -212,6 +212,10 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
                 hint("↑/↓", "scroll"),
             ])
         }
+        Screen::Edit if app.pending_image_embed.is_some() => single(vec![
+            hint("y/⏎", "embed as inline image"),
+            hint("esc", "insert as plain text"),
+        ]),
         Screen::Edit if app.confirm_discard => single(vec![
             hint("y", "discard this edit"),
             hint("any other key", "keep editing"),

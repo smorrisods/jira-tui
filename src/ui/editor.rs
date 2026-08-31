@@ -99,15 +99,24 @@ pub(crate) fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
         let key = app.edit_key.as_deref().unwrap_or("");
         format!("  editing {key} · Markdown  ")
     };
-    let border_colour = if app.confirm_discard {
-        danger()
+    // `pending_image_embed` (a staged image awaiting an upload-and-embed
+    // confirmation, see `App::begin_image_embed`) and `confirm_discard` are
+    // mutually exclusive in ordinary play (`keys::handle_key` swallows every
+    // keypress while either modal is showing, before the other could ever be
+    // raised), but `pending_image_embed` still wins the tie-break here if
+    // both were somehow set — a stray unconfirmed upload is the more
+    // consequential of the two to lose track of visually.
+    let modal_active = app.pending_image_embed.is_some() || app.confirm_discard;
+    let border_colour = if modal_active { danger() } else { warn() };
+    let bottom_hint = if let Some(path) = app.pending_image_embed.as_ref() {
+        format!(
+            "  insert {} as inline image? y/⏎ confirm · esc = plain text  ",
+            path.display()
+        )
+    } else if app.confirm_discard {
+        "  discard this edit? y = discard, any other key = keep editing  ".to_string()
     } else {
-        warn()
-    };
-    let bottom_hint = if app.confirm_discard {
-        "  discard this edit? y = discard, any other key = keep editing  "
-    } else {
-        "  ^S preview · esc cancel  "
+        "  ^S preview · esc cancel  ".to_string()
     };
     let block = Block::default()
         .borders(Borders::ALL)
@@ -121,11 +130,7 @@ pub(crate) fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
         ))
         .title_bottom(Span::styled(
             bottom_hint,
-            Style::default().fg(if app.confirm_discard {
-                danger()
-            } else {
-                muted()
-            }),
+            Style::default().fg(if modal_active { danger() } else { muted() }),
         ));
     let inner = block.inner(area);
     f.render_widget(block, area);

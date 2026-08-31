@@ -40,8 +40,13 @@ const SCHEME_FILE: &str = "adf-media://file/";
 const SCHEME_EXTERNAL: &str = "adf-media://external";
 
 /// How a `media` node was nested when it was encoded, so `decode` knows
-/// what wrapper (if any) to reconstruct around it.
-pub(super) enum Wrapper<'a> {
+/// what wrapper (if any) to reconstruct around it. `pub(crate)`, not
+/// `pub(super)`: `app::async_ops::mutation_ops`'s image-embed pipeline
+/// (Ctrl+V clipboard capture / a dropped image path in the in-TUI editor)
+/// needs to call `encode` directly to build a fresh token for a
+/// just-uploaded attachment, rather than only decoding one that already
+/// exists in a saved description — see `encode`'s own doc comment.
+pub(crate) enum Wrapper<'a> {
     /// A bare top-level `media` node, not wrapped in `mediaSingle`.
     None,
     /// `mediaSingle`'s sole child; carries `mediaSingle`'s own attrs.
@@ -75,8 +80,11 @@ pub(crate) fn is_adf_media_url(url: &str) -> bool {
 }
 
 /// Encode one `media` node's attrs (plus its wrapper, if any) into a
-/// complete `![alt](adf-media://...)` Markdown image line.
-pub(super) fn encode(media_attrs: &Value, wrapper: Wrapper) -> String {
+/// complete `![alt](adf-media://...)` Markdown image line. `pub(crate)` —
+/// see `Wrapper`'s own doc comment for why this is reachable outside `adf`
+/// (unlike `decode`, this direction used to stay internal, driven only by
+/// `markdown::to_markdown`'s own document walk).
+pub(crate) fn encode(media_attrs: &Value, wrapper: Wrapper) -> String {
     let ty = media_attrs
         .get("type")
         .and_then(|t| t.as_str())

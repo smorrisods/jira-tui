@@ -666,7 +666,11 @@ fn finalize_attachment_selection(
 /// `dirs` crate already used for XDG paths elsewhere (see `config::mod`).
 /// Any other path — already absolute, plain relative, or a bare `~word`
 /// that isn't actually a home-relative reference — is left untouched.
-fn expand_home(path: &str) -> PathBuf {
+/// `pub(super)` (not private) so `app::paste`'s image-path detection
+/// (`App::handle_paste`'s `Screen::Edit` arm) can resolve a pasted/dropped
+/// path the exact same way this module's own upload flow does, rather than
+/// duplicating the same three-line tilde check.
+pub(super) fn expand_home(path: &str) -> PathBuf {
     if let Some(rest) = path.strip_prefix('~') {
         if rest.is_empty() || rest.starts_with('/') {
             if let Some(home) = dirs::home_dir() {

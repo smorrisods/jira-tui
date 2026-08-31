@@ -1,7 +1,13 @@
 //! Description editing: the built-in multi-line Markdown editor and the
 //! ADF round-trip (compile → preview → apply). Also handles adding new
 //! comments, which reuse the same editor/preview flow with a different
-//! apply action.
+//! apply action, and the in-TUI editor's own image-embed pipeline (`Ctrl+V`
+//! clipboard capture, or a dropped/pasted image path via `app::paste`):
+//! stage → confirm → upload-and-embed, mirroring the dedicated attachment
+//! upload flow's own stage → confirm → upload shape (`app::attachments`)
+//! just scoped to the editor buffer instead.
+
+use std::path::PathBuf;
 
 use crate::domain::{Comment, Source};
 
@@ -523,17 +529,17 @@ impl App {
 
     /// `Ctrl+V` (Edit screen only, see `src/keys/mod.rs`): best-effort read
     /// of an image off the OS clipboard into a stable temp file, via
-    /// `infra::clipboard_image`. This is only the capture step — flashing
-    /// the resulting path is a placeholder for a later, separate piece of
-    /// work that actually uploads the file and inserts an image reference
-    /// into the buffer at the cursor; see that module's doc comment for the
-    /// full rationale (why this needs external tools at all, what's tried on
-    /// which platform).
+    /// `infra::clipboard_image`. A successful capture feeds straight into
+    /// the shared upload-and-embed pipeline (`begin_image_embed`) — the same
+    /// one a dropped/pasted image path reaches via `app::paste`'s
+    /// `handle_editor_paste` — rather than being applied immediately; see
+    /// that module's doc comment for the full capture rationale (why this
+    /// needs external tools at all, what's tried on which platform).
     pub fn paste_clipboard_image(&mut self) {
         use crate::infra::clipboard_image::{capture_clipboard_image, ClipboardImageOutcome};
         match capture_clipboard_image() {
             ClipboardImageOutcome::Captured(path) => {
-                self.flash(format!("captured image → {}", path.display()));
+                self.begin_image_embed(path);
             }
             ClipboardImageOutcome::NoToolAvailable(hint) => {
                 self.status = hint;
@@ -545,6 +551,72 @@ impl App {
                 self.status = format!("couldn't read clipboard image: {e}");
             }
         }
+    }
+
+    /// Stage `path` (a captured clipboard image, or a dropped/pasted image
+    /// file) for the shared upload-and-embed pipeline: raises the inline
+    /// confirm prompt `ui::editor` renders over the buffer (CLAUDE.md's
+    /// "Preview before any mutating Jira call") rather than uploading
+    /// immediately. `keys::handle_key` captures every keypress while this is
+    /// showing — `y`/Enter (`confirm_image_embed`) actually dispatches the
+    /// upload; `Esc` (`decline_image_embed`) inserts the raw path as plain
+    /// text instead, matching what an ordinary (non-image) pasted path
+    /// already does via `insert_str`.
+    pub(crate) fn begin_image_embed(&mut self, path: PathBuf) {
+        self.pending_image_embed = Some(path);
+    }
+
+    /// `Esc` while `pending_image_embed` is showing: decline the embed and
+    /// fall back to inserting the path as plain text — the same place in
+    /// the buffer a non-image pasted path already lands via `insert_str`,
+    /// so declining leaves the buffer exactly as an ordinary text paste
+    /// would have.
+    pub fn decline_image_embed(&mut self) {
+        let Some(path) = self.pending_image_embed.take() else {
+            return;
+        };
+        self.editor.insert_str(&path.display().to_string());
+    }
+
+    /// `y`/Enter while `pending_image_embed` is showing: upload the staged
+    /// image as an attachment on the issue currently being edited and, once
+    /// a Media Services UUID can be resolved for it, embed it as a real
+    /// inline `adf-media://` token at the cursor — see
+    /// `async_ops::dispatch_image_embed`/`App::apply_image_embedded`.
+    /// Demo/cache sessions get the same "not available" guard every other
+    /// mutating action uses (mirrors `App::confirm_attachment_upload`
+    /// exactly: flash and stop, no local fallback insert — matching that the
+    /// dedicated attachment-upload flow doesn't insert anything either in
+    /// this case, it just closes).
+    pub fn confirm_image_embed(&mut self) {
+        let Some(path) = self.pending_image_embed.take() else {
+            return;
+        };
+        // A brand-new issue's description (`EditTarget::NewIssue`) has no
+        // key yet — there's no issue to attach the upload to, so this falls
+        // back to plain text the same way a decline does, rather than
+        // silently discarding the image reference the user just staged.
+        let Some(key) = self.edit_key.clone() else {
+            self.editor.insert_str(&path.display().to_string());
+            self.status = "no issue to attach the image to yet — inserted as plain text".into();
+            return;
+        };
+        if !matches!(self.source, Source::Live { .. }) {
+            self.flash("demo mode — uploading needs live Jira credentials");
+            return;
+        }
+        let filename = path
+            .file_name()
+            .map(|f| f.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "image".to_string());
+        let mime = crate::mime::guess_mime(&filename);
+        self.image_embed_generation += 1;
+        let generation = self.image_embed_generation;
+        self.image_embed_pending = true;
+        self.loading = true;
+        self.status = format!("↻ uploading {filename}…");
+        let tx = self.events_tx.clone();
+        async_ops::dispatch_image_embed(tx, generation, key, path, filename, mime);
     }
 
     /// Display name to attribute a locally-composed comment to before any

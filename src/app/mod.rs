@@ -14,6 +14,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 #[cfg(feature = "images")]
 use std::collections::HashSet;
+use std::path::PathBuf;
 
 use ratatui::layout::Rect;
 
@@ -342,6 +343,25 @@ pub struct App {
     /// next keypress — `y`/`Y` confirms the discard, anything else dismisses
     /// the prompt and resumes editing.
     pub confirm_discard: bool,
+    /// Modal: a captured/pasted image awaiting confirmation before it's
+    /// uploaded and embedded into the in-TUI editor buffer — set by
+    /// `App::begin_image_embed`, reached via `Ctrl+V`'s clipboard capture
+    /// (`App::paste_clipboard_image`) or a dropped/pasted image file path
+    /// (`App::handle_paste`'s `Screen::Edit` arm). Mirrors `confirm_discard`'s
+    /// "swallow the next keypress" shape (see `keys::handle_key`), just
+    /// carrying the staged path rather than being a bare flag — CLAUDE.md's
+    /// "Preview before any mutating Jira call" applies here exactly as it
+    /// does to `AttachmentUpload::Confirm`, just scoped to the editor rather
+    /// than the dedicated attachment-upload flow. `y`/Enter
+    /// (`App::confirm_image_embed`) dispatches the upload; `Esc`
+    /// (`App::decline_image_embed`) inserts the path as plain text instead.
+    pub pending_image_embed: Option<PathBuf>,
+    /// Whether an image-embed upload (`pending_image_embed`) is currently in
+    /// flight — guards `image_embed_generation` the same way `edit_pending`
+    /// guards `edit_generation`, so a stale response can't insert into
+    /// whatever the editor buffer holds by the time it lands.
+    pub(crate) image_embed_pending: bool,
+    pub(crate) image_embed_generation: u64,
 
     // Attachment picker (`a`, Detail only): open a picker over the current
     // issue's attachments, then open the highlighted one in the browser or
@@ -744,6 +764,9 @@ impl App {
             edit_key: None,
             edit_return_screen: Screen::Detail,
             confirm_discard: false,
+            pending_image_embed: None,
+            image_embed_pending: false,
+            image_embed_generation: 0,
             attachments_open: false,
             attachment_index: 0,
             attachment_upload: None,

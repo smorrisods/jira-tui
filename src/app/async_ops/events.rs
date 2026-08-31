@@ -253,6 +253,21 @@ pub enum AppEvent {
         filename: String,
         result: Result<Vec<Attachment>, String>,
     },
+    /// The in-TUI editor's image-embed pipeline resolved (or failed) — see
+    /// `App::confirm_image_embed`/`dispatch_image_embed`. Unlike
+    /// `AttachmentUploaded`, this *does* carry a `generation`
+    /// (`App::image_embed_generation`): a stale response must not insert a
+    /// token into whatever the editor buffer holds by the time it lands.
+    /// `result`'s `Ok` payload is `(uploaded attachments, embed token)` —
+    /// `token` is `None` when the upload itself succeeded but no Media
+    /// Services uuid could be resolved for it (still genuinely attached,
+    /// just not embeddable as inline media yet).
+    ImageEmbedded {
+        generation: u64,
+        key: String,
+        filename: String,
+        result: Result<(Vec<Attachment>, Option<String>), String>,
+    },
     /// The attachment picker's image-preview fetch+decode resolved
     /// (`images` feature only) — see
     /// `App::refresh_attachment_preview`/`dispatch_attachment_preview`.
@@ -448,6 +463,12 @@ impl App {
                 filename,
                 result,
             } => self.apply_attachment_uploaded(key, filename, result),
+            AppEvent::ImageEmbedded {
+                generation,
+                key,
+                filename,
+                result,
+            } => self.apply_image_embedded(generation, key, filename, result),
             #[cfg(feature = "images")]
             AppEvent::AttachmentPreviewLoaded {
                 generation,
