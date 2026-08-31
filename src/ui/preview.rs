@@ -17,7 +17,11 @@ pub(crate) fn draw_preview(f: &mut Frame, app: &App, area: Rect) {
     let title = if app.edit_target == EditTarget::NewIssue {
         format!("  preview · new issue in {}  ", app.new_issue.project)
     } else {
-        let key = app.detail.as_ref().map(|d| d.key.as_str()).unwrap_or("");
+        // `edit_key`, not `app.detail` — see `ui::editor::draw_editor`'s
+        // matching comment: a comment composed from the quick-view panel
+        // targets the quick-viewed issue, not whatever `app.detail` last
+        // held from a previous Detail-screen visit.
+        let key = app.edit_key.as_deref().unwrap_or("");
         format!("  preview · {key}  ")
     };
     let block = Block::default()
