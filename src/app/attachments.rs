@@ -6,16 +6,19 @@
 //! and a cursor.
 //!
 //! Also holds the upload flow (`u`, Detail only — see `AttachmentUpload`):
-//! type a local path, stat it, and confirm a preview before the actual
-//! multipart POST. Unlike the picker above, this *is* a dedicated enum —
-//! there's real per-stage data (the typed path; the resolved filename/size/
-//! mime once it's been stat'd) rather than just an open flag and a cursor.
+//! browse the filesystem (or `Tab` into typing a path by hand), stat the
+//! chosen file, and confirm a preview before the actual multipart POST.
+//! Unlike the picker above, this *is* a dedicated enum — there's real
+//! per-stage data (the browser's cwd/listing; the typed path; the resolved
+//! filename/size/mime once something's been stat'd) rather than just an
+//! open flag and a cursor.
 
 use std::path::{Path, PathBuf};
 
 use crate::domain::Source;
 use crate::infra;
 
+use super::file_browser::FileBrowserState;
 use super::{async_ops, App, Screen};
 
 /// How many run-loop iterations the attachment picker's highlighted row
@@ -42,24 +45,35 @@ pub struct AttachmentPreview {
     pub protocol: ratatui_image::protocol::StatefulProtocol,
 }
 
-/// The upload flow's two stages. `Input` is a plain path-entry line;
-/// `Confirm` is the mandatory preview CLAUDE.md's "Preview before any
-/// mutating Jira call" requires before `App::confirm_attachment_upload`
-/// actually dispatches anything.
+/// The upload flow's stages. `Browse` — an interactive filesystem browser —
+/// is the default entry point (`u`); `Input`, a plain path-entry line, is a
+/// `Tab`-accessible fallback for typing an exact path by hand (e.g. pasting
+/// one from outside the terminal). `Confirm` is the mandatory preview
+/// CLAUDE.md's "Preview before any mutating Jira call" requires before
+/// `App::confirm_attachment_upload` actually dispatches anything.
 #[derive(Clone, Debug, PartialEq)]
 pub enum AttachmentUpload {
+    Browse {
+        browser: FileBrowserState,
+    },
     Input {
         path: String,
     },
     Confirm {
-        /// The path exactly as typed (before `~`-expansion) — kept around so
-        /// `App::back_out_of_attachment_upload_confirm` can restore `Input`
-        /// with what the user actually typed, not the resolved absolute
-        /// path.
+        /// The path exactly as typed/selected (before `~`-expansion) — kept
+        /// around so `App::back_out_of_attachment_upload_confirm` can
+        /// restore `Input` with what the user actually typed/picked, not
+        /// the resolved absolute path.
         path: String,
         filename: String,
         size: u64,
         mime: &'static str,
+        /// A short text preview of the file's contents (up to ~4KB),
+        /// populated only for text-ish files — see
+        /// `read_attachment_text_preview`. `None` for anything binary,
+        /// unreadable as UTF-8, or simply not detected as text; those keep
+        /// today's metadata-only preview.
+        content_preview: Option<String>,
     },
 }
 
@@ -323,20 +337,113 @@ impl App {
         );
     }
 
-    /// `u` (Detail screen only): open the upload flow's path-entry stage.
-    /// A silent no-op off the Detail screen or with no issue loaded —
-    /// mirrors `open_attachments`'s own guard.
+    /// `u` (Detail screen only): open the upload flow at its default
+    /// `Browse` stage, rooted at the user's home directory (falling back to
+    /// `.` if it can't be resolved at all — the same "always open something
+    /// rather than refuse the flow" spirit as `FileBrowserState::new`'s own
+    /// error handling). A silent no-op off the Detail screen or with no
+    /// issue loaded — mirrors `open_attachments`'s own guard.
     pub fn open_attachment_upload(&mut self) {
         if self.screen != Screen::Detail || self.detail.is_none() {
             return;
         }
-        self.attachment_upload = Some(AttachmentUpload::Input {
-            path: String::new(),
-        });
+        let start_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        self.open_attachment_browser_at(start_dir);
+    }
+
+    /// Shared by `open_attachment_upload` and the `Tab`-from-`Input` switch
+    /// below: build a fresh `FileBrowserState` rooted at `start_dir`,
+    /// flashing a status message if the initial listing fails (e.g. the
+    /// resolved directory turns out to be unreadable) while still opening
+    /// the browser rather than refusing the flow outright.
+    fn open_attachment_browser_at(&mut self, start_dir: PathBuf) {
+        let (browser, err) = FileBrowserState::new(start_dir);
+        if let Some(e) = err {
+            self.status = e;
+        }
+        self.attachment_upload = Some(AttachmentUpload::Browse { browser });
     }
 
     pub fn close_attachment_upload(&mut self) {
         self.attachment_upload = None;
+    }
+
+    /// `Tab`: switch between the `Browse` and `Input` stages — a no-op
+    /// unless the flow is currently in one of those two (i.e. not while
+    /// confirming, and not when the flow isn't open at all).
+    ///
+    /// `Browse` → `Input` seeds the typed path with the browser's current
+    /// directory (trailing separator included) so switching to typing picks
+    /// up from where browsing left off, rather than starting blank.
+    /// `Input` → `Browse` resolves whatever's been typed so far to a
+    /// starting directory — the path itself if it's already a directory,
+    /// its parent if it names a (possibly not-yet-finished) file, or the
+    /// home directory if neither resolves — so switching back to browsing
+    /// lands somewhere relevant instead of always restarting at home.
+    pub fn attachment_upload_toggle_input_mode(&mut self) {
+        match self.attachment_upload.take() {
+            Some(AttachmentUpload::Browse { browser }) => {
+                let path = format!("{}{}", browser.cwd.display(), std::path::MAIN_SEPARATOR);
+                self.attachment_upload = Some(AttachmentUpload::Input { path });
+            }
+            Some(AttachmentUpload::Input { path }) => {
+                let start_dir = resolve_browse_start(&path);
+                self.open_attachment_browser_at(start_dir);
+            }
+            other => self.attachment_upload = other,
+        }
+    }
+
+    /// Move the `Browse` stage's highlighted row — a no-op if the flow
+    /// isn't in that stage.
+    pub fn attachment_browse_move(&mut self, delta: isize) {
+        if let Some(AttachmentUpload::Browse { browser }) = self.attachment_upload.as_mut() {
+            browser.move_selection(delta);
+        }
+    }
+
+    /// Type a character into the `Browse` stage's live filter — a no-op if
+    /// the flow isn't in that stage.
+    pub fn attachment_browse_filter_char(&mut self, c: char) {
+        if let Some(AttachmentUpload::Browse { browser }) = self.attachment_upload.as_mut() {
+            browser.filter_push(c);
+        }
+    }
+
+    /// `Backspace` in `Browse`: edit the filter, or go up a directory —
+    /// see `FileBrowserState`'s own doc comment. Flashes a status message
+    /// on a directory-read failure while leaving the browser open.
+    pub fn attachment_browse_backspace(&mut self) {
+        if let Some(AttachmentUpload::Browse { browser }) = self.attachment_upload.as_mut() {
+            if let Some(e) = browser.backspace() {
+                self.status = e;
+            }
+        }
+    }
+
+    /// `Enter` in `Browse`: descend into the highlighted directory, or
+    /// finalize the highlighted file into `Confirm`. A no-op if nothing's
+    /// selected (an empty or fully-filtered-out listing). A directory-read
+    /// failure while descending flashes a status message and leaves the
+    /// browser open on the directory it was already showing.
+    pub fn attachment_browse_activate(&mut self) {
+        let Some(AttachmentUpload::Browse { browser }) = self.attachment_upload.as_mut() else {
+            return;
+        };
+        let Some(entry) = browser.selected_entry().cloned() else {
+            return;
+        };
+        if entry.is_dir {
+            if let Some(e) = browser.descend(entry.path) {
+                self.status = e;
+            }
+            return;
+        }
+        let display = entry.path.display().to_string();
+        match finalize_attachment_selection(display, entry.path) {
+            Ok(confirm) => self.attachment_upload = Some(confirm),
+            Err(msg) => self.status = msg,
+        }
     }
 
     /// Types a character into the `Input` stage's path — a no-op if the
@@ -353,6 +460,16 @@ impl App {
         }
     }
 
+    /// Set the `Input` stage's path wholesale, rather than one char at a
+    /// time — used by `App::handle_paste` to drop a normalized pasted/
+    /// dropped path in directly. A no-op if the flow isn't in that stage
+    /// (or isn't open at all).
+    pub(crate) fn set_attachment_upload_input_path(&mut self, path: String) {
+        if let Some(AttachmentUpload::Input { path: p }) = self.attachment_upload.as_mut() {
+            *p = path;
+        }
+    }
+
     /// `Enter` from `Input`: stat the typed path (after `~`-expansion) and
     /// either advance to `Confirm` — the mandatory preview, see
     /// CLAUDE.md's "Preview before any mutating Jira call" — or flash an
@@ -363,36 +480,70 @@ impl App {
             return;
         };
         let raw = path.clone();
-        let resolved = expand_home(&raw);
-        let meta = match std::fs::metadata(&resolved) {
-            Ok(m) if m.is_file() => m,
-            Ok(_) => {
-                self.status = format!("{raw}: not a regular file");
-                return;
-            }
-            Err(e) => {
-                self.status = format!("{raw}: {e}");
-                return;
-            }
-        };
-        let filename = resolved
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| raw.clone());
-        let mime = crate::mime::guess_mime(&filename);
-        self.attachment_upload = Some(AttachmentUpload::Confirm {
-            path: raw,
-            filename,
-            size: meta.len(),
-            mime,
-        });
+        match stat_attachment_upload_candidate(&raw) {
+            Ok(confirm) => self.attachment_upload = Some(confirm),
+            Err(msg) => self.status = msg,
+        }
     }
 
-    /// `Esc` from `Confirm`: back to `Input`, keeping the previously-typed
-    /// path so a stray Esc doesn't lose it — same "go back, don't discard"
-    /// semantics as `App::back_out_of_preview` for the edit-preview screen
-    /// (see `src/ui/preview.rs`'s own doc comment and footer copy). A no-op
-    /// if the flow isn't in `Confirm` (or isn't open at all).
+    /// Given a candidate local path (typically already normalized by
+    /// `infra::normalize_dropped_path`), validate it the same way
+    /// `confirm_attachment_upload_path` does and, only if it resolves to an
+    /// existing, readable regular file, open the upload flow directly into
+    /// `Confirm` with it — skipping the `Input` stage entirely. Used by
+    /// `App::handle_paste`'s "drop a file straight onto the Detail screen"
+    /// auto-attach flow. Returns whether it opened; a failed stat is a
+    /// silent no-op (no flash, `attachment_upload` left untouched) rather
+    /// than an error, since a paste that doesn't resolve to a file might
+    /// just be unrelated text, not a failed drop.
+    pub(crate) fn try_auto_attach(&mut self, raw: &str) -> bool {
+        match stat_attachment_upload_candidate(raw) {
+            Ok(confirm) => {
+                self.attachment_upload = Some(confirm);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// `App::handle_paste`'s `Browse`-stage integration: given a normalized
+    /// pasted/dropped path, jump the open file browser straight to it
+    /// instead of leaving the user to navigate there by hand — descending
+    /// into it (mirroring `attachment_browse_activate`'s directory branch)
+    /// if it's a directory, or finalizing it straight into `Confirm`
+    /// (mirroring `attachment_browse_activate`'s file branch) if it's a
+    /// file, without requiring the extra Enter that same path would need
+    /// via `attachment_browse_activate`. A silent no-op — same convention
+    /// as `try_auto_attach` — if the flow isn't in the `Browse` stage, or
+    /// the path doesn't resolve to anything on disk (a paste that isn't
+    /// actually a file/directory drop might just be unrelated text).
+    pub(crate) fn paste_into_attachment_browser(&mut self, normalized: &str) {
+        let Some(AttachmentUpload::Browse { browser }) = self.attachment_upload.as_mut() else {
+            return;
+        };
+        let resolved = expand_home(normalized);
+        if resolved.is_dir() {
+            if let Some(e) = browser.descend(resolved) {
+                self.status = e;
+            }
+            return;
+        }
+        if resolved.is_file() {
+            match finalize_attachment_selection(normalized.to_string(), resolved) {
+                Ok(confirm) => self.attachment_upload = Some(confirm),
+                Err(msg) => self.status = msg,
+            }
+        }
+    }
+
+    /// `Esc` from `Confirm`: back to `Input`, keeping the previously-typed/
+    /// picked path so a stray Esc doesn't lose it — same "go back, don't
+    /// discard" semantics as `App::back_out_of_preview` for the edit-preview
+    /// screen (see `src/ui/preview.rs`'s own doc comment and footer copy).
+    /// Always lands on `Input` (not back on `Browse`) regardless of which
+    /// stage the selection came from — `path` alone is enough context to
+    /// resume from, and `Input`'s own `Tab` gets back to browsing if wanted.
+    /// A no-op if the flow isn't in `Confirm` (or isn't open at all).
     pub fn back_out_of_attachment_upload_confirm(&mut self) {
         if let Some(AttachmentUpload::Confirm { path, .. }) = self.attachment_upload.take() {
             self.attachment_upload = Some(AttachmentUpload::Input { path });
@@ -471,11 +622,55 @@ pub(crate) fn images_eligible(
     picker.is_some() && matches!(source, Source::Live { .. })
 }
 
+/// Stat a candidate attachment-upload path (after `~`-expansion) and either
+/// build the `Confirm` variant with its resolved filename/size/mime/content
+/// preview, or a human-readable error naming the path that failed to stat —
+/// shared by `App::confirm_attachment_upload_path` (manual Enter from
+/// `Input`) and `App::try_auto_attach` (the paste/drop auto-attach flow), so
+/// both go through exactly one "does this look like a real file" check.
+fn stat_attachment_upload_candidate(raw: &str) -> Result<AttachmentUpload, String> {
+    finalize_attachment_selection(raw.to_string(), expand_home(raw))
+}
+
+/// Stat `resolved`, guess its MIME type, read a short text preview when
+/// applicable, and build the `Confirm` variant — or, on failure, a
+/// human-readable error naming `display_path`. Shared by
+/// `stat_attachment_upload_candidate` (`Input`/paste, which resolves `~`
+/// first) and `App::attachment_browse_activate` (`Browse`, which already has
+/// a resolved path straight from the directory listing).
+fn finalize_attachment_selection(
+    display_path: String,
+    resolved: PathBuf,
+) -> Result<AttachmentUpload, String> {
+    let meta = match std::fs::metadata(&resolved) {
+        Ok(m) if m.is_file() => m,
+        Ok(_) => return Err(format!("{display_path}: not a regular file")),
+        Err(e) => return Err(format!("{display_path}: {e}")),
+    };
+    let filename = resolved
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| display_path.clone());
+    let mime = crate::mime::guess_mime(&filename);
+    let content_preview = read_attachment_text_preview(&resolved, mime, &filename);
+    Ok(AttachmentUpload::Confirm {
+        path: display_path,
+        filename,
+        size: meta.len(),
+        mime,
+        content_preview,
+    })
+}
+
 /// Expand a leading `~` (or `~/...`) to the user's home directory, via the
 /// `dirs` crate already used for XDG paths elsewhere (see `config::mod`).
 /// Any other path — already absolute, plain relative, or a bare `~word`
 /// that isn't actually a home-relative reference — is left untouched.
-fn expand_home(path: &str) -> PathBuf {
+/// `pub(super)` (not private) so `app::paste`'s image-path detection
+/// (`App::handle_paste`'s `Screen::Edit` arm) can resolve a pasted/dropped
+/// path the exact same way this module's own upload flow does, rather than
+/// duplicating the same three-line tilde check.
+pub(super) fn expand_home(path: &str) -> PathBuf {
     if let Some(rest) = path.strip_prefix('~') {
         if rest.is_empty() || rest.starts_with('/') {
             if let Some(home) = dirs::home_dir() {
@@ -484,6 +679,83 @@ fn expand_home(path: &str) -> PathBuf {
         }
     }
     PathBuf::from(path)
+}
+
+/// Resolve a typed (possibly incomplete) path to a directory the file
+/// browser can start from — used by `App::attachment_upload_toggle_input_mode`
+/// when switching from `Input` back to `Browse`. Prefers the path itself if
+/// it's already a directory, falls back to its parent if it names a file (or
+/// a file that doesn't exist yet), and falls back to the home directory (or
+/// `.`) if neither resolves to anything browsable.
+fn resolve_browse_start(typed: &str) -> PathBuf {
+    let resolved = expand_home(typed);
+    if resolved.is_dir() {
+        return resolved;
+    }
+    if let Some(parent) = resolved.parent() {
+        if parent.is_dir() {
+            return parent.to_path_buf();
+        }
+    }
+    dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// Extensions treated as text for the Confirm-stage content preview even
+/// when their guessed MIME type doesn't start with `text/` (see
+/// `crate::mime::guess_mime` — most of these already map to a `text/*`
+/// type, but this list is the single source of truth `read_attachment_text_preview`
+/// actually consults, so it stays correct even if `guess_mime` changes).
+const TEXT_PREVIEW_EXTENSIONS: &[&str] = &["md", "txt", "log", "csv", "json"];
+
+/// How much of a file to read for the Confirm-stage content preview — enough
+/// to give a real sense of the content without the preview itself dominating
+/// the popup or the read taking any perceptible time.
+const TEXT_PREVIEW_MAX_BYTES: u64 = 4096;
+
+/// Populate `AttachmentUpload::Confirm`'s `content_preview`: read up to
+/// `TEXT_PREVIEW_MAX_BYTES` of `path` as UTF-8 text, but only when it looks
+/// text-ish in the first place (guessed MIME starting with `text/`, or an
+/// extension in `TEXT_PREVIEW_EXTENSIONS` — `guess_mime` maps some of those
+/// to non-`text/*` types, e.g. `.json` → `application/json`, so the
+/// extension check catches those too). Falls back to `None` on any read
+/// failure or invalid UTF-8 (e.g. a binary file whose extension happens to
+/// look text-like) — a misdetected binary must never surface as garbled
+/// text in the preview, so any error here is silently treated the same as
+/// "not text at all" rather than surfaced as its own status flash.
+fn read_attachment_text_preview(path: &Path, mime: &str, filename: &str) -> Option<String> {
+    let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
+    let looks_like_text =
+        mime.starts_with("text/") || TEXT_PREVIEW_EXTENSIONS.contains(&ext.as_str());
+    if !looks_like_text {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    let truncated = bytes.len() as u64 > TEXT_PREVIEW_MAX_BYTES;
+    let cap = (TEXT_PREVIEW_MAX_BYTES as usize).min(bytes.len());
+    let slice = &bytes[..cap];
+    let mut text = match std::str::from_utf8(slice) {
+        Ok(s) => s.to_string(),
+        Err(e) => {
+            // A byte cap can split a multi-byte character mid-sequence,
+            // which surfaces as an error a handful of bytes before the very
+            // end of the slice — back off to the last full character rather
+            // than treating a merely-truncated (but otherwise valid) text
+            // file as binary. Any invalid byte further back than that is a
+            // genuine decode failure (a binary file whose extension/MIME
+            // happened to look text-like), so it's a `None`, not a partial
+            // preview.
+            let valid_up_to = e.valid_up_to();
+            if truncated && cap - valid_up_to <= 3 {
+                std::str::from_utf8(&slice[..valid_up_to]).ok()?.to_string()
+            } else {
+                return None;
+            }
+        }
+    };
+    if truncated {
+        text.push_str("\n…");
+    }
+    Some(text)
 }
 
 /// Reduce an attachment's API-reported filename to a safe on-disk basename —

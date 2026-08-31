@@ -92,6 +92,23 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Modal: confirm uploading and embedding a captured/pasted image in the
+    // in-TUI editor (`Ctrl+V` clipboard capture, or a dropped/pasted image
+    // path via `app::paste` — see `App::begin_image_embed`). Unlike
+    // `confirm_discard` above, this doesn't dismiss on *any* other key: a
+    // stray keypress swallowing a pending upload confirmation (rather than
+    // just being ignored) would be a much more surprising loss than
+    // dismissing a discard prompt is, so only its own two bound keys do
+    // anything here.
+    if app.pending_image_embed.is_some() {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Enter => app.confirm_image_embed(),
+            KeyCode::Esc => app.decline_image_embed(),
+            _ => {}
+        }
+        return;
+    }
+
     // Onboarding has its own key map (including a text-entry form).
     if app.screen == Screen::Welcome {
         welcome::handle_welcome_key(app, key);
@@ -129,18 +146,30 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // Modal: the attachment upload flow (`u`, Detail only) — a path-entry
-    // stage (`Input`, plain single-line typing like Search's query box)
-    // followed by a mandatory preview (`Confirm`) before any network call,
-    // per CLAUDE.md's "Preview before any mutating Jira call." `Confirm`'s
-    // Esc goes back to `Input` (keeping the typed path), matching the edit
-    // preview's own "go back, don't discard" semantics — see
-    // `App::back_out_of_preview`/`back_out_of_attachment_upload_confirm`.
+    // Modal: the attachment upload flow (`u`, Detail only) — a filesystem
+    // browser (`Browse`, the default) or a plain path-entry line (`Input`,
+    // `Tab`-accessible fallback for typing an exact path by hand), either of
+    // which lead into a mandatory preview (`Confirm`) before any network
+    // call, per CLAUDE.md's "Preview before any mutating Jira call."
+    // `Confirm`'s Esc goes back to `Input` (keeping the resolved path),
+    // matching the edit preview's own "go back, don't discard" semantics —
+    // see `App::back_out_of_preview`/`back_out_of_attachment_upload_confirm`.
     if let Some(stage) = app.attachment_upload.as_ref() {
         match stage {
+            app::AttachmentUpload::Browse { .. } => match key.code {
+                KeyCode::Up | KeyCode::Char('k') => app.attachment_browse_move(-1),
+                KeyCode::Down | KeyCode::Char('j') => app.attachment_browse_move(1),
+                KeyCode::Enter => app.attachment_browse_activate(),
+                KeyCode::Backspace => app.attachment_browse_backspace(),
+                KeyCode::Tab => app.attachment_upload_toggle_input_mode(),
+                KeyCode::Esc | KeyCode::Char('q') => app.close_attachment_upload(),
+                KeyCode::Char(c) => app.attachment_browse_filter_char(c),
+                _ => {}
+            },
             app::AttachmentUpload::Input { .. } => match key.code {
                 KeyCode::Enter => app.confirm_attachment_upload_path(),
                 KeyCode::Backspace => app.attachment_upload_backspace(),
+                KeyCode::Tab => app.attachment_upload_toggle_input_mode(),
                 KeyCode::Esc => app.close_attachment_upload(),
                 KeyCode::Char(c) => app.attachment_upload_input_char(c),
                 _ => {}
@@ -350,6 +379,23 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             KeyCode::Esc if app.editor.is_dirty() => app.confirm_discard = true,
             KeyCode::Esc => app.cancel_edit(),
             KeyCode::Char('s') if ctrl => app.commit_tui_edit(),
+            // `⌃T` toggles the editor between plain compact Markdown text
+            // (today's default) and rendering any whole-line `adf-media://`
+            // token as an actual inline image — see
+            // `App::toggle_editor_image_view`. `⌃I`/`⌃M` were both ruled
+            // out the same way this file's own `F9` comment above rules out
+            // `⌃M` for the mouse toggle: at the legacy-ANSI terminal level
+            // `⌃I` is byte-identical to Tab (which this same match already
+            // binds to inserting two spaces) and `⌃M` to Enter/CR, so
+            // either would make an existing binding unreliably double as
+            // this toggle. `⌃T` has no such collision and isn't otherwise
+            // bound on this screen.
+            KeyCode::Char('t') if ctrl => app.toggle_editor_image_view(),
+            // Best-effort clipboard image capture (see
+            // `infra::clipboard_image`) — just the capture mechanism for
+            // now; a later, separate piece of work wires the resulting temp
+            // file into an actual upload/embed.
+            KeyCode::Char('v') if ctrl => app.paste_clipboard_image(),
             KeyCode::Enter => app.editor.newline(),
             KeyCode::Backspace => app.editor.backspace(),
             KeyCode::Left => app.editor.left(),
@@ -1900,5 +1946,43 @@ mod tests {
         let mut app = demo_app();
         handle_key(&mut app, KeyEvent::from(KeyCode::Char('m')));
         assert!(!app.mouse.enabled, "'m' should no longer toggle mouse mode");
+    }
+
+    /// `Ctrl+V` in the editor dispatches into `App::paste_clipboard_image`
+    /// (never a panic, always leaves a status/flash behind — see that
+    /// method's own test in `app::tests::edit`) rather than falling through
+    /// to `KeyCode::Char(c) if !ctrl`'s plain-typing arm, which would insert
+    /// a literal `v` into the buffer instead.
+    #[test]
+    fn ctrl_v_on_the_editor_captures_a_clipboard_image_instead_of_typing_v() {
+        let mut app = demo_app();
+        app.selected = 0;
+        app.open_detail();
+        app.begin_comment();
+        app.status.clear();
+
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL),
+        );
+
+        assert_eq!(app.screen, Screen::Edit);
+        assert!(
+            !app.editor.to_text().contains('v'),
+            "Ctrl+V must not fall through to plain typing"
+        );
+        // A successful capture now raises the upload-and-embed confirm
+        // prompt (`App::begin_image_embed`) instead of flashing a
+        // placeholder path — a visible modal of its own, not a silent
+        // no-op, even though it leaves `status`/the flash untouched. Every
+        // other outcome (no tool installed, an empty clipboard, a read
+        // failure) still leaves a status/flash behind exactly as before.
+        assert!(
+            !app.status.is_empty()
+                || app.active_flash().is_some()
+                || app.pending_image_embed.is_some(),
+            "must leave a status line, a flash, or a pending image-embed confirmation \
+             behind — never silently no-op"
+        );
     }
 }

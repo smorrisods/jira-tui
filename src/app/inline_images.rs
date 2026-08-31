@@ -20,7 +20,7 @@ use ratatui_image::Resize;
 use serde_json::Value;
 
 use crate::adf::{self, InlineMediaRef};
-use crate::domain::IssueDetail;
+use crate::domain::{Attachment, IssueDetail};
 
 use super::{async_ops, App};
 
@@ -544,7 +544,6 @@ impl App {
         detail: Option<&IssueDetail>,
         placement: &adf::ImagePlacement,
     ) -> Option<Ref<'_, SlicedProtocol>> {
-        let picker = self.image_picker.as_ref()?;
         // Keyed by the resolved `InlineImageKey` (attachment id / external
         // URL) rather than `placement.media` (an `InlineMediaRef` — just the
         // node's `alt` text) — two different issues' media nodes can easily
@@ -559,13 +558,33 @@ impl App {
         // have run recently enough.
         let key = self.inline_image_key_for(detail, &placement.media)?;
         let target = Size::new(placement.cols, placement.rows);
+        self.inline_image_protocol_for_key(&key, target)
+    }
+
+    /// Get-or-build the cached `SlicedProtocol` for an already-resolved
+    /// `key` at `target` size, rebuilding it from the still-cached
+    /// `DynamicImage` in `inline_images` whenever the cached protocol's own
+    /// size no longer matches `target`. Factored out of
+    /// `sliced_inline_image_protocol` (which resolves `key` from an
+    /// `ImagePlacement`'s `InlineMediaRef` first, then delegates here) so
+    /// the in-TUI editor's own image view (`ui::editor`, sized via
+    /// `editor_image_rows_cols` rather than an `ImagePlacement` — the editor
+    /// has no ADF document/`render_with_media` pass to source one from) can
+    /// share the exact same get-or-build/cache logic instead of duplicating
+    /// it.
+    pub(crate) fn inline_image_protocol_for_key(
+        &self,
+        key: &InlineImageKey,
+        target: Size,
+    ) -> Option<Ref<'_, SlicedProtocol>> {
+        let picker = self.image_picker.as_ref()?;
         let up_to_date = self
             .inline_image_protocols
             .borrow()
-            .get(&key)
+            .get(key)
             .is_some_and(|p| p.size() == target);
         if !up_to_date {
-            let img = self.decoded_inline_image(detail, &placement.media)?.clone();
+            let img = self.inline_images.borrow().get(key)?.clone();
             // `Resize::Fit` leaves an image at its native size whenever that
             // native size already fits inside `target` — for a small source
             // (particularly a Jira-generated thumbnail, well below a
@@ -581,8 +600,230 @@ impl App {
                 .borrow_mut()
                 .insert(key.clone(), protocol);
         }
-        Ref::filter_map(self.inline_image_protocols.borrow(), |m| m.get(&key)).ok()
+        Ref::filter_map(self.inline_image_protocols.borrow(), |m| m.get(key)).ok()
     }
+
+    /// Whichever issue's attachments the in-TUI editor's image view should
+    /// resolve `adf-media://` tokens against — the same issue `self.editor`'s
+    /// buffer is describing/commenting on. `None` for a brand-new issue's
+    /// description (`EditTarget::NewIssue`, no issue key yet — see
+    /// `App::begin_new_issue_description_edit_target`) or whenever the
+    /// target issue's detail isn't loaded anywhere `self` currently caches
+    /// it (`self.detail`, if it's the same issue, else `self.detail_cache`
+    /// — mirrors `comment_target_key`'s own Detail-vs-quick-view sourcing).
+    fn editor_media_source_detail(&self) -> Option<&IssueDetail> {
+        let key = self.edit_key.as_ref()?;
+        self.detail
+            .as_ref()
+            .filter(|d| &d.key == key)
+            .or_else(|| self.detail_cache.get(key))
+    }
+
+    /// Resolve one already-decoded `adf-media://` token's attrs into the
+    /// `InlineImageKey` it would be fetched/cached under, against whichever
+    /// issue's attachments `editor_media_source_detail` finds — a
+    /// round-tripped token carries the exact same attrs shape a real ADF
+    /// `media` node would, so `resolve_media_attrs` resolves it identically.
+    /// `None` for a still-unmatched (`Candidate`, uuid-only) or genuinely
+    /// `Unresolved` token: the editor's image view never itself drives the
+    /// uuid redirect-probe synchronously (that's `refresh_editor_inline_images`'s
+    /// job, dispatched separately and landing later via the usual
+    /// `InlineImageUuidsResolved` event).
+    pub(crate) fn resolve_editor_media_key(&self, token_url: &str) -> Option<InlineImageKey> {
+        let decoded = adf::media::decode(token_url)?;
+        let attachments = self
+            .editor_media_source_detail()
+            .map(|d| d.attachments.as_slice())
+            .unwrap_or(&[]);
+        match resolve_media_attrs(Some(&decoded.media_attrs), attachments) {
+            MediaResolution::Resolved(key, _url) => Some(key),
+            MediaResolution::Candidate(_) | MediaResolution::Unresolved => None,
+        }
+    }
+
+    /// `App::sized_inline_image`'s counterpart for the editor's image view:
+    /// sized directly from an already-resolved `key` and its cached
+    /// `DynamicImage`, rather than an `InlineMediaRef` walked out of a
+    /// rendered ADF document — the editor has no such document, just raw
+    /// decoded token attrs (see `resolve_editor_media_key`). `None` when
+    /// there's no picker, or `key` has no decoded image cached yet (still
+    /// mid-fetch, or never resolved) — either way `ui::editor` just keeps
+    /// showing the line as plain token text, exactly like an unresolved
+    /// image does everywhere else in this module.
+    pub(crate) fn editor_image_rows_cols(
+        &self,
+        key: &InlineImageKey,
+        pane_width: u16,
+        max_rows: u16,
+    ) -> Option<(u16, u16)> {
+        let picker = self.image_picker.as_ref()?;
+        let cache = self.inline_images.borrow();
+        let img = cache.get(key)?;
+        Some(rows_cols_for(img, picker.font_size(), pane_width, max_rows))
+    }
+
+    /// Toggle the in-TUI editor between plain compact Markdown (today's
+    /// behaviour, `false`) and rendering any whole-line `adf-media://`
+    /// token as an actual inline image (`true`) — `⌃T`, `Screen::Edit`
+    /// only. Purely a *view* mode: never touches what `finish_edit` actually
+    /// compiles/saves, which always reads `self.editor.lines`' raw Markdown
+    /// text regardless. Kicks off `refresh_editor_inline_images` immediately
+    /// when switching *into* image view, so anything already decoded and
+    /// cached (e.g. from viewing this same issue's Detail screen a moment
+    /// ago) shows up right away rather than only after some other trigger;
+    /// switching back to text view needs no such refresh, since it just
+    /// stops consulting the cache rather than invalidating it.
+    pub fn toggle_editor_image_view(&mut self) {
+        self.editor_image_view = !self.editor_image_view;
+        if self.editor_image_view {
+            self.refresh_editor_inline_images();
+        }
+    }
+
+    /// Scan the editor buffer for whole-line `adf-media://` tokens (see
+    /// `whole_line_media_url`) and kick off an eager fetch for each one not
+    /// already cached or in flight — the editor's own counterpart to
+    /// `refresh_inline_images`/`refresh_quick_view_inline_images`, sharing
+    /// the exact same `inline_images`/`inline_images_pending`/
+    /// `inline_image_uuid_matches` caches and dispatch machinery (an
+    /// attachment referenced from a token sitting in the editor is the very
+    /// same attachment a real ADF `media` node on that issue would resolve
+    /// to, so there's no reason for a separate cache — a `⌃T` toggle right
+    /// after leaving Detail on the same issue should see its images already
+    /// warm). A no-op with nothing to fetch: the toggle is off, this
+    /// session/terminal can't render images at all
+    /// (`attachments::images_eligible`), or the target issue's detail isn't
+    /// loaded anywhere `editor_media_source_detail` can find it (in which
+    /// case only an external-URL token could ever resolve, and even that
+    /// still needs *some* attachments list — possibly empty — to check
+    /// against, which the `unwrap_or_default()` below supplies).
+    pub(crate) fn refresh_editor_inline_images(&mut self) {
+        if !self.editor_image_view {
+            return;
+        }
+        if !super::attachments::images_eligible(self.image_picker.as_ref(), &self.source) {
+            return;
+        }
+        let attachments: Vec<Attachment> = self
+            .editor_media_source_detail()
+            .map(|d| d.attachments.clone())
+            .unwrap_or_default();
+        let generation = self.inline_image_generation;
+        // Cloned up front so the scan below doesn't need to hold a borrow
+        // of `self.editor.lines` across the mutable cache/dispatch work
+        // that follows — this only runs when `editor_image_view` just
+        // toggled on, not on every keystroke, so the clone is cheap relative
+        // to how rarely it happens.
+        let lines = self.editor.lines.clone();
+        let mut candidates = Vec::new();
+        for line in &lines {
+            let Some(token) = whole_line_media_url(line) else {
+                continue;
+            };
+            let Some(decoded) = adf::media::decode(token) else {
+                continue;
+            };
+            match resolve_media_attrs(Some(&decoded.media_attrs), &attachments) {
+                MediaResolution::Resolved(key, url) => {
+                    if self.inline_images.borrow().contains_key(&key)
+                        || self.inline_images_pending.contains(&key)
+                    {
+                        continue;
+                    }
+                    self.inline_images_pending.insert(key.clone());
+                    let tx = self.events_tx.clone();
+                    async_ops::dispatch_inline_image(tx, generation, key, url);
+                }
+                MediaResolution::Candidate(uuid) => candidates.push(uuid),
+                MediaResolution::Unresolved => {}
+            }
+        }
+        let has_image_attachment = attachments.iter().any(|a| a.image_preview_url().is_some());
+        if !candidates.is_empty() && has_image_attachment {
+            let tx = self.events_tx.clone();
+            async_ops::dispatch_uuid_resolve(tx, generation, candidates, attachments);
+        }
+    }
+}
+
+/// Outcome of resolving one `media` node's attrs — whether walked out of a
+/// real ADF document (`resolve_inline_images_with_candidates`) or decoded
+/// straight from an editor's own `adf-media://` token
+/// (`App::resolve_editor_media_key`/`App::refresh_editor_inline_images`) —
+/// against a set of attachments. Factored out as its own shared function
+/// (a code-review-style DRY fix applied proactively here, since the editor
+/// needed the exact same per-node decision `resolve_inline_images_with_candidates`'s
+/// loop body already made) so there is exactly one place that decides what
+/// counts as resolved.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum MediaResolution {
+    /// Ready to fetch, under this key/url.
+    Resolved(InlineImageKey, String),
+    /// A `file`-type node with no attachment match (yet) — a candidate for
+    /// the uuid redirect-probe fallback (`dispatch_uuid_resolve`).
+    Candidate(String),
+    /// Nothing more can be done with this node right now (an external node
+    /// with no `url`, or a `file` node with no `id` to fall back on).
+    Unresolved,
+}
+
+/// See `MediaResolution`'s own doc comment. Mirrors
+/// `resolve_inline_images_with_candidates`'s original per-node logic
+/// exactly — moving it here must not change behaviour, only its callers.
+pub(crate) fn resolve_media_attrs(
+    attrs: Option<&Value>,
+    attachments: &[Attachment],
+) -> MediaResolution {
+    let is_external =
+        attrs.and_then(|a| a.get("type")).and_then(|t| t.as_str()) == Some("external");
+    if is_external {
+        return match attrs.and_then(|a| a.get("url")).and_then(|u| u.as_str()) {
+            Some(url) => MediaResolution::Resolved(
+                InlineImageKey::External(url.to_string()),
+                url.to_string(),
+            ),
+            None => MediaResolution::Unresolved,
+        };
+    }
+    let alt = attrs
+        .and_then(|a| a.get("alt"))
+        .and_then(|a| a.as_str())
+        .filter(|a| !a.is_empty());
+    if let Some(alt) = alt {
+        if let Some(attachment) = attachments.iter().find(|a| a.filename == alt) {
+            if let Some(url) = attachment.image_preview_url() {
+                return MediaResolution::Resolved(
+                    InlineImageKey::Attachment(attachment.id.clone()),
+                    url,
+                );
+            }
+        }
+    }
+    match attrs.and_then(|a| a.get("id")).and_then(|i| i.as_str()) {
+        Some(uuid) => MediaResolution::Candidate(uuid.to_string()),
+        None => MediaResolution::Unresolved,
+    }
+}
+
+/// If `line`, once trimmed, is nothing but a single
+/// `![alt](adf-media://…)` image token, returns the token's URL half —
+/// `None` for any line carrying other text alongside the token (or no token
+/// at all). This is a safe test for "this whole line is one embedded
+/// image" because every one of this crate's own tokens round-trips as a
+/// whole, dedicated line: `markdown::to_markdown`'s `media`/`mediaSingle`
+/// arms each emit exactly one token as an entire block, and `mediaGroup`'s
+/// arm joins its children's tokens with a single `\n` (see that module's
+/// own doc comments) — never mixed inline with other prose on the same
+/// line. Used both by `App::refresh_editor_inline_images` (deciding what to
+/// fetch) and `ui::editor`'s render pass (deciding what to paint), so the
+/// two can never disagree about which lines are image tokens.
+pub(crate) fn whole_line_media_url(line: &str) -> Option<&str> {
+    let trimmed = line.trim();
+    let rest = trimmed.strip_prefix("![")?;
+    let close_bracket = rest.find(']')?;
+    let after = &rest[close_bracket + 1..];
+    let url = after.strip_prefix('(')?.strip_suffix(')')?;
+    adf::media::is_adf_media_url(url).then_some(url)
 }
 
 /// The aspect-ratio math behind `App::sized_inline_image`: fills the *full*
@@ -701,34 +942,13 @@ pub(crate) fn resolve_inline_images_with_candidates(
         if resolved.len() + candidates.len() >= MAX_INLINE_IMAGES {
             break;
         }
-        let attrs = node.get("attrs");
-        let is_external =
-            attrs.and_then(|a| a.get("type")).and_then(|t| t.as_str()) == Some("external");
-        if is_external {
-            if let Some(url) = attrs.and_then(|a| a.get("url")).and_then(|u| u.as_str()) {
-                resolved.push((InlineImageKey::External(url.to_string()), url.to_string()));
-            }
-            continue;
-        }
-        let alt = attrs
-            .and_then(|a| a.get("alt"))
-            .and_then(|a| a.as_str())
-            .filter(|a| !a.is_empty());
-        if let Some(alt) = alt {
-            if let Some(attachment) = detail.attachments.iter().find(|a| a.filename == alt) {
-                if let Some(url) = attachment.image_preview_url() {
-                    resolved.push((InlineImageKey::Attachment(attachment.id.clone()), url));
-                    continue;
-                }
-            }
-        }
-        // No alt, or alt present but it didn't match any image attachment —
-        // a candidate for the uuid-probe fallback, if the node carries its
-        // own Media Services id to look up (it always should for a
-        // `type: "file"` node, but defensively skip rather than panic if
-        // Jira ever omits it).
-        if let Some(uuid) = attrs.and_then(|a| a.get("id")).and_then(|i| i.as_str()) {
-            candidates.push(uuid.to_string());
+        // Per-node resolution itself lives in `resolve_media_attrs`, shared
+        // with the editor's own token scan (`App::refresh_editor_inline_images`)
+        // — see that function's own doc comment.
+        match resolve_media_attrs(node.get("attrs"), &detail.attachments) {
+            MediaResolution::Resolved(key, url) => resolved.push((key, url)),
+            MediaResolution::Candidate(uuid) => candidates.push(uuid),
+            MediaResolution::Unresolved => {}
         }
     }
     (resolved, candidates)

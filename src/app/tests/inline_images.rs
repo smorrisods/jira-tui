@@ -10,7 +10,7 @@ use serde_json::json;
 use crate::adf;
 use crate::domain::{Attachment, Comment, IssueDetail};
 
-use super::super::inline_images::resolve_inline_images_with_candidates;
+use super::super::inline_images::{resolve_inline_images_with_candidates, whole_line_media_url};
 use super::super::*;
 use super::support::*;
 
@@ -823,5 +823,154 @@ fn refresh_detail_also_clears_the_stale_sliced_protocol_cache() {
         app.inline_image_protocols.borrow().is_empty(),
         "a stale encoded protocol from a previous issue must not survive a detail refresh, \
          or a different issue's same-alt image could render the old picture"
+    );
+}
+
+/// `whole_line_media_url` (the in-TUI editor's image view detection —
+/// `ui::editor`'s render pass and `App::refresh_editor_inline_images` both
+/// rely on it agreeing on exactly which lines are image tokens) recognizes
+/// a line that's nothing but one `![alt](adf-media://…)` token, trimming
+/// incidental leading/trailing whitespace.
+#[test]
+fn whole_line_media_url_detects_a_lone_token_line() {
+    assert_eq!(
+        whole_line_media_url("![mockup.png](adf-media://file/x?alt=mockup.png)"),
+        Some("adf-media://file/x?alt=mockup.png")
+    );
+    assert_eq!(
+        whole_line_media_url("  ![mockup.png](adf-media://file/x?alt=mockup.png)  "),
+        Some("adf-media://file/x?alt=mockup.png"),
+        "incidental surrounding whitespace must not defeat the match"
+    );
+}
+
+/// A line carrying anything besides the token — other prose, or a plain
+/// (non-`adf-media://`) image a human typed — is never treated as a whole
+/// -line image; the editor's image view only ever replaces a whole line,
+/// never splices an image into running text.
+#[test]
+fn whole_line_media_url_rejects_anything_that_is_not_purely_the_token() {
+    assert_eq!(
+        whole_line_media_url("see the screenshot: ![mockup.png](adf-media://file/x)"),
+        None
+    );
+    assert_eq!(
+        whole_line_media_url("![a plain image](https://example.com/pic.png)"),
+        None,
+        "a plain Markdown image a human typed is not one of this crate's own tokens"
+    );
+    assert_eq!(whole_line_media_url("just some text"), None);
+}
+
+/// Switching the in-TUI editor into image view (`App::toggle_editor_image_view`)
+/// scans the buffer for whole-line `adf-media://` tokens and dispatches a
+/// fetch for each resolvable one — sharing the exact same
+/// `inline_images`/dispatch machinery `App::refresh_inline_images` (Detail)
+/// already exercises above, just sourced from `self.editor.lines` instead
+/// of `detail.description`. Mirrors
+/// `opening_an_issue_with_a_resolvable_image_dispatches_a_fetch_that_lands_in_the_cache`.
+#[tokio::test]
+async fn toggling_editor_image_view_on_dispatches_a_fetch_for_a_resolvable_token() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    let summary = app.issues[0].clone();
+    let key = summary.key.clone();
+    let mut detail = crate::domain::demo_detail(&key);
+    detail.attachments = vec![image_attachment("10001", "mockup.png", "image/png", None)];
+    // An empty description/no comments, so `open_by_key`'s own
+    // `refresh_inline_images` (Detail's description-driven fetch) finds
+    // nothing and dispatches nothing — isolating this test to only the
+    // editor buffer's own token, so exactly one event lands on the channel.
+    detail.description = json!({ "type": "doc", "version": 1, "content": [] });
+    detail.acceptance_criteria = None;
+    detail.comments = vec![];
+    app.locally_created
+        .push(LocallyCreatedIssue { summary, detail });
+
+    app.open_by_key(&key);
+    app.begin_tui_edit();
+    app.editor.lines = vec![
+        "Here is a screenshot:".into(),
+        "![mockup.png](adf-media://file/x?alt=mockup.png)".into(),
+    ];
+    let generation = app.inline_image_generation;
+
+    app.toggle_editor_image_view();
+    assert!(app.editor_image_view, "the toggle itself must flip on");
+
+    let event = next_event(&mut app).await;
+    match event {
+        AppEvent::InlineImageLoaded {
+            generation: g,
+            key: k,
+            ..
+        } => {
+            assert_eq!(g, generation);
+            assert_eq!(k, InlineImageKey::Attachment("10001".into()));
+        }
+        _ => panic!("expected InlineImageLoaded, got a different event"),
+    }
+}
+
+/// Toggling back off needs no refresh of its own (it just stops consulting
+/// the cache — see `App::toggle_editor_image_view`'s own doc comment), and
+/// toggling on with nothing resolvable in the buffer dispatches nothing.
+#[test]
+fn toggling_editor_image_view_with_no_resolvable_token_dispatches_nothing() {
+    let mut app = live_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    let summary = app.issues[0].clone();
+    let key = summary.key.clone();
+    let mut detail = crate::domain::demo_detail(&key);
+    detail.description = json!({ "type": "doc", "version": 1, "content": [] });
+    detail.acceptance_criteria = None;
+    detail.comments = vec![];
+    app.locally_created
+        .push(LocallyCreatedIssue { summary, detail });
+
+    app.open_by_key(&key);
+    app.begin_tui_edit();
+    app.editor.lines = vec!["just some plain Markdown, no tokens here".into()];
+
+    app.toggle_editor_image_view();
+    assert!(app.editor_image_view);
+    assert!(
+        app.events_rx.try_recv().is_err(),
+        "nothing resolvable in the buffer should dispatch nothing"
+    );
+
+    app.toggle_editor_image_view();
+    assert!(!app.editor_image_view, "a second toggle flips back off");
+}
+
+/// A demo/cache session's editor never dispatches an inline-image fetch
+/// either, mirroring `a_demo_session_never_dispatches_an_inline_image_fetch`
+/// — `images_eligible` gates on `Source::Live` before any fetch is even
+/// considered, regardless of which screen triggered the scan.
+#[test]
+fn a_demo_session_editor_toggle_never_dispatches_a_fetch() {
+    let mut app = demo_app();
+    app.image_picker = Some(ratatui_image::picker::Picker::halfblocks());
+    let summary = app.issues[0].clone();
+    let key = summary.key.clone();
+    let mut detail = crate::domain::demo_detail(&key);
+    detail.attachments = vec![image_attachment("10001", "mockup.png", "image/png", None)];
+    detail.description = json!({ "type": "doc", "version": 1, "content": [] });
+    detail.acceptance_criteria = None;
+    detail.comments = vec![];
+    app.locally_created
+        .push(LocallyCreatedIssue { summary, detail });
+
+    app.open_by_key(&key);
+    app.begin_tui_edit();
+    app.editor.lines = vec!["![mockup.png](adf-media://file/x?alt=mockup.png)".into()];
+
+    app.toggle_editor_image_view();
+
+    assert!(app.inline_images.borrow().is_empty());
+    assert!(
+        app.events_rx.try_recv().is_err(),
+        "no fetch should ever be dispatched for a demo/cache session"
     );
 }

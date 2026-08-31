@@ -14,6 +14,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 #[cfg(feature = "images")]
 use std::collections::HashSet;
+use std::path::PathBuf;
 
 use ratatui::layout::Rect;
 
@@ -33,15 +34,17 @@ mod comments;
 mod detail;
 mod edit;
 mod field_mapping;
+mod file_browser;
 mod history;
 #[cfg(feature = "images")]
-mod inline_images;
+pub(crate) mod inline_images;
 mod links;
 mod loader;
 mod mouse;
 mod new_issue;
 mod onboarding;
 mod palette;
+mod paste;
 mod priority;
 mod project_picker;
 mod query;
@@ -68,7 +71,10 @@ pub use board::BoardSelection;
 pub use detail::RailPanel;
 pub use edit::{EditTarget, EditorState};
 pub use field_mapping::{FieldMappingOutcome, FieldMappingState, FieldMappingTarget};
+pub use file_browser::{FileBrowserState, FileEntry};
 pub(crate) use history::{NavEntry, NavHistory};
+#[cfg(feature = "images")]
+pub(crate) use inline_images::whole_line_media_url;
 #[cfg(feature = "images")]
 pub use inline_images::{BoundedCache, InlineImageKey};
 pub use mouse::{ListFocus, MouseState, SelectionSpan};
@@ -223,6 +229,20 @@ pub struct App {
 
     // In-TUI editor.
     pub editor: EditorState,
+    /// View-mode toggle (`⌃T`, `Screen::Edit` only) for the in-TUI editor:
+    /// compact plain Markdown text (`false`, today's default) vs. rendering
+    /// any whole-line `adf-media://` token (see `src/adf/media.rs`) as an
+    /// actual inline image (`true`) — purely cosmetic, never affecting what
+    /// `finish_edit` actually compiles/saves, which always reads
+    /// `self.editor.lines`' raw Markdown text regardless of this flag. Not
+    /// itself `#[cfg(feature = "images")]`-gated, unlike the machinery that
+    /// acts on it (`inline_images::App::refresh_editor_inline_images`,
+    /// `ui::editor`'s image-aware render path) — a non-`images` build still
+    /// needs the field to exist so it can stay permanently `false`; see
+    /// `App::toggle_editor_image_view`'s two builds (this file's own
+    /// `#[cfg(not(feature = "images"))]` impl below, and
+    /// `inline_images.rs`'s real one) for how each build's toggle behaves.
+    pub editor_image_view: bool,
     /// Whether the spelling-suggestion picker (`F2`, `Screen::Edit` only)
     /// is currently open.
     pub spell_suggest_open: bool,
@@ -323,6 +343,25 @@ pub struct App {
     /// next keypress — `y`/`Y` confirms the discard, anything else dismisses
     /// the prompt and resumes editing.
     pub confirm_discard: bool,
+    /// Modal: a captured/pasted image awaiting confirmation before it's
+    /// uploaded and embedded into the in-TUI editor buffer — set by
+    /// `App::begin_image_embed`, reached via `Ctrl+V`'s clipboard capture
+    /// (`App::paste_clipboard_image`) or a dropped/pasted image file path
+    /// (`App::handle_paste`'s `Screen::Edit` arm). Mirrors `confirm_discard`'s
+    /// "swallow the next keypress" shape (see `keys::handle_key`), just
+    /// carrying the staged path rather than being a bare flag — CLAUDE.md's
+    /// "Preview before any mutating Jira call" applies here exactly as it
+    /// does to `AttachmentUpload::Confirm`, just scoped to the editor rather
+    /// than the dedicated attachment-upload flow. `y`/Enter
+    /// (`App::confirm_image_embed`) dispatches the upload; `Esc`
+    /// (`App::decline_image_embed`) inserts the path as plain text instead.
+    pub pending_image_embed: Option<PathBuf>,
+    /// Whether an image-embed upload (`pending_image_embed`) is currently in
+    /// flight — guards `image_embed_generation` the same way `edit_pending`
+    /// guards `edit_generation`, so a stale response can't insert into
+    /// whatever the editor buffer holds by the time it lands.
+    pub(crate) image_embed_pending: bool,
+    pub(crate) image_embed_generation: u64,
 
     // Attachment picker (`a`, Detail only): open a picker over the current
     // issue's attachments, then open the highlighted one in the browser or
@@ -688,6 +727,7 @@ impl App {
             jax_party_until: 0,
             jax_mini_area: Cell::new(Rect::default()),
             editor: EditorState::default(),
+            editor_image_view: false,
             spell_suggest_open: false,
             spell_suggest: SpellSuggestState::default(),
             flash_msg: String::new(),
@@ -724,6 +764,9 @@ impl App {
             edit_key: None,
             edit_return_screen: Screen::Detail,
             confirm_discard: false,
+            pending_image_embed: None,
+            image_embed_pending: false,
+            image_embed_generation: 0,
             attachments_open: false,
             attachment_index: 0,
             attachment_upload: None,
@@ -865,5 +908,15 @@ impl App {
         f: impl FnOnce(&adf::MediaSizing) -> R,
     ) -> R {
         f(&adf::MediaSizing::Disabled)
+    }
+
+    /// Non-`images`-build stand-in for `inline_images::App::toggle_editor_image_view`
+    /// — this build can never actually decode/paint an inline image, so
+    /// `editor_image_view` stays permanently `false` (pressing `⌃T` is a
+    /// no-op on that flag) and the keypress instead tells the user why via
+    /// the existing status-flash mechanism, rather than silently doing
+    /// nothing.
+    pub fn toggle_editor_image_view(&mut self) {
+        self.flash("image rendering isn't available in this build");
     }
 }

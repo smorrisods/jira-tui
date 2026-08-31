@@ -100,7 +100,7 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
     },
     KeyHint {
         key: "u (Detail)",
-        desc: "upload an attachment — type a local path, ⏎ to preview, y/⏎ to confirm",
+        desc: "upload an attachment — browse the filesystem (tab to type a path), ⏎ to preview, y/⏎ to confirm",
     },
     KeyHint {
         key: "A",
@@ -147,6 +147,11 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
     KeyHint {
         key: "F2",
         desc: "spelling suggestions for the word under the cursor (in the in-TUI editor)",
+    },
+    KeyHint {
+        key: "⌃T",
+        desc: "toggle the in-TUI editor between plain Markdown text and rendering embedded \
+               images inline (images build only — a no-op otherwise)",
     },
     KeyHint {
         key: "c / C",
