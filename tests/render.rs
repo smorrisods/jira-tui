@@ -952,11 +952,89 @@ mod inline_comment_images {
 }
 
 #[test]
+fn attachment_upload_browse_renders_the_directory_listing() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.open_by_key("DS-2722");
+
+    let dir = std::env::temp_dir().join(format!(
+        "jira-tui-render-browse-test-{}-{}",
+        std::process::id(),
+        line!()
+    ));
+    std::fs::create_dir_all(dir.join("subdir")).unwrap();
+    std::fs::write(dir.join("report.pdf"), b"x").unwrap();
+    let (browser, err) = jira_tui::app::FileBrowserState::new(dir.clone());
+    assert_eq!(err, None);
+    app.attachment_upload = Some(jira_tui::app::AttachmentUpload::Browse { browser });
+
+    let text = render(&app);
+    assert!(
+        text.contains("upload attachment"),
+        "the browse overlay should show its title"
+    );
+    assert!(
+        text.contains(&dir.display().to_string()),
+        "the browse overlay should show the current directory"
+    );
+    assert!(
+        text.contains("subdir/"),
+        "directories should be suffixed with a slash"
+    );
+    assert!(
+        text.contains("report.pdf"),
+        "the browse overlay should list files in the current directory"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn attachment_upload_browse_renders_the_live_filter() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.open_by_key("DS-2722");
+
+    let dir = std::env::temp_dir().join(format!(
+        "jira-tui-render-browse-filter-test-{}-{}",
+        std::process::id(),
+        line!()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("report.pdf"), b"x").unwrap();
+    std::fs::write(dir.join("notes.txt"), b"x").unwrap();
+    let (browser, err) = jira_tui::app::FileBrowserState::new(dir.clone());
+    assert_eq!(err, None);
+    app.attachment_upload = Some(jira_tui::app::AttachmentUpload::Browse { browser });
+    app.attachment_browse_filter_char('r');
+    app.attachment_browse_filter_char('e');
+    app.attachment_browse_filter_char('p');
+
+    let text = render(&app);
+    assert!(
+        text.contains("filter› rep"),
+        "the browse overlay should show the typed filter, got:\n{text}"
+    );
+    assert!(
+        text.contains("report.pdf"),
+        "the filtered listing should still show the matching file"
+    );
+    assert!(
+        !text.contains("notes.txt"),
+        "the filtered listing should hide non-matching entries"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn attachment_upload_input_renders_the_typed_path() {
     let mut app = demo_app();
     app.screen = Screen::Home;
     app.open_by_key("DS-2722");
-    app.open_attachment_upload();
+    app.attachment_upload = Some(jira_tui::app::AttachmentUpload::Input {
+        path: String::new(),
+    });
     for c in "/tmp/report.pdf".chars() {
         app.attachment_upload_input_char(c);
     }
@@ -981,6 +1059,7 @@ fn attachment_upload_confirm_renders_the_preview() {
         filename: "report.pdf".into(),
         size: 245_760,
         mime: "application/pdf",
+        content_preview: None,
     });
     let text = render(&app);
     assert!(
@@ -1006,6 +1085,44 @@ fn attachment_upload_confirm_renders_the_preview() {
     assert!(
         text.contains("y/⏎"),
         "confirm copy should mention both y and Enter confirm the upload"
+    );
+}
+
+#[test]
+fn attachment_upload_confirm_renders_a_text_content_preview_when_present() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.open_by_key("DS-2722");
+    app.attachment_upload = Some(jira_tui::app::AttachmentUpload::Confirm {
+        path: "/tmp/notes.txt".into(),
+        filename: "notes.txt".into(),
+        size: 11,
+        mime: "text/plain",
+        content_preview: Some("hello world".into()),
+    });
+    let text = render(&app);
+    assert!(
+        text.contains("hello world"),
+        "the confirm overlay should render the text content preview, got:\n{text}"
+    );
+}
+
+#[test]
+fn attachment_upload_confirm_shows_no_content_preview_for_a_binary_file() {
+    let mut app = demo_app();
+    app.screen = Screen::Home;
+    app.open_by_key("DS-2722");
+    app.attachment_upload = Some(jira_tui::app::AttachmentUpload::Confirm {
+        path: "/tmp/photo.png".into(),
+        filename: "photo.png".into(),
+        size: 4096,
+        mime: "image/png",
+        content_preview: None,
+    });
+    let text = render(&app);
+    assert!(
+        !text.contains("Preview:"),
+        "a binary attachment with no content_preview must not show a preview section"
     );
 }
 

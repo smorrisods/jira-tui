@@ -115,17 +115,49 @@ fn download_selected_attachment_on_demo_data_flashes_and_does_no_io() {
 }
 
 #[test]
-fn attachment_upload_input_char_and_backspace_edit_the_typed_path() {
+fn open_attachment_upload_opens_the_browse_stage_by_default() {
     let mut app = demo_app();
     app.selected = 0;
     app.open_detail();
     app.open_attachment_upload();
-    assert_eq!(
+    match app.attachment_upload {
+        Some(AttachmentUpload::Browse { .. }) => {}
+        other => panic!("expected Browse to be the default upload stage, got {other:?}"),
+    }
+}
+
+#[test]
+fn attachment_upload_toggle_input_mode_switches_between_browse_and_input() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.open_attachment_upload();
+    assert!(matches!(
         app.attachment_upload,
-        Some(AttachmentUpload::Input {
-            path: String::new()
-        })
+        Some(AttachmentUpload::Browse { .. })
+    ));
+
+    app.attachment_upload_toggle_input_mode();
+    assert!(
+        matches!(app.attachment_upload, Some(AttachmentUpload::Input { .. })),
+        "tab from Browse should switch to Input"
     );
+
+    app.attachment_upload_toggle_input_mode();
+    assert!(
+        matches!(app.attachment_upload, Some(AttachmentUpload::Browse { .. })),
+        "tab from Input should switch back to Browse"
+    );
+}
+
+#[test]
+fn attachment_upload_input_char_and_backspace_edit_the_typed_path() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.attachment_upload = Some(AttachmentUpload::Input {
+        path: String::new(),
+    });
 
     for c in "/tmp/report.pdf".chars() {
         app.attachment_upload_input_char(c);
@@ -152,7 +184,9 @@ fn confirm_attachment_upload_path_with_a_missing_path_stays_in_input_with_a_flas
     let mut app = demo_app();
     app.selected = 0;
     app.open_detail();
-    app.open_attachment_upload();
+    app.attachment_upload = Some(AttachmentUpload::Input {
+        path: String::new(),
+    });
     let missing = format!(
         "/tmp/jira-tui-test-does-not-exist-{}-{}",
         std::process::id(),
@@ -180,7 +214,9 @@ fn confirm_attachment_upload_path_with_a_real_file_advances_to_confirm() {
     let mut app = demo_app();
     app.selected = 0;
     app.open_detail();
-    app.open_attachment_upload();
+    app.attachment_upload = Some(AttachmentUpload::Input {
+        path: String::new(),
+    });
 
     let dir = std::env::temp_dir().join(format!(
         "jira-tui-upload-test-{}-{}",
@@ -201,13 +237,114 @@ fn confirm_attachment_upload_path_with_a_real_file_advances_to_confirm() {
             ref filename,
             size,
             mime,
+            ref content_preview,
             ..
         }) => {
             assert_eq!(filename, "notes.txt");
             assert_eq!(size, 11);
             assert_eq!(mime, "text/plain");
+            assert_eq!(
+                content_preview.as_deref(),
+                Some("hello world"),
+                "a plain-text file should get a content preview"
+            );
         }
         other => panic!("expected Confirm with the stat'd file's details, got {other:?}"),
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn confirm_attachment_upload_path_with_a_binary_file_has_no_content_preview() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.attachment_upload = Some(AttachmentUpload::Input {
+        path: String::new(),
+    });
+
+    let dir = std::env::temp_dir().join(format!(
+        "jira-tui-upload-binary-test-{}-{}",
+        std::process::id(),
+        line!()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("photo.png");
+    // A tiny PNG header followed by invalid-UTF-8 bytes — enough to make
+    // sure a binary file never surfaces as a garbled text preview.
+    std::fs::write(
+        &path,
+        [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0xfe],
+    )
+    .unwrap();
+
+    for c in path.to_str().unwrap().chars() {
+        app.attachment_upload_input_char(c);
+    }
+    app.confirm_attachment_upload_path();
+
+    match app.attachment_upload {
+        Some(AttachmentUpload::Confirm {
+            ref filename,
+            ref content_preview,
+            ..
+        }) => {
+            assert_eq!(filename, "photo.png");
+            assert_eq!(
+                content_preview, &None,
+                "a binary file must never surface a garbled text preview"
+            );
+        }
+        other => panic!("expected Confirm with the stat'd file's details, got {other:?}"),
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn attachment_browse_activate_descends_into_a_directory_and_finalizes_a_file() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+
+    let dir = std::env::temp_dir().join(format!(
+        "jira-tui-browse-test-{}-{}",
+        std::process::id(),
+        line!()
+    ));
+    std::fs::create_dir_all(dir.join("subdir")).unwrap();
+    std::fs::write(dir.join("subdir").join("notes.txt"), b"hi there").unwrap();
+
+    let (browser, err) = crate::app::FileBrowserState::new(dir.clone());
+    assert_eq!(err, None);
+    app.attachment_upload = Some(AttachmentUpload::Browse { browser });
+
+    // The only entry is `subdir` — descending into it should show its file.
+    app.attachment_browse_activate();
+    match &app.attachment_upload {
+        Some(AttachmentUpload::Browse { browser }) => {
+            assert_eq!(browser.cwd, dir.join("subdir"));
+            assert_eq!(browser.entries.len(), 1);
+            assert_eq!(browser.entries[0].name, "notes.txt");
+        }
+        other => panic!("expected to still be in Browse after descending, got {other:?}"),
+    }
+
+    // Enter on the file should finalize into Confirm.
+    app.attachment_browse_activate();
+    match app.attachment_upload {
+        Some(AttachmentUpload::Confirm {
+            ref filename,
+            size,
+            ref content_preview,
+            ..
+        }) => {
+            assert_eq!(filename, "notes.txt");
+            assert_eq!(size, 8);
+            assert_eq!(content_preview.as_deref(), Some("hi there"));
+        }
+        other => panic!("expected Confirm after activating a file, got {other:?}"),
     }
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -223,6 +360,7 @@ fn back_out_of_attachment_upload_confirm_returns_to_input_with_the_path_kept() {
         filename: "notes.txt".into(),
         size: 11,
         mime: "text/plain",
+        content_preview: None,
     });
 
     app.back_out_of_attachment_upload_confirm();
@@ -942,6 +1080,7 @@ fn confirm_attachment_upload_on_demo_data_flashes_and_does_no_io() {
         filename: "notes.txt".into(),
         size: 11,
         mime: "text/plain",
+        content_preview: None,
     });
 
     app.confirm_attachment_upload();

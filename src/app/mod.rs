@@ -33,6 +33,7 @@ mod comments;
 mod detail;
 mod edit;
 mod field_mapping;
+mod file_browser;
 mod history;
 #[cfg(feature = "images")]
 mod inline_images;
@@ -68,6 +69,7 @@ pub use board::BoardSelection;
 pub use detail::RailPanel;
 pub use edit::{EditTarget, EditorState};
 pub use field_mapping::{FieldMappingOutcome, FieldMappingState, FieldMappingTarget};
+pub use file_browser::{FileBrowserState, FileEntry};
 pub(crate) use history::{NavEntry, NavHistory};
 #[cfg(feature = "images")]
 pub use inline_images::{BoundedCache, InlineImageKey};

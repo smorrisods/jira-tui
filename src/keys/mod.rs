@@ -129,18 +129,30 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // Modal: the attachment upload flow (`u`, Detail only) — a path-entry
-    // stage (`Input`, plain single-line typing like Search's query box)
-    // followed by a mandatory preview (`Confirm`) before any network call,
-    // per CLAUDE.md's "Preview before any mutating Jira call." `Confirm`'s
-    // Esc goes back to `Input` (keeping the typed path), matching the edit
-    // preview's own "go back, don't discard" semantics — see
-    // `App::back_out_of_preview`/`back_out_of_attachment_upload_confirm`.
+    // Modal: the attachment upload flow (`u`, Detail only) — a filesystem
+    // browser (`Browse`, the default) or a plain path-entry line (`Input`,
+    // `Tab`-accessible fallback for typing an exact path by hand), either of
+    // which lead into a mandatory preview (`Confirm`) before any network
+    // call, per CLAUDE.md's "Preview before any mutating Jira call."
+    // `Confirm`'s Esc goes back to `Input` (keeping the resolved path),
+    // matching the edit preview's own "go back, don't discard" semantics —
+    // see `App::back_out_of_preview`/`back_out_of_attachment_upload_confirm`.
     if let Some(stage) = app.attachment_upload.as_ref() {
         match stage {
+            app::AttachmentUpload::Browse { .. } => match key.code {
+                KeyCode::Up | KeyCode::Char('k') => app.attachment_browse_move(-1),
+                KeyCode::Down | KeyCode::Char('j') => app.attachment_browse_move(1),
+                KeyCode::Enter => app.attachment_browse_activate(),
+                KeyCode::Backspace => app.attachment_browse_backspace(),
+                KeyCode::Tab => app.attachment_upload_toggle_input_mode(),
+                KeyCode::Esc | KeyCode::Char('q') => app.close_attachment_upload(),
+                KeyCode::Char(c) => app.attachment_browse_filter_char(c),
+                _ => {}
+            },
             app::AttachmentUpload::Input { .. } => match key.code {
                 KeyCode::Enter => app.confirm_attachment_upload_path(),
                 KeyCode::Backspace => app.attachment_upload_backspace(),
+                KeyCode::Tab => app.attachment_upload_toggle_input_mode(),
                 KeyCode::Esc => app.close_attachment_upload(),
                 KeyCode::Char(c) => app.attachment_upload_input_char(c),
                 _ => {}
