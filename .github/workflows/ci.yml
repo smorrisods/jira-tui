@@ -1,9 +1,12 @@
 name: CI
 
 on:
+  # No `branches:` filter here on purpose — stacked PRs (see `gh stack`)
+  # target another feature branch instead of `main`, and a base-branch
+  # filter only fires the first time a PR's base happens to match it,
+  # not on every later push. Restricting `push` to `main` is still right,
+  # since that's just post-merge CI.
   pull_request:
-    branches:
-      - main
   push:
     branches:
       - main
