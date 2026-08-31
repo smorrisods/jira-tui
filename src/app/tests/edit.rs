@@ -38,6 +38,35 @@ fn a_successful_description_edit_triggers_the_jax_party_scene() {
     );
 }
 
+/// Non-`images`-build stand-in for `App::toggle_editor_image_view` (see
+/// `app::mod`'s own `#[cfg(not(feature = "images"))]` impl): this build can
+/// never actually decode/paint an inline image, so the toggle key is a
+/// no-op on `editor_image_view` itself — but not a *silent* one, it tells
+/// the user why via the same status-flash mechanism every other
+/// build-unavailable action uses. Run this file under
+/// `cargo test --no-default-features` to exercise the non-`images` build of
+/// the method (under a `default`/`--all-features` build, `images` is
+/// compiled in and this same call instead flips the flag and may dispatch a
+/// fetch — see `app::tests::inline_images`'s own toggle tests for that
+/// build).
+#[cfg(not(feature = "images"))]
+#[test]
+fn toggling_editor_image_view_without_the_images_feature_flashes_instead_of_toggling() {
+    let mut app = demo_app();
+    assert!(!app.editor_image_view);
+
+    app.toggle_editor_image_view();
+
+    assert!(
+        !app.editor_image_view,
+        "a non-`images` build can never actually turn image rendering on"
+    );
+    assert_eq!(
+        app.active_flash(),
+        Some("image rendering isn't available in this build")
+    );
+}
+
 #[test]
 fn cancel_edit_discards_pending() {
     let mut app = demo_app();

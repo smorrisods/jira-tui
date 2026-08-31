@@ -51,20 +51,26 @@ pub(super) enum Wrapper<'a> {
 }
 
 /// The reconstructed wrapper for a decoded token, mirroring [`Wrapper`].
-pub(super) enum DecodedWrapper {
+/// `pub(crate)`, unlike `Wrapper` above: `src/app`/`src/ui`'s editor image
+/// view (see this module's own doc comment) only ever needs to *decode* a
+/// token it finds sitting in the editor buffer, never to *encode* one
+/// (that direction stays `adf`-internal, driven only by `markdown::to_markdown`),
+/// so only the decode half of this module's surface is widened.
+pub(crate) enum DecodedWrapper {
     None,
     Single(Value),
     Group,
 }
 
-pub(super) struct Decoded {
+pub(crate) struct Decoded {
     pub media_attrs: Value,
     pub wrapper: DecodedWrapper,
 }
 
 /// True if `url` is one of this module's own tokens rather than a real
-/// image URL/filename a human typed.
-pub(super) fn is_adf_media_url(url: &str) -> bool {
+/// image URL/filename a human typed. `pub(crate)` — see `Decoded`'s own doc
+/// comment for why only the decode half of this module is crate-visible.
+pub(crate) fn is_adf_media_url(url: &str) -> bool {
     url.starts_with("adf-media://")
 }
 
@@ -144,7 +150,11 @@ pub(super) fn encode(media_attrs: &Value, wrapper: Wrapper) -> String {
 /// Decode an `adf-media://` URL (the `(url)` half of the image token) back
 /// into a `media` node's attrs plus whatever wrapper it was encoded with.
 /// Returns `None` if `url` doesn't match a shape this module produced.
-pub(super) fn decode(url: &str) -> Option<Decoded> {
+/// `pub(crate)` — the in-TUI editor's image view (`src/app/inline_images.rs`,
+/// `src/ui/editor.rs`) decodes a token straight out of the raw Markdown
+/// buffer the same way `adf::compile` does out of a saved description, so
+/// it needs this reachable outside `adf` too.
+pub(crate) fn decode(url: &str) -> Option<Decoded> {
     let rest = url.strip_prefix("adf-media://")?;
     let (head, query) = match rest.split_once('?') {
         Some((a, b)) => (a, b),

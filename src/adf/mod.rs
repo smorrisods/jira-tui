@@ -11,7 +11,7 @@ use serde_json::Value;
 
 mod compile;
 mod markdown;
-mod media;
+pub(crate) mod media;
 
 pub use compile::compile;
 pub use markdown::to_markdown;

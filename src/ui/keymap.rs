@@ -149,6 +149,11 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
         desc: "spelling suggestions for the word under the cursor (in the in-TUI editor)",
     },
     KeyHint {
+        key: "⌃T",
+        desc: "toggle the in-TUI editor between plain Markdown text and rendering embedded \
+               images inline (images build only — a no-op otherwise)",
+    },
+    KeyHint {
         key: "c / C",
         desc: "add a comment (in-TUI / $EDITOR) (in an issue or quick view)",
     },

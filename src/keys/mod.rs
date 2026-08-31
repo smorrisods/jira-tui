@@ -362,6 +362,18 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             KeyCode::Esc if app.editor.is_dirty() => app.confirm_discard = true,
             KeyCode::Esc => app.cancel_edit(),
             KeyCode::Char('s') if ctrl => app.commit_tui_edit(),
+            // `⌃T` toggles the editor between plain compact Markdown text
+            // (today's default) and rendering any whole-line `adf-media://`
+            // token as an actual inline image — see
+            // `App::toggle_editor_image_view`. `⌃I`/`⌃M` were both ruled
+            // out the same way this file's own `F9` comment above rules out
+            // `⌃M` for the mouse toggle: at the legacy-ANSI terminal level
+            // `⌃I` is byte-identical to Tab (which this same match already
+            // binds to inserting two spaces) and `⌃M` to Enter/CR, so
+            // either would make an existing binding unreliably double as
+            // this toggle. `⌃T` has no such collision and isn't otherwise
+            // bound on this screen.
+            KeyCode::Char('t') if ctrl => app.toggle_editor_image_view(),
             KeyCode::Enter => app.editor.newline(),
             KeyCode::Backspace => app.editor.backspace(),
             KeyCode::Left => app.editor.left(),

@@ -36,7 +36,7 @@ mod field_mapping;
 mod file_browser;
 mod history;
 #[cfg(feature = "images")]
-mod inline_images;
+pub(crate) mod inline_images;
 mod links;
 mod loader;
 mod mouse;
@@ -72,6 +72,8 @@ pub use edit::{EditTarget, EditorState};
 pub use field_mapping::{FieldMappingOutcome, FieldMappingState, FieldMappingTarget};
 pub use file_browser::{FileBrowserState, FileEntry};
 pub(crate) use history::{NavEntry, NavHistory};
+#[cfg(feature = "images")]
+pub(crate) use inline_images::whole_line_media_url;
 #[cfg(feature = "images")]
 pub use inline_images::{BoundedCache, InlineImageKey};
 pub use mouse::{ListFocus, MouseState, SelectionSpan};
@@ -226,6 +228,20 @@ pub struct App {
 
     // In-TUI editor.
     pub editor: EditorState,
+    /// View-mode toggle (`⌃T`, `Screen::Edit` only) for the in-TUI editor:
+    /// compact plain Markdown text (`false`, today's default) vs. rendering
+    /// any whole-line `adf-media://` token (see `src/adf/media.rs`) as an
+    /// actual inline image (`true`) — purely cosmetic, never affecting what
+    /// `finish_edit` actually compiles/saves, which always reads
+    /// `self.editor.lines`' raw Markdown text regardless of this flag. Not
+    /// itself `#[cfg(feature = "images")]`-gated, unlike the machinery that
+    /// acts on it (`inline_images::App::refresh_editor_inline_images`,
+    /// `ui::editor`'s image-aware render path) — a non-`images` build still
+    /// needs the field to exist so it can stay permanently `false`; see
+    /// `App::toggle_editor_image_view`'s two builds (this file's own
+    /// `#[cfg(not(feature = "images"))]` impl below, and
+    /// `inline_images.rs`'s real one) for how each build's toggle behaves.
+    pub editor_image_view: bool,
     /// Whether the spelling-suggestion picker (`F2`, `Screen::Edit` only)
     /// is currently open.
     pub spell_suggest_open: bool,
@@ -691,6 +707,7 @@ impl App {
             jax_party_until: 0,
             jax_mini_area: Cell::new(Rect::default()),
             editor: EditorState::default(),
+            editor_image_view: false,
             spell_suggest_open: false,
             spell_suggest: SpellSuggestState::default(),
             flash_msg: String::new(),
@@ -868,5 +885,15 @@ impl App {
         f: impl FnOnce(&adf::MediaSizing) -> R,
     ) -> R {
         f(&adf::MediaSizing::Disabled)
+    }
+
+    /// Non-`images`-build stand-in for `inline_images::App::toggle_editor_image_view`
+    /// — this build can never actually decode/paint an inline image, so
+    /// `editor_image_view` stays permanently `false` (pressing `⌃T` is a
+    /// no-op on that flag) and the keypress instead tells the user why via
+    /// the existing status-flash mechanism, rather than silently doing
+    /// nothing.
+    pub fn toggle_editor_image_view(&mut self) {
+        self.flash("image rendering isn't available in this build");
     }
 }

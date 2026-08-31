@@ -511,6 +511,140 @@ mod inline_description_images {
     }
 }
 
+/// The in-TUI editor's own image-view toggle (`App::editor_image_view`,
+/// `⌃T`) — `ui::editor`'s render pass treats a whole-line `adf-media://`
+/// token as an actual inline image once resolved and decoded, painted the
+/// same halfblock-cell way `inline_description_images` above already proves
+/// for Detail (same cache, same `SlicedProtocol`/`SlicedImage` paint path,
+/// just reached through `App::inline_image_protocol_for_key` instead of
+/// `App::sliced_inline_image_protocol`). Off (the default) always shows the
+/// raw token text exactly as today, regardless of whether it would resolve.
+#[cfg(feature = "images")]
+mod editor_image_view {
+    use super::*;
+    use jira_tui::app::InlineImageKey;
+    use ratatui_image::picker::Picker;
+
+    /// A small flat-but-ramped image, same shape/reasoning as
+    /// `inline_description_images::gradient_image` — ramped so downscaling
+    /// never leaves two adjacent halfblock rows identical (which would
+    /// render as a plain space and defeat the non-space assertions below).
+    fn test_image() -> image::DynamicImage {
+        let (width, height) = (200u32, 40u32);
+        let mut img = image::RgbImage::new(width, height);
+        for y in 0..height {
+            let shade = ((y * 255) / height.max(1)) as u8;
+            for x in 0..width {
+                img.put_pixel(x, y, image::Rgb([shade, 0, 255 - shade]));
+            }
+        }
+        image::DynamicImage::ImageRgb8(img)
+    }
+
+    /// Opens the built-in editor on DS-2722 (whose demo attachments include
+    /// `accordion-mockup.png`, id `10001` — see `inline_description_images`'s
+    /// own doc comment) and seeds its buffer with a whole-line token
+    /// referencing that same attachment by filename, so
+    /// `App::resolve_editor_media_key`'s alt-matching path resolves it.
+    fn open_editor_with_a_media_token(app: &mut App) {
+        app.screen = Screen::Home;
+        app.open_by_key("DS-2722");
+        app.begin_tui_edit();
+        app.editor.lines = vec![
+            "Here is a screenshot:".into(),
+            "![accordion-mockup.png](adf-media://file/x?alt=accordion-mockup.png)".into(),
+        ];
+    }
+
+    #[test]
+    fn toggle_off_renders_the_raw_token_text() {
+        let mut app = demo_app();
+        open_editor_with_a_media_token(&mut app);
+        app.image_picker = Some(Picker::halfblocks());
+        app.inline_images
+            .get_mut()
+            .insert(InlineImageKey::Attachment("10001".into()), test_image());
+        app.editor_image_view = false;
+
+        let text = render(&app);
+        assert!(
+            text.contains("adf-media://"),
+            "with the toggle off, the raw token text should render exactly as \
+             today even though it would resolve, got:\n{text}"
+        );
+        assert!(
+            !text.contains('▀') && !text.contains('▄'),
+            "no image should paint while the toggle is off, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn toggle_on_renders_a_resolved_token_as_halfblock_cells() {
+        let mut app = demo_app();
+        open_editor_with_a_media_token(&mut app);
+        app.image_picker = Some(Picker::halfblocks());
+        app.inline_images
+            .get_mut()
+            .insert(InlineImageKey::Attachment("10001".into()), test_image());
+        app.editor_image_view = true;
+
+        let text = render(&app);
+        assert!(
+            !text.contains("adf-media://"),
+            "with the toggle on, the resolved token's raw text should be \
+             replaced by the painted image, got:\n{text}"
+        );
+        assert!(
+            text.contains('▀') || text.contains('▄'),
+            "a resolved, already-decoded token should paint halfblock cells \
+             once the toggle is on, got:\n{text}"
+        );
+    }
+
+    /// Toggling on with nothing decoded yet (still mid-fetch, or never
+    /// resolved) must fall back to the raw token text rather than showing
+    /// nothing — the whole point of "collapse back to text" is that a
+    /// not-yet-ready image never leaves a blank gap.
+    #[test]
+    fn toggle_on_with_nothing_decoded_yet_still_shows_the_raw_token_text() {
+        let mut app = demo_app();
+        open_editor_with_a_media_token(&mut app);
+        app.image_picker = Some(Picker::halfblocks());
+        app.editor_image_view = true;
+
+        let text = render(&app);
+        assert!(
+            text.contains("adf-media://"),
+            "an unresolved/undecoded token must still show as text, got:\n{text}"
+        );
+    }
+}
+
+/// Non-`images`-build stand-in for the module above: `⌃T` can never
+/// actually turn image rendering on in this build (see
+/// `App::toggle_editor_image_view`'s `#[cfg(not(feature = "images"))]`
+/// impl), so it flashes a status toast telling the user why instead. Run
+/// this under `cargo test --no-default-features` — under any build with
+/// `images` compiled in this test doesn't exist at all (see the module
+/// above for that build's own coverage).
+#[cfg(not(feature = "images"))]
+#[test]
+fn editor_image_view_toggle_flashes_when_the_images_feature_is_not_compiled_in() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.begin_tui_edit();
+
+    app.toggle_editor_image_view();
+
+    assert!(!app.editor_image_view);
+    let text = render(&app);
+    assert!(
+        text.contains("image rendering isn't available in this build"),
+        "the flash toast should be visible on screen, got:\n{text}"
+    );
+}
+
 /// Issue #130 Phase 5: the quick-view panel's inline description-image
 /// paint pass — mirrors `inline_description_images` above as closely as
 /// possible, just against `ui::quick_view`'s own screen/selection shape

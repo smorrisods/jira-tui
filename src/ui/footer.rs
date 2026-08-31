@@ -226,6 +226,14 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
                 hint("type", compose),
                 hint("^S", "preview"),
                 hint("F2", "spelling suggestions"),
+                hint(
+                    "^T",
+                    if app.editor_image_view {
+                        "text view"
+                    } else {
+                        "image view"
+                    },
+                ),
                 hint("esc", "cancel"),
             ])
         }

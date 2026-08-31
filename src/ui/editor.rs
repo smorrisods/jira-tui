@@ -11,6 +11,80 @@ use crate::spellcheck;
 
 use super::{danger, muted, warn};
 
+/// One logical editor line's on-screen row shape — either its ordinary
+/// word-wrapped text rows (`Text`, today's only case), or, when the `images`
+/// feature is compiled in and `App::editor_image_view` is on, a whole-line
+/// `adf-media://` token that's actually ready to paint as an image
+/// (`Image`). See `layout_for_line`/`ready_image_for_line`.
+enum LineLayout {
+    Text(Vec<usize>),
+    #[cfg(feature = "images")]
+    Image(EditorImageLine),
+}
+
+impl LineLayout {
+    /// How many terminal rows this logical line occupies — `starts.len()`
+    /// for wrapped text, or the image's own reserved row count. Used
+    /// uniformly by every pass over the buffer (cursor placement, scroll,
+    /// visible-range, and the final paint loop) so all four always agree on
+    /// exactly the same row budget per line.
+    fn rows(&self) -> usize {
+        match self {
+            LineLayout::Text(starts) => starts.len(),
+            #[cfg(feature = "images")]
+            LineLayout::Image(img) => img.rows as usize,
+        }
+    }
+}
+
+/// A logical line's resolved, ready-to-paint image (`images` feature only)
+/// — `key` is whichever `InlineImageKey` `App::resolve_editor_media_key`
+/// resolved the line's token to, already confirmed decoded and cached
+/// (`App::inline_images`); `rows`/`cols` come from `App::editor_image_rows_cols`.
+#[cfg(feature = "images")]
+#[derive(Clone)]
+struct EditorImageLine {
+    key: crate::app::InlineImageKey,
+    rows: u16,
+    cols: u16,
+}
+
+/// Decide one logical `line`'s `LineLayout` — an image only when the
+/// `images` feature is compiled in, `App::editor_image_view` is on, the line
+/// is nothing but a whole-line `adf-media://` token, that token resolves to
+/// an `InlineImageKey`, and that key's image is already decoded in
+/// `App::inline_images`. Everything else (toggle off, unresolved/still
+/// -fetching token, or no token at all) falls back to today's plain
+/// word-wrapped text — exactly the "collapse back to text" behaviour the
+/// toggle exists for.
+#[cfg_attr(not(feature = "images"), allow(unused_variables))]
+fn layout_for_line(app: &App, line: &str, text_width: u16, max_image_rows: u16) -> LineLayout {
+    #[cfg(feature = "images")]
+    if let Some(img) = ready_image_for_line(app, line, text_width, max_image_rows) {
+        return LineLayout::Image(img);
+    }
+    LineLayout::Text(wrap_row_starts(line, text_width as usize))
+}
+
+#[cfg(feature = "images")]
+fn ready_image_for_line(
+    app: &App,
+    line: &str,
+    text_width: u16,
+    max_image_rows: u16,
+) -> Option<EditorImageLine> {
+    if !app.editor_image_view {
+        return None;
+    }
+    let token = crate::app::whole_line_media_url(line)?;
+    let key = app.resolve_editor_media_key(token)?;
+    if !app.inline_images.borrow().contains_key(&key) {
+        return None;
+    }
+    let (rows, cols) = app.editor_image_rows_cols(&key, text_width, max_image_rows)?;
+    Some(EditorImageLine { key, rows, cols })
+}
+
 pub(crate) fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
     // A new issue has no key yet — title on its project instead.
     let title = if app.edit_target == crate::app::EditTarget::NewIssue {
@@ -59,26 +133,54 @@ pub(crate) fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
     let ed = &app.editor;
     let height = inner.height.max(1) as usize;
     let gutter_w = 4u16;
-    let text_width = inner.width.saturating_sub(gutter_w).max(1) as usize;
+    let text_width = inner.width.saturating_sub(gutter_w).max(1);
+    // Half the pane's height, so a single embedded image can never swallow
+    // the whole editor — clamped into the same row band Detail/quick view's
+    // own inline images use (see `inline_images::MIN_INLINE_IMAGE_ROWS`'s
+    // own doc comment), which is the whole point of a collapsible toggle: a
+    // weirdly-shaped or oversized image shouldn't dominate a small terminal.
+    #[cfg(feature = "images")]
+    let max_image_rows = (inner.height / 2).clamp(
+        crate::app::inline_images::MIN_INLINE_IMAGE_ROWS,
+        crate::app::inline_images::MAX_INLINE_IMAGE_ROWS,
+    );
+    #[cfg(not(feature = "images"))]
+    let max_image_rows = 0u16;
 
-    // Word-wrap every logical line to the pane width, and locate the
-    // cursor's visual row/column within its line's wrapped rows.
-    let row_starts: Vec<Vec<usize>> = ed
+    // Word-wrap every logical line to the pane width (or, when the toggle
+    // and cache line up, size it as an image instead — see
+    // `layout_for_line`), and locate the cursor's visual row/column within
+    // its line's rows.
+    let layouts: Vec<LineLayout> = ed
         .lines
         .iter()
-        .map(|line| wrap_row_starts(line, text_width))
+        .map(|line| layout_for_line(app, line, text_width, max_image_rows))
         .collect();
 
     let mut cursor_row = 0usize;
     let mut cursor_col = 0usize;
     let mut visual_row = 0usize;
-    for (i, starts) in row_starts.iter().enumerate() {
+    for (i, layout) in layouts.iter().enumerate() {
         if i == ed.cy {
-            let local = starts.partition_point(|&s| s <= ed.cx).saturating_sub(1);
-            cursor_row = visual_row + local;
-            cursor_col = ed.cx - starts[local];
+            match layout {
+                LineLayout::Text(starts) => {
+                    let local = starts.partition_point(|&s| s <= ed.cx).saturating_sub(1);
+                    cursor_row = visual_row + local;
+                    cursor_col = ed.cx - starts[local];
+                }
+                // An image line has no meaningful text column to place a
+                // cursor within — park it at the top-left of the reserved
+                // block; arrow keys/backspace still operate on the
+                // underlying raw text regardless of where the cursor glyph
+                // visually sits.
+                #[cfg(feature = "images")]
+                LineLayout::Image(_) => {
+                    cursor_row = visual_row;
+                    cursor_col = 0;
+                }
+            }
         }
-        visual_row += starts.len();
+        visual_row += layout.rows();
     }
 
     let scroll = if cursor_row >= height {
@@ -87,25 +189,25 @@ pub(crate) fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
         0
     };
 
-    // Which logical lines actually produce a visible wrapped row — so only
-    // those get checked against the dictionary on every frame, not the
-    // whole buffer (the fence state `misspelled_spans_in_range` derives for
-    // lines before `first_visible` is a cheap marker-count prescan, no
-    // dictionary lookups).
+    // Which logical lines actually produce a visible row — so only those
+    // get checked against the dictionary on every frame, not the whole
+    // buffer (the fence state `misspelled_spans_in_range` derives for lines
+    // before `first_visible` is a cheap marker-count prescan, no dictionary
+    // lookups).
     let mut first_visible = 0usize;
     let mut last_visible = 0usize;
     {
         let mut vr = 0usize;
         let mut found_first = false;
-        for (i, starts) in row_starts.iter().enumerate() {
-            if !found_first && vr + starts.len() > scroll {
+        for (i, layout) in layouts.iter().enumerate() {
+            if !found_first && vr + layout.rows() > scroll {
                 first_visible = i;
                 found_first = true;
             }
             if found_first {
                 last_visible = i;
             }
-            vr += starts.len();
+            vr += layout.rows();
             if vr >= scroll + height {
                 break;
             }
@@ -118,45 +220,91 @@ pub(crate) fn draw_editor(f: &mut Frame, app: &App, area: Rect) {
     );
 
     let mut lines: Vec<Line> = Vec::new();
-    let mut visual_row: usize = row_starts[..first_visible].iter().map(Vec::len).sum();
+    #[cfg(feature = "images")]
+    let mut pending_images: Vec<(i32, EditorImageLine)> = Vec::new();
+    let mut visual_row: usize = layouts[..first_visible].iter().map(LineLayout::rows).sum();
     'outer: for i in first_visible..=last_visible {
         let line = &ed.lines[i];
-        let byte_of: Vec<usize> = line
-            .char_indices()
-            .map(|(b, _)| b)
-            .chain(std::iter::once(line.len()))
-            .collect();
-        let misspelled_bytes = &misspellings[i - first_visible];
-        let starts = &row_starts[i];
-        for (r, &start) in starts.iter().enumerate() {
-            if visual_row >= scroll {
-                let end = starts.get(r + 1).copied().unwrap_or(byte_of.len() - 1);
-                let byte_start = byte_of[start];
-                let byte_end = byte_of[end];
-                let segment = &line[byte_start..byte_end];
-                // Clip this logical line's misspelled byte-spans to the
-                // segment's own byte range, and shift them relative to it.
-                let segment_spans: Vec<(usize, usize)> = misspelled_bytes
-                    .iter()
-                    .filter(|&&(s, e)| s >= byte_start && e <= byte_end)
-                    .map(|&(s, e)| (s - byte_start, e - byte_start))
+        match &layouts[i] {
+            LineLayout::Text(starts) => {
+                let byte_of: Vec<usize> = line
+                    .char_indices()
+                    .map(|(b, _)| b)
+                    .chain(std::iter::once(line.len()))
                     .collect();
-                let gutter = if r == 0 {
-                    Span::styled(format!("{:>3} ", i + 1), Style::default().fg(muted()))
-                } else {
-                    Span::raw("    ")
-                };
-                let mut spans = vec![gutter];
-                spans.extend(spans_with_misspellings(segment, &segment_spans));
-                lines.push(Line::from(spans));
-                if lines.len() == height {
-                    break 'outer;
+                let misspelled_bytes = &misspellings[i - first_visible];
+                for (r, &start) in starts.iter().enumerate() {
+                    if visual_row >= scroll {
+                        let end = starts.get(r + 1).copied().unwrap_or(byte_of.len() - 1);
+                        let byte_start = byte_of[start];
+                        let byte_end = byte_of[end];
+                        let segment = &line[byte_start..byte_end];
+                        // Clip this logical line's misspelled byte-spans to
+                        // the segment's own byte range, and shift them
+                        // relative to it.
+                        let segment_spans: Vec<(usize, usize)> = misspelled_bytes
+                            .iter()
+                            .filter(|&&(s, e)| s >= byte_start && e <= byte_end)
+                            .map(|&(s, e)| (s - byte_start, e - byte_start))
+                            .collect();
+                        let gutter = if r == 0 {
+                            Span::styled(format!("{:>3} ", i + 1), Style::default().fg(muted()))
+                        } else {
+                            Span::raw("    ")
+                        };
+                        let mut spans = vec![gutter];
+                        spans.extend(spans_with_misspellings(segment, &segment_spans));
+                        lines.push(Line::from(spans));
+                        if lines.len() == height {
+                            break 'outer;
+                        }
+                    }
+                    visual_row += 1;
                 }
             }
-            visual_row += 1;
+            // Reserve `img.rows` blank rows in the scrolled text (so the
+            // Paragraph below doesn't render the raw token text underneath
+            // it) and record where it landed for the paint pass just after
+            // — mirrors `ui::detail::paint_inline_images`'s own
+            // scroll-relative `y` (which can go negative for a
+            // partially-scrolled-above placement; `SlicedImage` clips that
+            // on its own, so this doesn't need to pre-clip the row count).
+            #[cfg(feature = "images")]
+            LineLayout::Image(img) => {
+                let y = visual_row as i32 - scroll as i32;
+                pending_images.push((y, img.clone()));
+                for _ in 0..img.rows {
+                    if visual_row >= scroll {
+                        lines.push(Line::default());
+                        if lines.len() == height {
+                            break 'outer;
+                        }
+                    }
+                    visual_row += 1;
+                }
+            }
         }
     }
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
+
+    #[cfg(feature = "images")]
+    for (y, img) in pending_images {
+        if y + i32::from(img.rows) <= 0 || y >= i32::from(inner.height) {
+            continue;
+        }
+        let Some(protocol) = app.inline_image_protocol_for_key(
+            &img.key,
+            ratatui::layout::Size::new(img.cols, img.rows),
+        ) else {
+            continue;
+        };
+        let y = y.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+        let position = ratatui_image::sliced::SignedPosition::from((gutter_w as i16, y));
+        f.render_widget(
+            ratatui_image::sliced::SlicedImage::new(&protocol, position),
+            inner,
+        );
+    }
 
     // Place the real terminal cursor.
     if cursor_row >= scroll {
