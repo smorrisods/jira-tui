@@ -117,6 +117,10 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
                configured in config.toml)",
     },
     KeyHint {
+        key: "P",
+        desc: "change an issue's priority (in an issue or quick view)",
+    },
+    KeyHint {
         key: "s (release)",
         desc: "cycle the version list's grouping: split unreleased/released (default) or flat",
     },

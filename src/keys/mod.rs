@@ -233,6 +233,20 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Modal: the priority picker. Same shape as the sprint picker — the row
+    // list is always the fixed 5 `Priority` variants, so there's nothing to
+    // filter or fetch.
+    if app.priority_picker_open {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => app.priority_picker_move(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.priority_picker_move(1),
+            KeyCode::Enter => app.confirm_priority_picker(),
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => app.close_priority_picker(),
+            _ => {}
+        }
+        return;
+    }
+
     // Modal: the new-issue form's issue-type dropdown (opened by Enter on
     // the IssueType field — see the `Screen::NewIssue` block below). No
     // filtering, mirroring the transition picker.
@@ -700,6 +714,19 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
                     && app.quick_view_detail().is_some()) =>
         {
             app.open_sprint_picker();
+        }
+        // Priority picker: change the viewed issue's priority (Detail or
+        // quick-view). `P` is free — `p`'s only other binding
+        // (`prev_comment`) is lowercase, and priority has no unrelated
+        // meaning elsewhere the way `R`/`S` did before they were
+        // repurposed. Same target-resolution scope as `A`/`R`/`S` above.
+        KeyCode::Char('P')
+            if (app.screen == Screen::Detail && app.detail.is_some())
+                || (matches!(app.screen, Screen::Home | Screen::List)
+                    && app.quick_view
+                    && app.quick_view_detail().is_some()) =>
+        {
+            app.open_priority_picker();
         }
         KeyCode::Char(']')
             if app.screen == Screen::Detail

@@ -16,6 +16,18 @@ pub enum Priority {
 }
 
 impl Priority {
+    /// Every variant, highest first — the priority picker's fixed row list
+    /// (`app::priority`), since unlike assignee/sprint/version there's
+    /// nothing to fetch: Jira's priority scheme is this same closed set on
+    /// every instance.
+    pub const ALL: [Priority; 5] = [
+        Priority::Highest,
+        Priority::High,
+        Priority::Medium,
+        Priority::Low,
+        Priority::Lowest,
+    ];
+
     pub fn glyph(&self) -> &'static str {
         match self {
             Priority::Highest => "⏫",

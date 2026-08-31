@@ -1403,6 +1403,32 @@ fn version_picker_tab_switches_which_field_is_checked() {
 }
 
 #[test]
+fn priority_picker_lists_all_five_priorities_with_the_current_one_selected() {
+    let mut app = demo_app();
+    app.open_by_key("DS-2722");
+    let current = app.detail.as_ref().unwrap().priority.clone();
+    app.open_priority_picker();
+    let text = render(&app);
+    assert!(text.contains("priority"), "picker should be titled");
+    for p in jira_tui::domain::Priority::ALL {
+        assert!(
+            text.contains(p.label()),
+            "picker should list every priority, missing {}",
+            p.label()
+        );
+    }
+    // Matched by cursor glyph *and* label together, not just the label —
+    // the Detail screen's own identity chips behind the popup already show
+    // the issue's priority (e.g. "High"), so a label-only match could pick
+    // that line up instead of the picker's own selected row.
+    assert!(
+        text.lines()
+            .any(|l| l.contains('▌') && l.contains(current.label())),
+        "the issue's current priority should be pre-highlighted in the picker"
+    );
+}
+
+#[test]
 fn command_palette_shows_on_key_view_and_app_groups_with_transitions() {
     let mut app = demo_app();
     app.selected = 0;
