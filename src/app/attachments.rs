@@ -440,7 +440,10 @@ impl App {
             return;
         }
         let display = entry.path.display().to_string();
-        self.finalize_attachment_selection(display, entry.path);
+        match finalize_attachment_selection(display, entry.path) {
+            Ok(confirm) => self.attachment_upload = Some(confirm),
+            Err(msg) => self.status = msg,
+        }
     }
 
     /// Types a character into the `Input` stage's path — a no-op if the
@@ -457,6 +460,16 @@ impl App {
         }
     }
 
+    /// Set the `Input` stage's path wholesale, rather than one char at a
+    /// time — used by `App::handle_paste` to drop a normalized pasted/
+    /// dropped path in directly. A no-op if the flow isn't in that stage
+    /// (or isn't open at all).
+    pub(crate) fn set_attachment_upload_input_path(&mut self, path: String) {
+        if let Some(AttachmentUpload::Input { path: p }) = self.attachment_upload.as_mut() {
+            *p = path;
+        }
+    }
+
     /// `Enter` from `Input`: stat the typed path (after `~`-expansion) and
     /// either advance to `Confirm` — the mandatory preview, see
     /// CLAUDE.md's "Preview before any mutating Jira call" — or flash an
@@ -467,42 +480,30 @@ impl App {
             return;
         };
         let raw = path.clone();
-        let resolved = expand_home(&raw);
-        self.finalize_attachment_selection(raw, resolved);
+        match stat_attachment_upload_candidate(&raw) {
+            Ok(confirm) => self.attachment_upload = Some(confirm),
+            Err(msg) => self.status = msg,
+        }
     }
 
-    /// Shared by `confirm_attachment_upload_path` (`Input`) and
-    /// `attachment_browse_activate` (`Browse`): stat `resolved`, guess its
-    /// MIME type, read a short text preview when applicable, and transition
-    /// into `Confirm` — or, on failure, flash a status message and leave
-    /// `self.attachment_upload` exactly as it was, so each caller's own
-    /// stage stays open for the user to try again (fix a typo in `Input`;
-    /// pick something else in `Browse`).
-    fn finalize_attachment_selection(&mut self, display_path: String, resolved: PathBuf) {
-        let meta = match std::fs::metadata(&resolved) {
-            Ok(m) if m.is_file() => m,
-            Ok(_) => {
-                self.status = format!("{display_path}: not a regular file");
-                return;
+    /// Given a candidate local path (typically already normalized by
+    /// `infra::normalize_dropped_path`), validate it the same way
+    /// `confirm_attachment_upload_path` does and, only if it resolves to an
+    /// existing, readable regular file, open the upload flow directly into
+    /// `Confirm` with it — skipping the `Input` stage entirely. Used by
+    /// `App::handle_paste`'s "drop a file straight onto the Detail screen"
+    /// auto-attach flow. Returns whether it opened; a failed stat is a
+    /// silent no-op (no flash, `attachment_upload` left untouched) rather
+    /// than an error, since a paste that doesn't resolve to a file might
+    /// just be unrelated text, not a failed drop.
+    pub(crate) fn try_auto_attach(&mut self, raw: &str) -> bool {
+        match stat_attachment_upload_candidate(raw) {
+            Ok(confirm) => {
+                self.attachment_upload = Some(confirm);
+                true
             }
-            Err(e) => {
-                self.status = format!("{display_path}: {e}");
-                return;
-            }
-        };
-        let filename = resolved
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| display_path.clone());
-        let mime = crate::mime::guess_mime(&filename);
-        let content_preview = read_attachment_text_preview(&resolved, mime, &filename);
-        self.attachment_upload = Some(AttachmentUpload::Confirm {
-            path: display_path,
-            filename,
-            size: meta.len(),
-            mime,
-            content_preview,
-        });
+            Err(_) => false,
+        }
     }
 
     /// `Esc` from `Confirm`: back to `Input`, keeping the previously-typed/
@@ -589,6 +590,46 @@ pub(crate) fn images_eligible(
     source: &Source,
 ) -> bool {
     picker.is_some() && matches!(source, Source::Live { .. })
+}
+
+/// Stat a candidate attachment-upload path (after `~`-expansion) and either
+/// build the `Confirm` variant with its resolved filename/size/mime/content
+/// preview, or a human-readable error naming the path that failed to stat —
+/// shared by `App::confirm_attachment_upload_path` (manual Enter from
+/// `Input`) and `App::try_auto_attach` (the paste/drop auto-attach flow), so
+/// both go through exactly one "does this look like a real file" check.
+fn stat_attachment_upload_candidate(raw: &str) -> Result<AttachmentUpload, String> {
+    finalize_attachment_selection(raw.to_string(), expand_home(raw))
+}
+
+/// Stat `resolved`, guess its MIME type, read a short text preview when
+/// applicable, and build the `Confirm` variant — or, on failure, a
+/// human-readable error naming `display_path`. Shared by
+/// `stat_attachment_upload_candidate` (`Input`/paste, which resolves `~`
+/// first) and `App::attachment_browse_activate` (`Browse`, which already has
+/// a resolved path straight from the directory listing).
+fn finalize_attachment_selection(
+    display_path: String,
+    resolved: PathBuf,
+) -> Result<AttachmentUpload, String> {
+    let meta = match std::fs::metadata(&resolved) {
+        Ok(m) if m.is_file() => m,
+        Ok(_) => return Err(format!("{display_path}: not a regular file")),
+        Err(e) => return Err(format!("{display_path}: {e}")),
+    };
+    let filename = resolved
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| display_path.clone());
+    let mime = crate::mime::guess_mime(&filename);
+    let content_preview = read_attachment_text_preview(&resolved, mime, &filename);
+    Ok(AttachmentUpload::Confirm {
+        path: display_path,
+        filename,
+        size: meta.len(),
+        mime,
+        content_preview,
+    })
 }
 
 /// Expand a leading `~` (or `~/...`) to the user's home directory, via the

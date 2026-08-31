@@ -1,5 +1,6 @@
 //! Small terminal/OS integrations: clipboard support via the OSC 52
-//! escape, and opening URLs in the system's default browser.
+//! escape, opening URLs in the system's default browser, and normalizing a
+//! pasted/dropped file path (`paths`) into something `std::fs` can open.
 //!
 //! OSC 52 asks the terminal emulator to set the system clipboard, so it needs
 //! no X11/Wayland dependency and works over SSH (in terminals that allow it).
@@ -8,6 +9,9 @@ use std::io::Write;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
+
+mod paths;
+pub use paths::{has_multiple_paths, normalize_dropped_path};
 
 /// Copy `text` to the system clipboard using OSC 52. Best-effort: if the
 /// terminal ignores the sequence, nothing happens (and nothing breaks).

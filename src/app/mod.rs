@@ -43,6 +43,7 @@ mod mouse;
 mod new_issue;
 mod onboarding;
 mod palette;
+mod paste;
 mod priority;
 mod project_picker;
 mod query;
