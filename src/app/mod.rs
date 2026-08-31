@@ -64,6 +64,7 @@ pub use async_ops::AppEvent;
 pub use attachments::AttachmentPreview;
 pub use attachments::AttachmentUpload;
 pub use board::BoardSelection;
+pub use detail::RailPanel;
 pub use edit::{EditTarget, EditorState};
 pub use field_mapping::{FieldMappingOutcome, FieldMappingState, FieldMappingTarget};
 pub(crate) use history::{NavEntry, NavHistory};
@@ -120,6 +121,29 @@ pub struct App {
     /// is already handled, so refreshing doesn't silently unfold a panel
     /// the user just collapsed.
     pub facts_folded: bool,
+    /// Keyboard focus among the wide Detail layout's side-rail panels, for
+    /// scrolling one that has more content than its allotted height — see
+    /// `App::cycle_rail_focus`. `None` (the default) means arrow keys
+    /// scroll the main column, same as before this existed. Reset whenever
+    /// a new issue is shown (`App::show_issue`/`apply_detail_loaded`).
+    pub rail_focus: Option<RailPanel>,
+    /// Per-panel scroll offset for the wide Detail layout's side rail,
+    /// indexed by `RailPanel::index` — see `rail_focus`. Reset alongside
+    /// `detail_scroll` whenever a new issue is shown.
+    pub rail_scroll: [u16; 5],
+    /// Whether each side-rail panel (same `RailPanel::index` order) has more
+    /// content than the height `ui::detail::draw_rail` actually granted it
+    /// this frame — recorded during render so `cycle_rail_focus` can skip
+    /// panels that don't need scrolling, mirroring `board_area`'s "recorded
+    /// during render for keyboard nav" pattern.
+    pub rail_overflow: Cell<[bool; 5]>,
+    /// Each side-rail panel's actual granted content height (post-border,
+    /// same `RailPanel::index` order), recorded alongside `rail_overflow` —
+    /// used to clamp `rail_scroll` when auto-scrolling a highlighted link
+    /// into view (`App::scroll_rail_panel_by`) rather than jumping the
+    /// scroll position on every step even when the target's already
+    /// visible.
+    pub rail_visible_rows: Cell<[u16; 5]>,
     pub source: Source,
     /// When `all_issues`/`source` were last loaded for the current view —
     /// drives the header's sync pill (SPEC.md §2). `None` only briefly,
@@ -623,6 +647,10 @@ impl App {
             detail: None,
             detail_scroll: 0,
             facts_folded: false,
+            rail_focus: None,
+            rail_scroll: [0; 5],
+            rail_overflow: Cell::new([false; 5]),
+            rail_visible_rows: Cell::new([0; 5]),
             source,
             last_synced: Some(std::time::Instant::now()),
             git,

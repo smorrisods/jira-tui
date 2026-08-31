@@ -171,6 +171,19 @@ fn footer_groups(app: &App) -> Vec<FooterGroup> {
             if detail_layout_for_width(app.detail_area.get().width) == DetailLayout::Narrow {
                 nav.push(hint("x", "fold facts"));
             }
+            // Mirrors the `x` hint above: only advertised when it would
+            // actually do something, i.e. the wide rail is showing and at
+            // least one of its panels has more content than it can show
+            // (`App::rail_overflow`, refreshed by `ui::detail::draw_rail`
+            // every render this same frame, before the footer draws).
+            if app.rail_overflow.get().iter().any(|&o| o) {
+                let label = if app.rail_focus.is_some() {
+                    "scroll panel (⇧tab back)"
+                } else {
+                    "focus scrollable panel"
+                };
+                nav.push(hint("tab", label));
+            }
             vec![
                 group(
                     "ACT",

@@ -77,6 +77,12 @@ pub(crate) const KEYMAP: &[KeyHint] = &[
         desc: "focus list ↔ quick view (enables arrow scroll)",
     },
     KeyHint {
+        key: "tab (Detail)",
+        desc: "focus a side-rail panel with more content than it can show — ↑/↓ then step \
+               between its linked issues (children/links) or scroll it (workflow/attachments); \
+               ⇧tab to cycle backward",
+    },
+    KeyHint {
         key: "b",
         desc: "swimlane board (Kanban-style, grouped by epic)",
     },

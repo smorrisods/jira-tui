@@ -459,6 +459,8 @@ impl App {
         self.detail_cache.insert(key.clone(), (*detail).clone());
         if navigate {
             self.detail_scroll = 0;
+            self.rail_focus = None;
+            self.rail_scroll = [0; 5];
             self.detail = Some(*detail);
             #[cfg(feature = "images")]
             self.refresh_detail_images();
