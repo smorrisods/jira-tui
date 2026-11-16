@@ -6,7 +6,7 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 
 use super::super::config::Config;
-use super::support::{auth_header, get, send, url_encode};
+use super::support::{auth_header, get, http_error, send, url_encode};
 use crate::domain::{AssignableUser, LinkDirection, LinkType};
 
 /// Fetch the workflow transitions available from the current status.
@@ -246,7 +246,7 @@ pub fn create_issue(
         .set("Accept", "application/json")
         .set("Content-Type", "application/json")
         .send_json(serde_json::json!({ "fields": fields }))
-        .map_err(|e| anyhow!("Jira create failed: {e}"))?;
+        .map_err(|e| http_error("Jira create failed", e))?;
     let value: Value = resp.into_json().context("decoding Jira JSON")?;
     value
         .get("key")

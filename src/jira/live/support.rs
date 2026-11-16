@@ -15,13 +15,91 @@ pub(super) fn auth_header(cfg: &Config) -> String {
     format!("Basic {}", STANDARD.encode(raw.as_bytes()))
 }
 
+/// How much of an error response body `http_error` will read.
+const MAX_ERROR_BODY_BYTES: u64 = 8 * 1024;
+
+/// Longest detail string (in characters) `http_error` will show before
+/// truncating with an ellipsis.
+const MAX_ERROR_DETAIL_CHARS: usize = 300;
+
+/// Turns a failed `ureq` call into an error that carries Jira's own
+/// explanation. `ureq::Error::Status`'s `Display` drops the response body,
+/// which is where Jira says which field or node it objected to, so read a
+/// bounded amount of it here. Transport errors keep the plain
+/// `<context>: <err>` form. Only the response body is ever echoed — never
+/// request headers — so the `Authorization` value can't leak through this.
+pub(super) fn http_error(context: &str, err: ureq::Error) -> anyhow::Error {
+    match err {
+        ureq::Error::Status(code, resp) => {
+            let url = resp.get_url().to_string();
+            let mut buf = Vec::new();
+            let _ = resp
+                .into_reader()
+                .take(MAX_ERROR_BODY_BYTES)
+                .read_to_end(&mut buf);
+            let body = String::from_utf8_lossy(&buf);
+            match error_detail(&body) {
+                Some(detail) => anyhow!("{context}: {url}: HTTP {code} — {detail}"),
+                None => anyhow!("{context}: {url}: HTTP {code}"),
+            }
+        }
+        other => anyhow!("{context}: {other}"),
+    }
+}
+
+/// Formats an error response body for display: Jira's `errorMessages` and
+/// `errors` when the body is that JSON shape, otherwise the raw body,
+/// whitespace-collapsed and truncated. `None` when there's nothing to show.
+fn error_detail(body: &str) -> Option<String> {
+    let detail = jira_error_detail(body).unwrap_or_else(|| collapse_whitespace(body));
+    if detail.is_empty() {
+        return None;
+    }
+    Some(truncate_chars(&detail, MAX_ERROR_DETAIL_CHARS))
+}
+
+fn jira_error_detail(body: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(body).ok()?;
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(messages) = value.get("errorMessages").and_then(|m| m.as_array()) {
+        parts.extend(
+            messages
+                .iter()
+                .filter_map(|m| m.as_str())
+                .map(str::trim)
+                .filter(|m| !m.is_empty())
+                .map(str::to_string),
+        );
+    }
+    if let Some(errors) = value.get("errors").and_then(|e| e.as_object()) {
+        parts.extend(errors.iter().filter_map(|(field, msg)| {
+            let msg = msg.as_str()?.trim();
+            (!msg.is_empty()).then(|| format!("{field}: {msg}"))
+        }));
+    }
+    (!parts.is_empty()).then(|| parts.join("; "))
+}
+
+fn collapse_whitespace(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max).collect();
+    out.push('…');
+    out
+}
+
 pub(super) fn get(cfg: &Config, path: &str) -> Result<Value> {
     let url = format!("{}{}", cfg.base_url, path);
     let resp = ureq::get(&url)
         .set("Authorization", &auth_header(cfg))
         .set("Accept", "application/json")
         .call()
-        .map_err(|e| anyhow!("Jira request failed: {e}"))?;
+        .map_err(|e| http_error("Jira request failed", e))?;
     let value: Value = resp.into_json().context("decoding Jira JSON")?;
     Ok(value)
 }
@@ -48,7 +126,7 @@ pub(super) fn get_bytes(cfg: &Config, url: &str) -> Result<Vec<u8>> {
     let resp = ureq::get(url)
         .set("Authorization", &auth_header(cfg))
         .call()
-        .map_err(|e| anyhow!("Jira request failed: {e}"))?;
+        .map_err(|e| http_error("Jira request failed", e))?;
     let mut buf = Vec::new();
     resp.into_reader()
         .read_to_end(&mut buf)
@@ -194,7 +272,7 @@ pub(super) fn post_or_put(cfg: &Config, method: &str, path: &str, body: Value) -
         .set("Accept", "application/json")
         .set("Content-Type", "application/json")
         .send_json(body)
-        .map_err(|e| anyhow!("Jira write failed: {e}"))?;
+        .map_err(|e| http_error("Jira write failed", e))?;
     // PUT responses (e.g. update_description) are often empty bodies; treat
     // decode failure as "no useful body" rather than an error.
     Ok(resp.into_json().unwrap_or(Value::Null))
@@ -282,7 +360,7 @@ pub(super) fn post_multipart(
         // to miss Jira Cloud/Server trap for exactly this endpoint.
         .set("X-Atlassian-Token", "no-check")
         .send_bytes(&body)
-        .map_err(|e| anyhow!("Jira attachment upload failed: {e}"))?;
+        .map_err(|e| http_error("Jira attachment upload failed", e))?;
     let value: Value = resp.into_json().context("decoding Jira JSON")?;
     Ok(value)
 }
@@ -293,7 +371,7 @@ pub(super) fn delete(cfg: &Config, path: &str) -> Result<()> {
         .set("Authorization", &auth_header(cfg))
         .set("Accept", "application/json")
         .call()
-        .map_err(|e| anyhow!("Jira delete failed: {e}"))?;
+        .map_err(|e| http_error("Jira delete failed", e))?;
     Ok(())
 }
 
@@ -441,6 +519,220 @@ mod tests {
 
         let cfg = test_config(server.url());
         assert!(whoami(&cfg).is_err());
+    }
+
+    #[test]
+    fn error_detail_renders_jira_errors_map_as_field_and_message() {
+        let body = r#"{"errorMessages":[],"errors":{"description":"Operation value must be an Atlassian Document"}}"#;
+        assert_eq!(
+            error_detail(body).unwrap(),
+            "description: Operation value must be an Atlassian Document"
+        );
+    }
+
+    #[test]
+    fn error_detail_joins_error_messages_then_errors() {
+        let body = r#"{"errorMessages":["first","second"],"errors":{"summary":"too long"}}"#;
+        assert_eq!(
+            error_detail(body).unwrap(),
+            "first; second; summary: too long"
+        );
+    }
+
+    #[test]
+    fn error_detail_falls_back_to_the_raw_body_for_non_jira_json_and_text() {
+        assert_eq!(
+            error_detail(r#"{"message":"nope"}"#).unwrap(),
+            r#"{"message":"nope"}"#
+        );
+        assert_eq!(
+            error_detail("  <html>\n  Bad   gateway </html> \n").unwrap(),
+            "<html> Bad gateway </html>"
+        );
+    }
+
+    #[test]
+    fn error_detail_is_none_for_an_empty_body() {
+        assert_eq!(error_detail(""), None);
+        assert_eq!(error_detail("  \n "), None);
+        assert_eq!(
+            error_detail(r#"{"errorMessages":[],"errors":{}}"#),
+            Some(r#"{"errorMessages":[],"errors":{}}"#.into())
+        );
+    }
+
+    #[test]
+    fn error_detail_truncates_long_bodies() {
+        let detail = error_detail(&"x".repeat(5000)).unwrap();
+        assert_eq!(detail.chars().count(), MAX_ERROR_DETAIL_CHARS + 1);
+        assert!(detail.ends_with('…'));
+    }
+
+    #[test]
+    fn write_failure_surfaces_jira_field_errors() {
+        let mut server = mockito::Server::new();
+        server
+            .mock("PUT", "/rest/api/3/issue/DS-1")
+            .with_status(400)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"errorMessages":[],"errors":{"description":"Operation value must be an Atlassian Document"}}"#)
+            .create();
+        let cfg = test_config(server.url());
+
+        let err = send(&cfg, "PUT", "/rest/api/3/issue/DS-1", serde_json::json!({})).unwrap_err();
+        let msg = err.to_string();
+
+        assert!(msg.starts_with("Jira write failed: "), "{msg}");
+        assert!(msg.contains("HTTP 400"), "{msg}");
+        assert!(
+            msg.contains("description: Operation value must be an Atlassian Document"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn write_failure_surfaces_error_messages() {
+        let mut server = mockito::Server::new();
+        server
+            .mock("POST", "/rest/api/3/issue/DS-1/comment")
+            .with_status(400)
+            .with_body(r#"{"errorMessages":["Comment body is too long"],"errors":{}}"#)
+            .create();
+        let cfg = test_config(server.url());
+
+        let err = post_or_put(&cfg, "POST", "/rest/api/3/issue/DS-1/comment", Value::Null)
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("HTTP 400"), "{err}");
+        assert!(err.contains("Comment body is too long"), "{err}");
+    }
+
+    #[test]
+    fn write_failure_includes_a_non_json_body() {
+        let mut server = mockito::Server::new();
+        server
+            .mock("PUT", "/x")
+            .with_status(400)
+            .with_body("plain text complaint")
+            .create();
+        let cfg = test_config(server.url());
+
+        let err = send(&cfg, "PUT", "/x", Value::Null)
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.ends_with("HTTP 400 — plain text complaint"), "{err}");
+    }
+
+    #[test]
+    fn write_failure_with_an_empty_body_shows_only_the_status() {
+        let mut server = mockito::Server::new();
+        server.mock("PUT", "/x").with_status(400).create();
+        let cfg = test_config(server.url());
+
+        let err = send(&cfg, "PUT", "/x", Value::Null)
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.ends_with("HTTP 400"), "{err}");
+        assert!(!err.contains('—'), "{err}");
+    }
+
+    #[test]
+    fn write_failure_truncates_a_long_body() {
+        let mut server = mockito::Server::new();
+        server
+            .mock("PUT", "/x")
+            .with_status(500)
+            .with_body("y".repeat(20_000))
+            .create();
+        let cfg = test_config(server.url());
+
+        let err = send(&cfg, "PUT", "/x", Value::Null)
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("HTTP 500"), "{err}");
+        assert!(err.ends_with('…'), "{err}");
+        assert!(err.len() < 600, "{}", err.len());
+    }
+
+    #[test]
+    fn get_failure_surfaces_the_body_on_a_5xx() {
+        let mut server = mockito::Server::new();
+        server
+            .mock("GET", "/rest/api/3/search")
+            .with_status(503)
+            .with_body(r#"{"errorMessages":["Service unavailable, try later"]}"#)
+            .create();
+        let cfg = test_config(server.url());
+
+        let err = get(&cfg, "/rest/api/3/search").unwrap_err().to_string();
+
+        assert!(err.starts_with("Jira request failed: "), "{err}");
+        assert!(err.contains("HTTP 503"), "{err}");
+        assert!(err.contains("Service unavailable, try later"), "{err}");
+    }
+
+    #[test]
+    fn delete_failure_surfaces_the_body() {
+        let mut server = mockito::Server::new();
+        server
+            .mock("DELETE", "/rest/api/3/issue/DS-1/comment/9")
+            .with_status(403)
+            .with_body(r#"{"errorMessages":["You do not have permission to delete this comment"]}"#)
+            .create();
+        let cfg = test_config(server.url());
+
+        let err = delete(&cfg, "/rest/api/3/issue/DS-1/comment/9")
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.starts_with("Jira delete failed: "), "{err}");
+        assert!(err.contains("HTTP 403"), "{err}");
+        assert!(err.contains("permission to delete"), "{err}");
+    }
+
+    #[test]
+    fn upload_failure_surfaces_the_body() {
+        let mut server = mockito::Server::new();
+        server
+            .mock("POST", "/rest/api/3/issue/DS-1/attachments")
+            .with_status(413)
+            .with_body(r#"{"errorMessages":["File too large"]}"#)
+            .create();
+        let cfg = test_config(server.url());
+
+        let err = post_multipart(
+            &cfg,
+            "/rest/api/3/issue/DS-1/attachments",
+            "a.txt",
+            "text/plain",
+            b"hi",
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("HTTP 413"), "{err}");
+        assert!(err.contains("File too large"), "{err}");
+    }
+
+    #[test]
+    fn http_errors_never_include_the_authorization_value() {
+        let mut server = mockito::Server::new();
+        server
+            .mock("PUT", "/x")
+            .with_status(400)
+            .with_body("bad request")
+            .create();
+        let cfg = test_config(server.url());
+
+        let err = format!("{:#}", send(&cfg, "PUT", "/x", Value::Null).unwrap_err());
+
+        assert!(!err.contains(&auth_header(&cfg)), "{err}");
+        assert!(!err.contains("secret-token"), "{err}");
+        assert!(!err.contains("Basic "), "{err}");
     }
 
     #[test]
