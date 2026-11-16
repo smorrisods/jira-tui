@@ -8,8 +8,25 @@ use serde_json::{json, Value};
 
 use super::media;
 
+/// Per-compile counter for the `localId` attribute Jira requires on
+/// `taskList` and `taskItem` nodes. Ids are UUID-shaped but deterministic,
+/// and unique within one `compile()` call.
+struct LocalIds(u64);
+
+impl LocalIds {
+    fn new() -> Self {
+        Self(0)
+    }
+
+    fn next(&mut self) -> String {
+        self.0 += 1;
+        format!("00000000-0000-4000-8000-{:012x}", self.0)
+    }
+}
+
 /// Compile Markdown text into an ADF `doc`.
 pub fn compile(md: &str) -> Value {
+    let mut local_ids = LocalIds::new();
     let mut blocks: Vec<Value> = Vec::new();
     let lines: Vec<&str> = md.lines().collect();
     let mut i = 0;
@@ -82,6 +99,7 @@ pub fn compile(md: &str) -> Value {
         // Task list.
         if is_task_item(trimmed) {
             flush_paragraph!();
+            let list_id = local_ids.next();
             let mut items: Vec<Value> = Vec::new();
             while i < lines.len() && is_task_item(lines[i].trim_start()) {
                 let t = lines[i].trim_start();
@@ -89,12 +107,19 @@ pub fn compile(md: &str) -> Value {
                 let text = &t[5..].trim_start();
                 items.push(json!({
                     "type": "taskItem",
-                    "attrs": { "state": if done { "DONE" } else { "TODO" } },
+                    "attrs": {
+                        "localId": local_ids.next(),
+                        "state": if done { "DONE" } else { "TODO" }
+                    },
                     "content": parse_inline(text)
                 }));
                 i += 1;
             }
-            blocks.push(json!({ "type": "taskList", "content": items }));
+            blocks.push(json!({
+                "type": "taskList",
+                "attrs": { "localId": list_id },
+                "content": items
+            }));
             continue;
         }
 
@@ -472,6 +497,48 @@ mod tests {
         let tasks = &doc["content"][0]["content"];
         assert_eq!(tasks[0]["attrs"]["state"].as_str(), Some("DONE"));
         assert_eq!(tasks[1]["attrs"]["state"].as_str(), Some("TODO"));
+    }
+
+    fn collect_task_local_ids(v: &Value, out: &mut Vec<Value>) {
+        if matches!(
+            v.get("type").and_then(|t| t.as_str()),
+            Some("taskList" | "taskItem")
+        ) {
+            out.push(v["attrs"]["localId"].clone());
+        }
+        if let Some(a) = v.get("content").and_then(|c| c.as_array()) {
+            for c in a {
+                collect_task_local_ids(c, out);
+            }
+        }
+    }
+
+    #[test]
+    fn task_nodes_carry_non_empty_local_ids() {
+        let doc = compile("- [x] done\n- [ ] todo");
+        let mut ids = Vec::new();
+        collect_task_local_ids(&doc, &mut ids);
+        assert_eq!(ids.len(), 3);
+        for id in &ids {
+            assert!(id.as_str().is_some_and(|s| !s.is_empty()), "bad id: {id}");
+        }
+        assert_eq!(doc["content"][0]["content"][0]["attrs"]["state"], "DONE");
+    }
+
+    #[test]
+    fn task_local_ids_are_unique_across_lists_in_one_document() {
+        let doc = compile("- [ ] a\n- [x] b\n\npara\n\n- [ ] c\n- [ ] d");
+        let mut ids = Vec::new();
+        collect_task_local_ids(&doc, &mut ids);
+        assert_eq!(ids.len(), 6);
+        let unique: std::collections::HashSet<_> = ids.iter().map(|v| v.to_string()).collect();
+        assert_eq!(unique.len(), ids.len());
+    }
+
+    #[test]
+    fn task_local_ids_are_deterministic() {
+        let md = "- [ ] a\n- [x] b\n\n- [ ] c";
+        assert_eq!(compile(md), compile(md));
     }
 
     #[test]
