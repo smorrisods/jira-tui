@@ -313,6 +313,19 @@ pub fn parse_inline(text: &str) -> Vec<Value> {
                 continue;
             }
         }
+        // Strikethrough: ~~...~~
+        if chars[i] == '~' && i + 1 < chars.len() && chars[i + 1] == '~' {
+            if let Some(end) = find_seq(&chars, i + 2, &['~', '~']).filter(|&end| end > i + 2) {
+                flush!();
+                let inner: String = chars[i + 2..end].iter().collect();
+                nodes.push(json!({
+                    "type": "text", "text": inner,
+                    "marks": [ { "type": "strike" } ]
+                }));
+                i = end + 2;
+                continue;
+            }
+        }
         // Bold: **...**
         if chars[i] == '*' && i + 1 < chars.len() && chars[i + 1] == '*' {
             if let Some(end) = find_seq(&chars, i + 2, &['*', '*']) {
@@ -599,6 +612,49 @@ mod tests {
         // rather than emitting a bogus mention node.
         let nodes = parse_inline("[~accountid:] not a mention");
         assert!(nodes.iter().all(|n| n["type"] != "mention"));
+    }
+
+    #[test]
+    fn strikethrough_compiles_to_a_strike_mark() {
+        let nodes = parse_inline("some ~~gone~~ text");
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(nodes[0]["text"], "some ");
+        assert_eq!(nodes[1]["text"], "gone");
+        assert_eq!(nodes[1]["marks"], json!([{ "type": "strike" }]));
+        assert_eq!(nodes[2]["text"], " text");
+    }
+
+    #[test]
+    fn unclosed_or_lone_tildes_stay_literal() {
+        for input in ["~~never closed", "about ~5 minutes", "a ~ b ~ c", "~~~~"] {
+            let nodes = parse_inline(input);
+            assert_eq!(nodes.len(), 1, "{input}");
+            assert_eq!(nodes[0]["text"], input);
+            assert!(nodes[0].get("marks").is_none(), "{input}");
+        }
+    }
+
+    #[test]
+    fn strikethrough_round_trips_through_markdown() {
+        let original = json!({
+            "type": "doc",
+            "version": 1,
+            "content": [{
+                "type": "paragraph",
+                "content": [
+                    { "type": "text", "text": "keep " },
+                    { "type": "text", "text": "gone", "marks": [ { "type": "strike" } ] },
+                    { "type": "text", "text": " keep" }
+                ]
+            }]
+        });
+        let md = to_markdown(&original);
+        assert!(md.contains("keep ~~gone~~ keep"));
+        let recompiled = compile(&md);
+        let content = recompiled["content"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 3);
+        assert_eq!(content[1]["text"], "gone");
+        assert_eq!(content[1]["marks"], json!([{ "type": "strike" }]));
     }
 
     #[test]

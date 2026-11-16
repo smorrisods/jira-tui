@@ -208,6 +208,9 @@ fn inline_to_md(content: Option<&Value>) -> String {
                 if has("code") {
                     text = format!("`{text}`");
                 } else {
+                    if has("strike") {
+                        text = format!("~~{text}~~");
+                    }
                     if has("strong") {
                         text = format!("**{text}**");
                     }
@@ -364,5 +367,20 @@ mod tests {
         let md = to_markdown(&doc);
         assert!(!md.contains("alt="));
         assert!(!md.contains("collection="));
+    }
+
+    #[test]
+    fn strike_mark_encodes_as_double_tildes() {
+        let doc = json!({
+            "type": "doc",
+            "version": 1,
+            "content": [{
+                "type": "paragraph",
+                "content": [
+                    { "type": "text", "text": "gone", "marks": [ { "type": "strike" } ] }
+                ]
+            }]
+        });
+        assert_eq!(to_markdown(&doc).trim(), "~~gone~~");
     }
 }

@@ -175,7 +175,7 @@ Inside an issue (`Detail`):
 - **`t` — change status:** opens a transition picker; pick a target and it's applied (via Jira REST in live mode, locally in demo). The current status is marked, and a toast confirms the move.
 - **`e` — edit the description:** serialises the issue's ADF to Markdown and opens it in a **built-in editor** (`^S` to preview, `esc` to cancel). Prefer your own editor? **`E`** opens `$VISUAL`/`$EDITOR` (falling back to `vi`) instead. Either way your Markdown is **recompiled to ADF** and shown as a **preview**; press `y` to apply (REST in live mode) or `esc` to cancel — nothing is sent to Jira until you confirm.
 
-The Markdown ↔ ADF conversion supports the common formatting elements (headings, bullet/ordered/task lists, code blocks, and inline `code`/**bold**/*italic*/links), so the round trip stays ADF-native.
+The Markdown ↔ ADF conversion supports the common formatting elements (headings, bullet/ordered/task lists, code blocks, and inline `code`/**bold**/*italic*/~~strikethrough~~/links), so the round trip stays ADF-native.
 
 ## Comments
 
