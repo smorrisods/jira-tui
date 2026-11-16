@@ -256,6 +256,7 @@ impl App {
     /// `show_issue`'s non-live branch and its `locally_created` shortcut for
     /// a live session above.
     fn resolve_detail_sync(&mut self, key: &str, detail: IssueDetail) {
+        self.cancel_pending_detail_fetch();
         self.detail_cache.insert(key.to_string(), detail.clone());
         self.detail = Some(detail);
         #[cfg(feature = "images")]
@@ -263,6 +264,19 @@ impl App {
         self.screen = Screen::Detail;
         if let Some(pos) = self.issues.iter().position(|i| i.key == key) {
             self.selected = pos;
+        }
+    }
+
+    /// Invalidate any in-flight detail fetch, so its eventual `DetailLoaded`
+    /// fails `apply_detail_loaded`'s generation guard instead of landing
+    /// over whatever is being viewed now. A synchronous navigation has to do
+    /// this itself since it never goes through `dispatch_detail_fetch`; the
+    /// stale event is dropped before it can clear `loading`, so the flag the
+    /// cancelled dispatch set is cleared here too.
+    fn cancel_pending_detail_fetch(&mut self) {
+        if self.detail_pending.take().is_some() {
+            self.detail_generation += 1;
+            self.loading = false;
         }
     }
 
