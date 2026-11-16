@@ -63,6 +63,12 @@ fn block_to_md(node: &Value, depth: usize) -> Option<String> {
             let mut lines = Vec::new();
             if let Some(items) = node.get("content").and_then(|c| c.as_array()) {
                 for item in items {
+                    if item.get("type").and_then(|t| t.as_str()) == Some("taskList") {
+                        if let Some(nested) = block_to_md(item, depth + 1) {
+                            lines.push(nested);
+                        }
+                        continue;
+                    }
                     let done = item
                         .get("attrs")
                         .and_then(|a| a.get("state"))
@@ -169,6 +175,15 @@ fn list_item_to_md(item: &Value, depth: usize, marker: &str, out: &mut Vec<Strin
         if ty == "bulletList" || ty == "orderedList" || ty == "taskList" {
             if let Some(nested) = block_to_md(child, depth + 1) {
                 out.push(nested);
+            }
+            continue;
+        }
+        if ty == "codeBlock" {
+            if let Some(code) = block_to_md(child, depth) {
+                let pad = format!("{}  ", indent(depth));
+                for line in code.lines() {
+                    out.push(format!("{pad}{line}"));
+                }
             }
             continue;
         }
