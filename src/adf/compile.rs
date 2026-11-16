@@ -2,7 +2,8 @@
 //!
 //! Mirrors the mapping rules used by the `jira-ds-skill` pipeline so edits made
 //! in `$EDITOR` recompile to proper ADF: headings, paragraphs, bullet/ordered/
-//! task lists, fenced code blocks, and inline `code`/**bold**/*italic*/links.
+//! task lists, fenced code blocks, GFM tables, and inline `code`/**bold**/
+//! *italic*/links.
 
 use serde_json::{json, Value};
 
@@ -85,6 +86,13 @@ pub fn compile(md: &str) -> Value {
         if let Some(kind) = list_kind(trimmed) {
             flush_paragraph!();
             blocks.push(parse_list(&lines, &mut i, kind, None, &mut local_ids));
+            continue;
+        }
+
+        // GFM table: a header line followed by a delimiter row.
+        if is_table_start(&lines, i) {
+            flush_paragraph!();
+            blocks.push(parse_table(&lines, &mut i));
             continue;
         }
 
@@ -282,6 +290,10 @@ fn parse_list(
             if trimmed.is_empty() || indent <= item_indent {
                 break;
             }
+            if is_table_start(lines, *i) {
+                // Jira doesn't allow a table inside a list item.
+                break;
+            }
             if let Some(nested_kind) = list_kind(trimmed) {
                 if !can_nest(kind, nested_kind) {
                     break;
@@ -339,6 +351,135 @@ fn parse_list(
         ListKind::Bullet => json!({ "type": "bulletList", "content": items }),
         ListKind::Ordered => json!({ "type": "orderedList", "content": items }),
     }
+}
+
+/// Split one table row into cells on unescaped `|`, dropping the optional
+/// leading and trailing pipe and turning `\|` into a literal `|`.
+fn split_cells(line: &str) -> Vec<String> {
+    let line = line.trim();
+    let line = line.strip_prefix('|').unwrap_or(line);
+    let mut cells = Vec::new();
+    let mut cell = String::new();
+    let mut ended_with_pipe = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        ended_with_pipe = false;
+        if c == '\\' && chars.peek() == Some(&'|') {
+            cell.push('|');
+            chars.next();
+        } else if c == '|' {
+            cells.push(cell.trim().to_string());
+            cell = String::new();
+            ended_with_pipe = true;
+        } else {
+            cell.push(c);
+        }
+    }
+    if !ended_with_pipe {
+        cells.push(cell.trim().to_string());
+    }
+    cells
+}
+
+fn is_delimiter_cell(cell: &str) -> bool {
+    let cell = cell.trim();
+    let cell = cell.strip_prefix(':').unwrap_or(cell);
+    let cell = cell.strip_suffix(':').unwrap_or(cell);
+    !cell.is_empty() && cell.chars().all(|c| c == '-')
+}
+
+/// A table delimiter row such as `| --- | :---: | ---: |`.
+fn is_delimiter_row(line: &str) -> bool {
+    line.contains('|') && split_cells(line).iter().all(|c| is_delimiter_cell(c))
+}
+
+/// A table starts at a line containing `|` that is directly followed by a
+/// delimiter row; a lone `|` line stays an ordinary paragraph line.
+fn is_table_start(lines: &[&str], i: usize) -> bool {
+    lines[i].contains('|') && lines.get(i + 1).is_some_and(|next| is_delimiter_row(next))
+}
+
+/// Split a cell on `<br>` tags into inline nodes joined by `hardBreak`s.
+fn parse_cell(text: &str) -> Vec<Value> {
+    let lower = text.to_ascii_lowercase();
+    let mut parts: Vec<&str> = Vec::new();
+    let mut start = 0;
+    let mut idx = 0;
+    while idx < lower.len() {
+        if lower.as_bytes()[idx] == b'<' {
+            let tag = ["<br>", "<br/>", "<br />"]
+                .iter()
+                .find(|t| lower[idx..].starts_with(**t));
+            if let Some(tag) = tag {
+                parts.push(&text[start..idx]);
+                idx += tag.len();
+                start = idx;
+                continue;
+            }
+        }
+        idx += 1;
+    }
+    parts.push(&text[start..]);
+
+    let mut nodes: Vec<Value> = Vec::new();
+    for part in parts.into_iter().map(str::trim).filter(|p| !p.is_empty()) {
+        if !nodes.is_empty() {
+            nodes.push(json!({ "type": "hardBreak" }));
+        }
+        nodes.extend(parse_inline(part));
+    }
+    nodes
+}
+
+/// Parse a GFM table starting at its header line, leaving `i` after its last
+/// body row. The header row becomes `tableHeader` cells and the rest
+/// `tableCell`s; every row is padded to the widest row's column count.
+fn parse_table(lines: &[&str], i: &mut usize) -> Value {
+    let mut rows: Vec<Vec<String>> = vec![split_cells(lines[*i])];
+    *i += 2; // header line and delimiter row
+    while *i < lines.len() {
+        let trimmed = lines[*i].trim_start();
+        if trimmed.is_empty()
+            || !trimmed.contains('|')
+            || trimmed.starts_with("```")
+            || heading_level(trimmed).is_some()
+            || list_kind(trimmed).is_some()
+        {
+            break;
+        }
+        rows.push(split_cells(lines[*i]));
+        *i += 1;
+    }
+
+    let width = rows.iter().map(Vec::len).max().unwrap_or(0);
+    let rows: Vec<Value> = rows
+        .into_iter()
+        .enumerate()
+        .map(|(row_idx, mut cells)| {
+            cells.resize(width, String::new());
+            let cell_type = if row_idx == 0 {
+                "tableHeader"
+            } else {
+                "tableCell"
+            };
+            let cells: Vec<Value> = cells
+                .iter()
+                .map(|text| {
+                    json!({
+                        "type": cell_type,
+                        "content": [ { "type": "paragraph", "content": parse_cell(text) } ]
+                    })
+                })
+                .collect();
+            json!({ "type": "tableRow", "content": cells })
+        })
+        .collect();
+
+    json!({
+        "type": "table",
+        "attrs": { "isNumberColumnEnabled": false, "layout": "default" },
+        "content": rows
+    })
 }
 
 /// Recognizes a line that is *only* an image reference (`![alt](url)`,
@@ -1328,5 +1469,188 @@ mod tests {
             recompiled["content"][0]["attrs"],
             original["content"][0]["attrs"]
         );
+    }
+
+    fn table_rows(table: &Value) -> Vec<Vec<String>> {
+        table["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| {
+                row["content"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(text_of)
+                    .collect()
+            })
+            .collect()
+    }
+
+    fn cell_types(table: &Value, row: usize) -> Vec<&str> {
+        table["content"][row]["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["type"].as_str().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn compiles_the_issue_110_table() {
+        let md = "| Icon asset | Used for | Matches reported selector? |\n\
+                  | --- | --- | --- |\n\
+                  | `foo.svg` | Thing A | Yes |\n\
+                  | `bar.svg` | Thing B | No |";
+        let doc = compile(md);
+        assert_eq!(block_types(&doc), vec!["table"]);
+        let table = &doc["content"][0];
+        assert_eq!(table["attrs"]["isNumberColumnEnabled"], false);
+        assert_eq!(table["attrs"]["layout"], "default");
+        assert_eq!(table["content"].as_array().unwrap().len(), 3);
+        assert_eq!(
+            cell_types(table, 0),
+            vec!["tableHeader", "tableHeader", "tableHeader"]
+        );
+        assert_eq!(
+            cell_types(table, 2),
+            vec!["tableCell", "tableCell", "tableCell"]
+        );
+        assert_eq!(table_rows(table)[1], vec!["foo.svg", "Thing A", "Yes"]);
+        let code = &table["content"][1]["content"][0]["content"][0]["content"][0];
+        assert_eq!(code["marks"][0]["type"], "code");
+    }
+
+    #[test]
+    fn table_delimiter_accepts_alignment_colons() {
+        let doc = compile("| a | b | c |\n| :--- | :---: | ---: |\n| 1 | 2 | 3 |");
+        assert_eq!(block_types(&doc), vec!["table"]);
+        assert_eq!(table_rows(&doc["content"][0])[1], vec!["1", "2", "3"]);
+    }
+
+    #[test]
+    fn table_without_outer_pipes_compiles() {
+        let doc = compile("a | b\n--|--\n1 | 2");
+        assert_eq!(block_types(&doc), vec!["table"]);
+        assert_eq!(table_rows(&doc["content"][0])[1], vec!["1", "2"]);
+    }
+
+    #[test]
+    fn escaped_pipe_stays_inside_its_cell() {
+        let doc = compile("| a | b |\n| --- | --- |\n| x \\| y | z |");
+        let rows = table_rows(&doc["content"][0]);
+        assert_eq!(rows[1], vec!["x | y", "z"]);
+    }
+
+    #[test]
+    fn empty_cell_is_a_paragraph_with_empty_content() {
+        let doc = compile("| a | b |\n| --- | --- |\n|  | z |");
+        let cell = &doc["content"][0]["content"][1]["content"][0];
+        assert_eq!(cell["type"], "tableCell");
+        assert_eq!(cell["content"][0]["type"], "paragraph");
+        assert_eq!(cell["content"][0]["content"], json!([]));
+    }
+
+    #[test]
+    fn short_and_long_rows_are_padded_to_the_widest_row() {
+        let doc = compile("| a | b |\n| --- | --- |\n| 1 |\n| 1 | 2 | 3 |");
+        let table = &doc["content"][0];
+        let rows = table_rows(table);
+        assert_eq!(rows[0], vec!["a", "b", ""]);
+        assert_eq!(rows[1], vec!["1", "", ""]);
+        assert_eq!(rows[2], vec!["1", "2", "3"]);
+        assert_eq!(cell_types(table, 0).len(), 3);
+    }
+
+    #[test]
+    fn br_in_a_cell_becomes_a_hard_break() {
+        let doc = compile("| a |\n| --- |\n| one<br>two |");
+        let para = &doc["content"][0]["content"][1]["content"][0]["content"][0];
+        let types: Vec<&str> = para["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n["type"].as_str().unwrap())
+            .collect();
+        assert_eq!(types, vec!["text", "hardBreak", "text"]);
+    }
+
+    #[test]
+    fn pipe_line_without_a_delimiter_row_stays_a_paragraph() {
+        let doc = compile("| not | a table |\n| really | no |");
+        assert_eq!(block_types(&doc), vec!["paragraph"]);
+        assert!(text_of(&doc).contains("| not | a table |"));
+    }
+
+    #[test]
+    fn table_interrupts_a_paragraph_without_a_blank_line() {
+        let doc = compile("intro text\n| a | b |\n| --- | --- |\n| 1 | 2 |");
+        assert_eq!(block_types(&doc), vec!["paragraph", "table"]);
+        assert_eq!(text_of(&doc["content"][0]), "intro text");
+    }
+
+    #[test]
+    fn paragraph_after_a_table_ends_it_once_the_pipes_stop() {
+        let doc = compile("| a |\n| --- |\n| 1 |\n\nafter");
+        assert_eq!(block_types(&doc), vec!["table", "paragraph"]);
+        let doc = compile("| a |\n| --- |\n| 1 |\nafter");
+        assert_eq!(block_types(&doc), vec!["table", "paragraph"]);
+    }
+
+    #[test]
+    fn table_directly_after_list_items_ends_the_list() {
+        let doc = compile("- one\n- two\n| a | b |\n| --- | --- |\n| 1 | 2 |");
+        assert_eq!(block_types(&doc), vec!["bulletList", "table"]);
+        assert_eq!(doc["content"][0]["content"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn indented_table_under_a_list_item_is_never_nested() {
+        let doc = compile("- one\n  | a | b |\n  | --- | --- |\n  | 1 | 2 |");
+        assert_eq!(block_types(&doc), vec!["bulletList", "table"]);
+        let item = &doc["content"][0]["content"][0];
+        assert_eq!(item["content"].as_array().unwrap().len(), 1);
+        assert_eq!(table_rows(&doc["content"][1])[1], vec!["1", "2"]);
+    }
+
+    #[test]
+    fn indented_table_under_a_nested_task_item_ends_every_list() {
+        let doc = compile("- [ ] one\n  - [ ] two\n    | a |\n    | --- |\n    | 1 |");
+        assert_eq!(block_types(&doc), vec!["taskList", "table"]);
+    }
+
+    #[test]
+    fn markdown_table_round_trips_through_markdown() {
+        let md = "- item\n\n| Icon | Used for |\n| --- | --- |\n| `foo.svg` | a \\| b |\n|  | **bold** |\n";
+        let doc = compile(md);
+        assert_eq!(block_types(&doc), vec!["bulletList", "table"]);
+        let out = to_markdown(&doc);
+        assert_eq!(out, md);
+        assert_eq!(compile(&out), doc);
+    }
+
+    #[test]
+    fn adf_table_round_trips_through_markdown_with_structure_intact() {
+        let cell = |ty: &str, text: &str| {
+            let content = if text.is_empty() {
+                json!([])
+            } else {
+                json!([{ "type": "text", "text": text }])
+            };
+            json!({ "type": ty, "content": [{ "type": "paragraph", "content": content }] })
+        };
+        let doc = json!({
+            "type": "doc", "version": 1,
+            "content": [{
+                "type": "table",
+                "attrs": { "isNumberColumnEnabled": false, "layout": "default" },
+                "content": [
+                    { "type": "tableRow", "content": [cell("tableHeader", "h1"), cell("tableHeader", "h|2")] },
+                    { "type": "tableRow", "content": [cell("tableCell", "a"), cell("tableCell", "")] }
+                ]
+            }]
+        });
+        let back = compile(&to_markdown(&doc));
+        assert_eq!(back["content"], doc["content"]);
     }
 }

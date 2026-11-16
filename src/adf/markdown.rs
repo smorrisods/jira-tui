@@ -153,6 +153,7 @@ fn block_to_md(node: &Value, depth: usize) -> Option<String> {
                     .join("\n"),
             )
         }
+        "table" => table_to_md(node),
         _ => {
             let text = inline_to_md(node.get("content"));
             if text.is_empty() {
@@ -162,6 +163,63 @@ fn block_to_md(node: &Value, depth: usize) -> Option<String> {
             }
         }
     }
+}
+
+/// Serialise a `table` node as a GFM table.
+///
+/// The first row is always the header line (GFM requires one), whether or not
+/// its cells are `tableHeader`s. Short rows are padded with empty cells. This is
+/// deliberately lossy for what GFM can't express: `colspan`/`rowspan`, column
+/// widths, and header cells outside the first row are dropped, and block
+/// content inside a cell (several paragraphs, lists, code) is flattened to
+/// best-effort inline text joined with `<br>`.
+fn table_to_md(node: &Value) -> Option<String> {
+    let rows: Vec<Vec<String>> = node
+        .get("content")?
+        .as_array()?
+        .iter()
+        .filter(|row| row.get("type").and_then(|t| t.as_str()) == Some("tableRow"))
+        .map(|row| {
+            row.get("content")
+                .and_then(|c| c.as_array())
+                .map(|cells| cells.iter().map(table_cell_to_md).collect())
+                .unwrap_or_default()
+        })
+        .collect();
+    let width = rows.iter().map(Vec::len).max().unwrap_or(0);
+    if width == 0 {
+        return None;
+    }
+
+    let line = |cells: &[String]| {
+        let mut cells = cells.to_vec();
+        cells.resize(width, String::new());
+        let cells: Vec<String> = cells.into_iter().map(|c| format!(" {c} ")).collect();
+        format!("|{}|", cells.join("|"))
+    };
+    let delimiter = format!("|{}|", vec![" --- "; width].join("|"));
+
+    let mut lines = vec![line(&rows[0]), delimiter];
+    lines.extend(rows[1..].iter().map(|row| line(row)));
+    Some(lines.join("\n"))
+}
+
+fn table_cell_to_md(cell: &Value) -> String {
+    let parts: Vec<String> = cell
+        .get("content")
+        .and_then(|c| c.as_array())
+        .map(|blocks| {
+            blocks
+                .iter()
+                .filter_map(|block| match block.get("type").and_then(|t| t.as_str()) {
+                    Some("codeBlock") => Some(format!("`{}`", collect_text(block.get("content")))),
+                    _ => block_to_md(block, 0),
+                })
+                .filter(|text| !text.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    parts.join("\n").replace('|', "\\|").replace('\n', "<br>")
 }
 
 fn list_item_to_md(item: &Value, depth: usize, marker: &str, out: &mut Vec<String>) {
@@ -397,5 +455,122 @@ mod tests {
             }]
         });
         assert_eq!(to_markdown(&doc).trim(), "~~gone~~");
+    }
+
+    fn cell(ty: &str, blocks: Value) -> Value {
+        json!({ "type": ty, "content": blocks })
+    }
+
+    fn para(text: &str) -> Value {
+        if text.is_empty() {
+            json!({ "type": "paragraph", "content": [] })
+        } else {
+            json!({ "type": "paragraph", "content": [{ "type": "text", "text": text }] })
+        }
+    }
+
+    fn row(cells: Vec<Value>) -> Value {
+        json!({ "type": "tableRow", "content": cells })
+    }
+
+    fn doc_of(blocks: Vec<Value>) -> Value {
+        json!({ "type": "doc", "version": 1, "content": blocks })
+    }
+
+    #[test]
+    fn bullet_list_followed_by_a_table_keeps_the_table() {
+        let doc = doc_of(vec![
+            json!({
+                "type": "bulletList",
+                "content": [{ "type": "listItem", "content": [para("one")] }]
+            }),
+            json!({
+                "type": "table",
+                "content": [
+                    row(vec![cell("tableHeader", json!([para("Name")])), cell("tableHeader", json!([para("Role")]))]),
+                    row(vec![cell("tableCell", json!([para("Ada")])), cell("tableCell", json!([para("Eng")]))]),
+                ]
+            }),
+        ]);
+        assert_eq!(
+            to_markdown(&doc),
+            "- one\n\n| Name | Role |\n| --- | --- |\n| Ada | Eng |\n"
+        );
+    }
+
+    #[test]
+    fn table_cells_escape_pipes_and_keep_marks() {
+        let doc = doc_of(vec![json!({
+            "type": "table",
+            "content": [
+                row(vec![cell("tableHeader", json!([para("a|b")]))]),
+                row(vec![cell("tableCell", json!([{
+                    "type": "paragraph",
+                    "content": [{ "type": "text", "text": "x", "marks": [{ "type": "code" }] }]
+                }]))]),
+            ]
+        })]);
+        assert_eq!(to_markdown(&doc), "| a\\|b |\n| --- |\n| `x` |\n");
+    }
+
+    #[test]
+    fn empty_cells_and_short_rows_are_padded() {
+        let doc = doc_of(vec![json!({
+            "type": "table",
+            "content": [
+                row(vec![cell("tableHeader", json!([para("a")])), cell("tableHeader", json!([para("")]))]),
+                row(vec![cell("tableCell", json!([para("1")]))]),
+            ]
+        })]);
+        assert_eq!(to_markdown(&doc), "| a |  |\n| --- | --- |\n| 1 |  |\n");
+    }
+
+    #[test]
+    fn first_row_is_the_header_line_even_without_header_cells() {
+        let doc = doc_of(vec![json!({
+            "type": "table",
+            "content": [
+                row(vec![cell("tableCell", json!([para("a")])), cell("tableCell", json!([para("b")]))]),
+                row(vec![cell("tableCell", json!([para("1")])), cell("tableCell", json!([para("2")]))]),
+            ]
+        })]);
+        assert_eq!(to_markdown(&doc), "| a | b |\n| --- | --- |\n| 1 | 2 |\n");
+    }
+
+    #[test]
+    fn multi_block_cells_and_hard_breaks_use_br() {
+        let doc = doc_of(vec![json!({
+            "type": "table",
+            "content": [
+                row(vec![cell("tableHeader", json!([para("h")]))]),
+                row(vec![cell("tableCell", json!([
+                    para("one"),
+                    para("two"),
+                    {
+                        "type": "paragraph",
+                        "content": [
+                            { "type": "text", "text": "x" },
+                            { "type": "hardBreak" },
+                            { "type": "text", "text": "y" }
+                        ]
+                    },
+                    { "type": "bulletList", "content": [{ "type": "listItem", "content": [para("li")] }] },
+                    { "type": "codeBlock", "content": [{ "type": "text", "text": "c" }] }
+                ]))]),
+            ]
+        })]);
+        assert_eq!(
+            to_markdown(&doc),
+            "| h |\n| --- |\n| one<br>two<br>x<br>y<br>- li<br>`c` |\n"
+        );
+    }
+
+    #[test]
+    fn table_without_rows_is_omitted() {
+        let doc = doc_of(vec![
+            json!({ "type": "table", "content": [] }),
+            para("after"),
+        ]);
+        assert_eq!(to_markdown(&doc), "after\n");
     }
 }
