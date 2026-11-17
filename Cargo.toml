@@ -39,7 +39,7 @@ dirs = "6"
 base64 = "0.23"
 clap = { version = "4", features = ["derive"] }
 ureq = { version = "2", features = ["json", "tls"], optional = true }
-rusqlite = { version = "0.40", features = ["bundled"], optional = true }
+rusqlite = { version = "0.43", features = ["bundled"], optional = true }
 # Only for `jira::live::support::is_same_origin`'s credential-origin guard
 # (see its own doc comment) — parses with the exact same semantics `ureq`
 # itself uses internally (it's already `ureq`'s own transitive dependency,
