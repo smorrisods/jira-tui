@@ -1,0 +1,23 @@
+name: Publish Test Results
+
+# Posts the results of a finished CI run to its pull request: one sticky
+# comment and a check run per suite. It runs after CI via `workflow_run`, so
+# it also works for pull requests from forks and Dependabot, where CI's own
+# token is read-only. GitHub only runs this once it is on the default branch.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  publish:
+    if: github.event.workflow_run.conclusion != 'skipped' && github.event.workflow_run.conclusion != 'cancelled'
+    permissions:
+      actions: read # list and download the run's artefacts
+      checks: write # create and update check runs and annotations
+      pull-requests: write # create and update the sticky comment
+      contents: read # check out .github/ from the default branch
+    uses: liminal-hq-labs/pr-results/.github/workflows/publish.yml@f068e6046aeb405e30368d2e0b18d7b1b88c55d9 # v0.3.0

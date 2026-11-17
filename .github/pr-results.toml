@@ -1,0 +1,45 @@
+# pr-results settings: one comment for the pull request, and a check run per feature-set test suite.
+
+schema = 1
+title = "jira-tui"
+
+[comment]
+style = "enhanced"  # guided, with emoji, Jax, a progress bar and alert blocks
+other_checks = true # the commit's other jobs, so the comment is the pull request's one summary
+
+# How to run each job on your own machine, shown beside one that failed.
+[comment.check_commands]
+"Format" = "cargo fmt --all -- --check"
+"Clippy (default)" = "cargo clippy --workspace --all-targets -- -D warnings"
+"Clippy (no-default-features)" = "cargo clippy --workspace --all-targets --no-default-features -- -D warnings"
+"Clippy (all-features)" = "cargo clippy --workspace --all-targets --all-features -- -D warnings"
+"Security audit" = "cargo audit"
+
+# Each suite names the job its results come from, so that job's row is left out of the table of
+# other checks while the two agree and a failing test is not counted twice.
+[[suite]]
+name = "Tests (default)"
+check = "jira-tui Tests (default)"
+artifact = "rust-test-results-default"
+files = ["**/junit.xml"]
+flavour = "nextest"
+run_locally = "cargo nextest run --workspace"
+job = "Test (default)"
+
+[[suite]]
+name = "Tests (no-default-features)"
+check = "jira-tui Tests (no-default-features)"
+artifact = "rust-test-results-no-default-features"
+files = ["**/junit.xml"]
+flavour = "nextest"
+run_locally = "cargo nextest run --workspace --no-default-features"
+job = "Test (no-default-features)"
+
+[[suite]]
+name = "Tests (all-features)"
+check = "jira-tui Tests (all-features)"
+artifact = "rust-test-results-all-features"
+files = ["**/junit.xml"]
+flavour = "nextest"
+run_locally = "cargo nextest run --workspace --all-features"
+job = "Test (all-features)"
