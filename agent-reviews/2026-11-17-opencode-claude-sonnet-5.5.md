@@ -8,9 +8,9 @@
 
 ## What was built
 
-In `jira-tui`: nextest JUnit uploaded per feature set, a `workflow_run` publisher pinned to the `pr-results` v0.2.0 commit, and a `.github/pr-results.toml` with one suite per feature set. The old reporter job and the workflow-level `checks: write` and `pull-requests: write` permissions are gone.
+In `jira-tui`: nextest JUnit uploaded per feature set, a `workflow_run` publisher pinned to the `pr-results` v0.3.0 commit, and a `.github/pr-results.toml` with one suite per feature set, each tied to its job, in the enhanced style with the commit's other checks listed. The old reporter job and the workflow-level `checks: write` and `pull-requests: write` permissions are gone.
 
-In `pr-results`, three pull requests came out of it: `comment.other_checks` (the commit's other jobs in the comment), a guided style (now the default) with an enhanced mode for Liminal HQ projects, and the CI fixes those needed. `jira-tui` is meant to switch to the enhanced style once a `pr-results` release includes them.
+In `pr-results`, three pull requests came out of it: `comment.other_checks` (the commit's other jobs in the comment), a guided style (now the default) with an enhanced mode for Liminal HQ projects, and the CI fixes those needed. `pr-results` v0.3.0 shipped them, and `jira-tui` was then moved onto that release and the enhanced style.
 
 ## What went well
 
