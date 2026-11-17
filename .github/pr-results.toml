@@ -1,0 +1,25 @@
+# pr-results settings: one comment, a check run per feature-set test suite.
+
+schema = 1
+title = "jira-tui"
+
+[[suite]]
+name = "Tests (default)"
+check = "jira-tui Tests (default)"
+artifact = "rust-test-results-default"
+files = ["**/junit.xml"]
+flavour = "nextest"
+
+[[suite]]
+name = "Tests (no-default-features)"
+check = "jira-tui Tests (no-default-features)"
+artifact = "rust-test-results-no-default-features"
+files = ["**/junit.xml"]
+flavour = "nextest"
+
+[[suite]]
+name = "Tests (all-features)"
+check = "jira-tui Tests (all-features)"
+artifact = "rust-test-results-all-features"
+files = ["**/junit.xml"]
+flavour = "nextest"
