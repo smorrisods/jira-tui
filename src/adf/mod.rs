@@ -215,6 +215,10 @@ fn render_block(node: &Value, out: &mut Vec<Line<'static>>, depth: usize, ctx: &
         "taskList" => {
             if let Some(items) = node.get("content").and_then(|c| c.as_array()) {
                 for item in items {
+                    if item.get("type").and_then(|t| t.as_str()) == Some("taskList") {
+                        render_block(item, out, depth + 1, ctx);
+                        continue;
+                    }
                     let done = item
                         .get("attrs")
                         .and_then(|a| a.get("state"))
@@ -706,6 +710,33 @@ mod tests {
         assert!(joined.contains("Done"));
         assert!(joined.contains("[✓]"));
         assert!(joined.contains("ship it"));
+    }
+
+    #[test]
+    fn renders_nested_task_list_indented() {
+        let item = |state: &str, text: &str| {
+            json!({ "type": "taskItem", "attrs": { "state": state },
+                    "content": [ { "type": "text", "text": text } ] })
+        };
+        let doc = json!({
+            "type": "doc", "version": 1,
+            "content": [ { "type": "taskList", "content": [
+                item("TODO", "parent"),
+                { "type": "taskList", "content": [ item("DONE", "child") ] }
+            ] } ]
+        });
+        let text = render(&doc, 120);
+        let rows: Vec<String> = text
+            .lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        assert!(rows.iter().any(|r| r.contains("parent")));
+        let child = rows.iter().find(|r| r.contains("child")).unwrap();
+        assert!(
+            child.starts_with("  ") && child.contains("[✓]"),
+            "{child:?}"
+        );
     }
 
     fn flat(doc: &serde_json::Value) -> String {

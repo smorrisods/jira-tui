@@ -6,7 +6,7 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 
 use super::super::config::Config;
-use super::support::{auth_header, get, send, url_encode};
+use super::support::{auth_header, get, http_error, send, url_encode};
 use crate::domain::{AssignableUser, LinkDirection, LinkType};
 
 /// Fetch the workflow transitions available from the current status.
@@ -77,10 +77,9 @@ pub fn fetch_link_types(cfg: &Config) -> Result<Vec<LinkType>> {
 }
 
 /// Create a link between two issues (`POST /rest/api/3/issueLink`).
-/// `direction` decides which of `source_key`/`target_key` plays the
-/// outward/inward role in `type_name`'s pair (e.g. for "Blocks",
-/// `Outward` means `source_key` blocks `target_key`; `Inward` means
-/// `source_key` is blocked by `target_key`).
+/// `direction` picks which of `type_name`'s labels `source_key` displays
+/// (e.g. for "Blocks", `Outward` makes `source_key` show "blocks"
+/// `target_key`; `Inward` makes it show "is blocked by" `target_key`).
 pub fn create_issue_link(
     cfg: &Config,
     type_name: &str,
@@ -88,9 +87,12 @@ pub fn create_issue_link(
     target_key: &str,
     direction: LinkDirection,
 ) -> Result<()> {
+    // Jira's POST body is the reverse of how `issuelinks` reads back: the
+    // issue sent as `inwardIssue` displays the type's *outward* label, and
+    // the one sent as `outwardIssue` displays the *inward* label.
     let (inward_key, outward_key) = match direction {
-        LinkDirection::Outward => (target_key, source_key),
-        LinkDirection::Inward => (source_key, target_key),
+        LinkDirection::Outward => (source_key, target_key),
+        LinkDirection::Inward => (target_key, source_key),
     };
     send(
         cfg,
@@ -244,7 +246,7 @@ pub fn create_issue(
         .set("Accept", "application/json")
         .set("Content-Type", "application/json")
         .send_json(serde_json::json!({ "fields": fields }))
-        .map_err(|e| anyhow!("Jira create failed: {e}"))?;
+        .map_err(|e| http_error("Jira create failed", e))?;
     let value: Value = resp.into_json().context("decoding Jira JSON")?;
     value
         .get("key")
@@ -489,56 +491,61 @@ mod tests {
         );
     }
 
-    #[test]
-    fn create_issue_link_outward_sends_source_as_the_outward_issue() {
+    fn assert_link_body(
+        type_name: &str,
+        direction: crate::domain::LinkDirection,
+        inward_issue: &str,
+        outward_issue: &str,
+    ) {
         let mut server = mockito::Server::new();
         let mock = server
             .mock("POST", "/rest/api/3/issueLink")
             .match_body(mockito::Matcher::Json(serde_json::json!({
-                "type": { "name": "Blocks" },
-                "inwardIssue": { "key": "DS-2" },
-                "outwardIssue": { "key": "DS-1" }
+                "type": { "name": type_name },
+                "inwardIssue": { "key": inward_issue },
+                "outwardIssue": { "key": outward_issue }
             })))
             .with_status(201)
             .create();
 
         let cfg = test_config(server.url());
-        create_issue_link(
-            &cfg,
-            "Blocks",
-            "DS-1",
-            "DS-2",
-            crate::domain::LinkDirection::Outward,
-        )
-        .unwrap();
+        create_issue_link(&cfg, type_name, "DS-1", "DS-2", direction).unwrap();
 
         mock.assert();
     }
 
     #[test]
-    fn create_issue_link_inward_sends_source_as_the_inward_issue() {
-        let mut server = mockito::Server::new();
-        let mock = server
-            .mock("POST", "/rest/api/3/issueLink")
-            .match_body(mockito::Matcher::Json(serde_json::json!({
-                "type": { "name": "Blocks" },
-                "inwardIssue": { "key": "DS-1" },
-                "outwardIssue": { "key": "DS-2" }
-            })))
-            .with_status(201)
-            .create();
-
-        let cfg = test_config(server.url());
-        create_issue_link(
-            &cfg,
+    fn create_issue_link_outward_relation_shows_outward_label_on_source() {
+        // Jira shows the type's outward label ("blocks") on the issue sent as
+        // `inwardIssue`, so the source DS-1 goes there.
+        assert_link_body(
             "Blocks",
+            crate::domain::LinkDirection::Outward,
             "DS-1",
             "DS-2",
-            crate::domain::LinkDirection::Inward,
-        )
-        .unwrap();
+        );
+    }
 
-        mock.assert();
+    #[test]
+    fn create_issue_link_inward_relation_shows_inward_label_on_source() {
+        // The inward label ("is blocked by") shows on the issue sent as
+        // `outwardIssue`, so the source DS-1 goes there.
+        assert_link_body(
+            "Blocks",
+            crate::domain::LinkDirection::Inward,
+            "DS-2",
+            "DS-1",
+        );
+    }
+
+    #[test]
+    fn create_issue_link_relates_follows_the_same_mapping() {
+        assert_link_body(
+            "Relates",
+            crate::domain::LinkDirection::Outward,
+            "DS-1",
+            "DS-2",
+        );
     }
 
     #[test]

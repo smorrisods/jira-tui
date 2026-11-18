@@ -3555,3 +3555,22 @@ fn field_mapping_screen_shows_the_current_target_and_a_tab_hint() {
         "the catalog row for the mapped field should render"
     );
 }
+
+#[test]
+fn description_preview_renders_a_markdown_table_as_a_table() {
+    let mut app = demo_app();
+    app.selected = 0;
+    app.open_detail();
+    app.begin_tui_edit();
+    app.editor.lines = vec![
+        "| Icon | Used for |".into(),
+        "| --- | --- |".into(),
+        "| `foo.svg` | Thing A |".into(),
+    ];
+    app.commit_tui_edit();
+    assert_eq!(app.screen, Screen::Preview);
+
+    let text = render_at(&app, 100, 40);
+    assert!(text.contains('┌') && text.contains('┼'), "{text}");
+    assert!(text.contains("Used for") && text.contains("Thing A"));
+}

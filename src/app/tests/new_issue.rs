@@ -455,6 +455,55 @@ async fn a_locally_created_issue_reopens_synchronously_after_the_session_becomes
 }
 
 #[tokio::test]
+async fn a_stale_detail_fetch_cannot_overwrite_a_locally_created_issue_opened_after_it() {
+    let _guard = crate::test_support::lock_env_async().await;
+    let mut app = non_demo_app(); // Source::Cache
+    app.open_new_issue();
+    app.new_issue.project = "DS".into();
+    app.new_issue.summary = "Fix the flaky login test".into();
+    app.confirm_new_issue_form();
+    app.commit_tui_edit();
+    app.apply_edit();
+    let local_key = app.detail.as_ref().unwrap().key.clone();
+    app.source = crate::domain::Source::Live {
+        site: "demo.atlassian.net".into(),
+        user: "me".into(),
+    };
+    app.screen = Screen::Home;
+    app.detail = None;
+
+    // A live fetch for another issue is still in flight when the user
+    // navigates to the locally-created one.
+    let other_key = app
+        .issues
+        .iter()
+        .map(|i| i.key.clone())
+        .find(|k| *k != local_key)
+        .unwrap();
+    app.open_by_key(&other_key);
+    let stale_generation = app.detail_generation;
+    assert!(app.loading);
+    app.open_by_key(&local_key);
+    assert_eq!(app.screen, Screen::Detail);
+    assert!(
+        !app.loading,
+        "the cancelled fetch's loading flag must clear"
+    );
+
+    app.apply_event(AppEvent::DetailLoaded {
+        generation: stale_generation,
+        key: other_key.clone(),
+        detail: Box::new(crate::domain::demo_detail(&other_key)),
+        status: None,
+    });
+
+    assert_eq!(app.screen, Screen::Detail);
+    let detail = app.detail.as_ref().unwrap();
+    assert_eq!(detail.key, local_key);
+    assert_eq!(detail.summary, "Fix the flaky login test");
+}
+
+#[tokio::test]
 async fn a_locally_created_issue_does_not_survive_a_refresh_that_resolves_to_a_genuine_live_source()
 {
     let _guard = crate::test_support::lock_env_async().await;
