@@ -6,6 +6,7 @@ title = "jira-tui"
 [comment]
 style = "enhanced"  # guided, with emoji, Jax, a progress bar and alert blocks
 other_checks = true # the commit's other jobs, so the comment is the pull request's one summary
+other_checks_open = true # keep that table open when every job passed, so the jobs are always visible
 
 # How to run each job on your own machine, shown beside one that failed.
 [comment.check_commands]
