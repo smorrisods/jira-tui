@@ -20,4 +20,4 @@ jobs:
       checks: write # create and update check runs and annotations
       pull-requests: write # create and update the sticky comment
       contents: read # check out .github/ from the default branch
-    uses: liminal-hq-labs/pr-results/.github/workflows/publish.yml@6344d9f507b111540a8f0ce369013c396b37528f # v0.4.0
+    uses: liminal-hq-labs/pr-results/.github/workflows/publish.yml@a70c20d946cfe13ed8199018feee88578a96ae51 # v0.4.1
