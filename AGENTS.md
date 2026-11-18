@@ -58,7 +58,7 @@ Guidelines for humans and AI agents working in `jira-tui`.
   - `dependabot/` — Dependabot's own branches; it names these itself, so they're exempt in practice
   `main`/`master` are exempt (they're the trunk, not a working branch). Enable the repo's `pre-push` hook once per clone with `git config core.hooksPath scripts/hooks` — it rejects a push from a branch that doesn't match this pattern.
 - **Titles:** human-readable summaries starting with a capital letter — no Conventional Commit prefixes (`feat:`, `fix:`, etc.) in the title itself. Describe the outcome/behaviour change, not internal process language.
-- **Content:** PR descriptions must not mention internal workflow artefacts (session notes, todo-tracking mechanics, agent planning chatter) — keep that in `agent-reviews/` and local tooling, not in outward-facing PR text.
+- **Content:** PR descriptions must not mention internal workflow artefacts (session notes, todo-tracking mechanics, agent planning chatter) — keep that in the review issue (#182) and local tooling, not in outward-facing PR text.
 - **Description format:** compact Markdown with `## Summary` and `## Test plan`. Use `###` sub-sections under Summary when it helps group the change (e.g. `### User-facing changes`, `### Internals`, `### Documentation`). Flat bullets with bold lead-ins under each section. Under `## Test plan`, use checklist bullets (`- [x]`/`- [ ]`) naming the concrete commands run; state plainly anything that couldn't be verified. See "Writing style" above for line-wrapping.
 - **Labels:** every PR gets at least one primary category label (`enhancement`, `bug`, `documentation`, `testing`, `ci`, `build`, `chore`) plus scope labels where useful (`rust`, `dependencies`, `github_actions`). Use `skip-changelog` for changes that shouldn't appear in release notes.
 - **Readiness:** open PRs ready for review by default; only mark a PR draft when explicitly asked or when there's a clearly communicated blocker.
@@ -76,4 +76,4 @@ Guidelines for humans and AI agents working in `jira-tui`.
 
 ## Reviews
 
-- Leave a dated note in `agent-reviews/` after a substantial session: what worked, what caused friction, and how it was handled. Read existing reviews first.
+- After a substantial session, post a review as a comment on the review issue, [#182](https://github.com/smorrisods/jira-tui/issues/182): what worked, what caused friction, and how you handled it, including every workaround. Read the earlier comments first. It's an issue and not a folder in the repo so that an agent that can't commit can still leave one, and so workarounds are written down as they're hit and not only in a branch that gets merged.
