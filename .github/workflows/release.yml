@@ -241,7 +241,7 @@ jobs:
 
   build-macos:
     name: Build macOS (${{ matrix.artefact_suffix }})
-    runs-on: macos-14
+    runs-on: macos-15
     needs: prepare-release
     strategy:
       fail-fast: false
@@ -264,7 +264,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          # Both targets are built on the same macos-14 (Apple Silicon) runner —
+          # Both targets are built on the same macos-15 (Apple Silicon) runner —
           # x86_64-apple-darwin cross-compiles from there, so we don't need a
           # separate Intel runner just for the amd64 artefact.
           targets: ${{ matrix.target }}
@@ -329,7 +329,7 @@ jobs:
           {
             echo "## macOS build summary"
             echo
-            echo "- Runner: \`macos-14\`"
+            echo "- Runner: \`macos-15\`"
             echo "- Target triple: \`${{ matrix.target }}\`"
             echo "- Artefact suffix: \`${{ matrix.artefact_suffix }}\`"
             echo "- Code signing: ad-hoc (\`codesign --sign -\`) — not notarized"

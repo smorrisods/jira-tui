@@ -48,7 +48,7 @@ That makes a GitHub Releases-first approach the cleanest fit.
 
 ## macOS: ad-hoc signed, not notarized
 
-macOS builds are cross-compiled/built on a single `macos-14` (Apple Silicon) runner — `aarch64-apple-darwin` natively, `x86_64-apple-darwin` cross-compiled from the same runner, so no separate Intel runner is needed. Binaries are **ad-hoc signed** (`codesign --sign - --force --deep`) before archiving:
+macOS builds are cross-compiled/built on a single `macos-15` (Apple Silicon) runner — `aarch64-apple-darwin` natively, `x86_64-apple-darwin` cross-compiled from the same runner, so no separate Intel runner is needed. Binaries are **ad-hoc signed** (`codesign --sign - --force --deep`) before archiving:
 
 - This gives the binary a consistent local code identity, but it is **not** the same as Apple notarization — there's no Apple Developer account behind this yet, so Gatekeeper will still flag the binary as unidentified on first run.
 - Documented plainly (README, install script output) rather than glossed over: users need to right-click → Open in Finder once, or run `xattr -d com.apple.quarantine jira-tui`.
@@ -125,7 +125,7 @@ It requires a clean working tree and prepares a branch meant to be reviewed and 
   - uploads everything as workflow artefacts (per-architecture)
   - writes a concise summary to `$GITHUB_STEP_SUMMARY`
 - `build-macos`
-  - matrix over `amd64`/`arm64`, both built on a single `macos-14` runner (native `aarch64-apple-darwin`, cross-compiled `x86_64-apple-darwin`)
+  - matrix over `amd64`/`arm64`, both built on a single `macos-15` runner (native `aarch64-apple-darwin`, cross-compiled `x86_64-apple-darwin`)
   - ad-hoc code-signs the binary, builds the `.tar.gz` archive (no `.deb`/`.rpm` equivalent on macOS)
   - uploads everything as workflow artefacts (per-architecture)
   - writes a concise summary to `$GITHUB_STEP_SUMMARY`
@@ -141,10 +141,10 @@ Recommended matrix:
 |---|---|---|---|
 | `ubuntu-22.04` | `x86_64-unknown-linux-gnu` | `linux-amd64` | `amd64` |
 | `ubuntu-22.04-arm` | `aarch64-unknown-linux-gnu` | `linux-arm64` | `arm64` |
-| `macos-14` | `aarch64-apple-darwin` | `macos-arm64` | `arm64` |
-| `macos-14` (cross-compiled) | `x86_64-apple-darwin` | `macos-amd64` | `amd64` |
+| `macos-15` | `aarch64-apple-darwin` | `macos-arm64` | `arm64` |
+| `macos-15` (cross-compiled) | `x86_64-apple-darwin` | `macos-amd64` | `amd64` |
 
-Fixed runner images (not `-latest` aliases) keep the release environment predictable over time. Building Linux on Ubuntu 22.04 keeps the packaged `jira-tui` binary compatible with Ubuntu 22.04 and common WSL2 installs that still provide glibc 2.35. Building both macOS architectures from the same `macos-14` runner avoids needing a separate (and increasingly scarce) Intel Mac runner.
+Fixed runner images (not `-latest` aliases) keep the release environment predictable over time. Building Linux on Ubuntu 22.04 keeps the packaged `jira-tui` binary compatible with Ubuntu 22.04 and common WSL2 installs that still provide glibc 2.35. Building both macOS architectures from the same `macos-15` runner avoids needing a separate (and increasingly scarce) Intel Mac runner.
 
 ## Artefacts
 
